@@ -60,7 +60,6 @@ function searchDiziPal(title, mediaType) {
                 var url = match[1];
                 var itemTitle = match[2];
 
-               
                 var isDizi = url.includes('/dizi/');
                 var isFilm = url.includes('/film/');
                 var isAnime = url.includes('/anime/');
@@ -98,7 +97,7 @@ function findBestMatch(results, query) {
         if (results[i].title.toLowerCase() === queryLower) return results[i];
     }
 
-   
+    
     for (var j = 0; j < results.length; j++) {
         if (results[j].title.toLowerCase().includes(queryLower)) return results[j];
     }
@@ -213,7 +212,7 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                         }
                         console.log('[DiziPal] Best match:', best.title, best.url);
 
-                        // Film mi dizi mi
+                       
                         var targetUrl = best.url;
                         if (mediaType === 'tv' && seasonNum && episodeNum) {
                             targetUrl = getEpisodeUrl(best.url, seasonNum, episodeNum);
@@ -226,6 +225,23 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                             .then(function(result) {
                                 if (!result || !result.url) return [];
 
+                                var subtitles = [];
+                                if (result.subtitle) {
+                                   
+                                    result.subtitle.split(',').forEach(function(sub) {
+                                        var subLang = sub.match(/\[([^\]]+)\]/);
+                                        var subUrl = sub.replace(/\[[^\]]+\]/, '').trim();
+                                        var lang = 'Turkish';
+                                        if (subLang) {
+                                            var l = subLang[1].toLowerCase();
+                                            if (l.includes('tur') || l.includes('tr') || l.includes('türk')) lang = 'Turkish';
+                                            else if (l.includes('ing') || l.includes('en')) lang = 'English';
+                                            else lang = subLang[1];
+                                        }
+                                        if (subUrl) subtitles.push({ lang: lang, url: subUrl });
+                                    });
+                                }
+
                                 var streams = [{
                                     name: 'DiziPal',
                                     title: title + (year ? ' (' + year + ')' : ''),
@@ -233,6 +249,7 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                                     quality: '1080p',
                                     size: 'Unknown',
                                     headers: Object.assign({}, STREAM_HEADERS, { 'Referer': (result.iframeOrigin || BASE_URL) + '/', 'Origin': result.iframeOrigin || BASE_URL }),
+                                    subtitles: subtitles,
                                     provider: 'dizipal'
                                 }];
 
