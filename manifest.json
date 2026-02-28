@@ -19,7 +19,7 @@
       "id": "dizipal",
       "name": "DiziPal",
       "description": "En yeni dizileri güvenli ve hızlı şekilde sunar.",
-      "version": "1.0.1",
+      "version": "1.0.2",
       "author": "kerimmkirac",
       "supportedTypes": ["movie", "tv"],
       "filename": "eklentiler/dizipal.js",

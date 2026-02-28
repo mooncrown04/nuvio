@@ -60,6 +60,7 @@ function searchDiziPal(title, mediaType) {
                 var url = match[1];
                 var itemTitle = match[2];
 
+               
                 var isDizi = url.includes('/dizi/');
                 var isFilm = url.includes('/film/');
                 var isAnime = url.includes('/anime/');
@@ -112,7 +113,7 @@ function loadContentPage(url) {
     return fetch(url, { headers: HEADERS })
         .then(function(res) { return res.text(); })
         .then(function(html) {
-            
+           
             var iframeMatch = findFirst(html,
                 '<iframe[^>]+src="([^"]+)"[^>]*class="[^"]*(?:responsive-player|series-player)[^"]*"'
             ) || findFirst(html,
@@ -149,7 +150,7 @@ function extractM3u8FromIframe(iframeSrc) {
                 return { url: m3uMatch[1], subtitle: extractSubtitle(html), iframeOrigin: iframeOrigin };
             }
 
-            
+           
             var sourceMatch = findFirst(html, '"file"\\s*:\\s*"([^"]+\\.m3u8[^"]*)"');
             if (sourceMatch) {
                 console.log('[DiziPal] Found m3u8 from sources:', sourceMatch[1]);
@@ -159,6 +160,50 @@ function extractM3u8FromIframe(iframeSrc) {
             console.log('[DiziPal] No m3u8 found in iframe');
             return null;
         });
+}
+
+
+
+function parseMasterM3u8(masterUrl, streamHeaders) {
+    return fetch(masterUrl, { headers: streamHeaders })
+        .then(function(res) { return res.text(); })
+        .then(function(m3u8) {
+            var lines = m3u8.split('\n');
+            var turkishAudioUrl = null;
+            var streams = [];
+
+            
+            for (var i = 0; i < lines.length; i++) {
+                var line = lines[i].trim();
+                if (line.includes('TYPE=AUDIO') && line.includes('LANGUAGE="tr"')) {
+                    var uriMatch = line.match(/URI="([^"]+)"/);
+                    if (uriMatch) turkishAudioUrl = uriMatch[1];
+                }
+            }
+
+            
+            for (var j = 0; j < lines.length; j++) {
+                var l = lines[j].trim();
+                if (l.startsWith('#EXT-X-STREAM-INF:')) {
+                    var nextLine = lines[j + 1] ? lines[j + 1].trim() : '';
+                    if (!nextLine || nextLine.startsWith('#')) continue;
+
+                    var resMatch = l.match(/RESOLUTION=(\d+x\d+)/);
+                    var resolution = resMatch ? resMatch[1] : '';
+                    var quality = '720p';
+                    if (resolution.includes('1920')) quality = '1080p';
+                    else if (resolution.includes('1280')) quality = '720p';
+                    else if (resolution.includes('854')) quality = '480p';
+                    else if (resolution.includes('640')) quality = '360p';
+
+                    var streamUrl = nextLine.startsWith('http') ? nextLine : masterUrl.split('/').slice(0, -1).join('/') + '/' + nextLine;
+                    streams.push({ url: streamUrl, quality: quality, resolution: resolution });
+                }
+            }
+
+            return { streams: streams, turkishAudioUrl: turkishAudioUrl };
+        })
+        .catch(function() { return { streams: [], turkishAudioUrl: null }; });
 }
 
 function extractSubtitle(html) {
@@ -227,7 +272,6 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
 
                                 var subtitles = [];
                                 if (result.subtitle) {
-                                   
                                     result.subtitle.split(',').forEach(function(sub) {
                                         var subLang = sub.match(/\[([^\]]+)\]/);
                                         var subUrl = sub.replace(/\[[^\]]+\]/, '').trim();
@@ -242,18 +286,46 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                                     });
                                 }
 
-                                var streams = [{
-                                    name: 'DiziPal',
-                                    title: title + (year ? ' (' + year + ')' : ''),
-                                    url: result.url,
-                                    quality: '1080p',
-                                    size: 'Unknown',
-                                    headers: Object.assign({}, STREAM_HEADERS, { 'Referer': (result.iframeOrigin || BASE_URL) + '/', 'Origin': result.iframeOrigin || BASE_URL }),
-                                    subtitles: subtitles,
-                                    provider: 'dizipal'
-                                }];
+                                var streamHeaders = Object.assign({}, STREAM_HEADERS, {
+                                    'Referer': (result.iframeOrigin || BASE_URL) + '/',
+                                    'Origin': result.iframeOrigin || BASE_URL
+                                });
 
-                                return streams;
+                               
+                                return parseMasterM3u8(result.url, streamHeaders)
+                                    .then(function(parsed) {
+                                        var streams = [];
+
+                                        if (parsed.turkishAudioUrl && parsed.streams.length > 0) {
+                                            
+                                            parsed.streams.forEach(function(s) {
+                                                streams.push({
+                                                    name: 'DiziPal · TR Dublaj',
+                                                    title: title + (year ? ' (' + year + ')' : '') + ' · ' + s.quality,
+                                                    url: s.url,
+                                                    quality: s.quality,
+                                                    size: 'Unknown',
+                                                    headers: streamHeaders,
+                                                    subtitles: subtitles,
+                                                    provider: 'dizipal'
+                                                });
+                                            });
+                                        }
+
+                                        
+                                        streams.push({
+                                            name: 'DiziPal · Altyazılı',
+                                            title: title + (year ? ' (' + year + ')' : ''),
+                                            url: result.url,
+                                            quality: '720p',
+                                            size: 'Unknown',
+                                            headers: streamHeaders,
+                                            subtitles: subtitles,
+                                            provider: 'dizipal'
+                                        });
+
+                                        return streams;
+                                    });
                             });
                     });
             })
