@@ -279,16 +279,16 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                                         if (!sub) return;
                                         var subLang = sub.match(/\[([^\]]+)\]/);
                                         var subUrl = sub.replace(/\[[^\]]+\]/, '').trim();
-                                        var label = 'Turkish';
+                                        var label = 'türkçee';
                                         if (subLang) {
                                             var l = subLang[1].toLowerCase();
-                                            if (l.includes('tur') || l.includes('tr') || l.includes('türk')) label = 'Turkish';
-                                            else if (l.includes('ing') || l.includes('en')) label = 'English';
+                                            if (l.includes('tur') || l.includes('tr') || l.includes('türk')) label = 'türkçee';
+                                            else if (l.includes('ing') || l.includes('en')) label = 'ingilizcee';
                                             else label = subLang[1];
                                         } else {
                                            
-                                            if (sub.includes('_tur')) label = 'Turkish';
-                                            else if (sub.includes('_eng')) label = 'English';
+                                            if (sub.includes('_tur')) label = 'türkçee';
+                                            else if (sub.includes('_eng')) label = 'ingilizcee';
                                             subUrl = sub;
                                         }
                                         if (subUrl) subtitles.push({ label: label, url: subUrl });
