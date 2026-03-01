@@ -1,10 +1,8 @@
 // ! Bu araç @keyiflerolsun tarafından | @KekikAkademi için yazılmıştır.
 var BASE_URL = 'https://www.fullhdfilmizlesene.live';
 
-// 3003 hatasını önlemek için Player'a gönderilen en kritik başlıklar
 var STREAM_HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Origin': BASE_URL,
     'Accept': '*/*',
     'Connection': 'keep-alive',
     'Sec-Fetch-Dest': 'video',
@@ -21,7 +19,6 @@ function rot13(str) {
     });
 }
 
-// Hex kodlarını (Atom/Rapid) temizleyip URL'ye çevirir
 function hexToUrl(hex) {
     try {
         var raw = hex.replace(/\\\\x/g, '').replace(/\\x/g, '');
@@ -29,8 +26,7 @@ function hexToUrl(hex) {
         for (var i = 0; i < raw.length; i += 2) {
             str += String.fromCharCode(parseInt(raw.substr(i, 2), 16));
         }
-        // Malformed 1004 hatasını önlemek için temizlik
-        return str.replace(/\\/g, '').replace(/"/g, "").replace(/'/g, "").replace(/\s/g, "").trim();
+        return str.replace(/\\/g, '').replace(/"/g, "").replace(/'/g, "").trim();
     } catch (e) { return null; }
 }
 
@@ -43,8 +39,7 @@ function getStreams(tmdbId, mediaType) {
         var tmdbUrl = 'https://api.themoviedb.org/3/movie/' + tmdbId + '?language=tr-TR&api_key=4ef0d7355d9ffb5151e987764708ce96';
 
         fetch(tmdbUrl).then(function(res) { return res.json(); }).then(function(data) {
-            var searchUrl = BASE_URL + '/arama/' + encodeURIComponent(data.title);
-            return fetch(searchUrl);
+            return fetch(BASE_URL + '/arama/' + encodeURIComponent(data.title));
         }).then(function(res) { return res.text(); }).then(function(searchHtml) {
             var filmMatch = searchHtml.match(/<li[^>]*class=["']film["'][^>]*>[\s\S]*?<a[^>]+href=["']([^"']+)["']/i);
             if (!filmMatch) return resolve([]);
@@ -59,7 +54,8 @@ function getStreams(tmdbId, mediaType) {
             
             var scx = JSON.parse(scxMatch[1]);
             var keys = ['atom', 'advid', 'proton', 'fast', 'tr', 'en'];
-            var streamPromises = [];
+            var results = [];
+            var pending = 0;
 
             keys.forEach(function(key) {
                 if (!scx[key] || !scx[key].sx || !scx[key].sx.t) return;
@@ -68,42 +64,48 @@ function getStreams(tmdbId, mediaType) {
 
                 rawLinks.forEach(function(enc, index) {
                     var decoded = atob(rot13(enc));
-                    
-                    // ATOM / RAPID / VIDMOXY AYIKLAMA
-                    if (decoded && (decoded.indexOf('rapidvid') !== -1 || decoded.indexOf('vidmoxy') !== -1 || decoded.indexOf('atom') !== -1)) {
-                        var p = fetch(decoded, { headers: { 'Referer': obj.url } })
+                    if (!decoded) return;
+
+                    // 1. Durum: Atom/Rapid/Vidmoxy gibi ayıklanması gereken kaynaklar
+                    if (decoded.indexOf('http') !== -1 && (decoded.indexOf('rapidvid') !== -1 || decoded.indexOf('vidmoxy') !== -1 || decoded.indexOf('atom') !== -1)) {
+                        pending++;
+                        fetch(decoded, { headers: { 'Referer': obj.url } })
                             .then(function(r) { return r.text(); })
                             .then(function(fHtml) {
                                 var fileMatch = fHtml.match(/file["']:\s*["']([^"']+)["']/);
                                 if (fileMatch) {
                                     var finalUrl = hexToUrl(fileMatch[1]);
-                                    if (finalUrl && finalUrl.indexOf('http') !== -1) {
-                                        return {
+                                    if (finalUrl) {
+                                        results.push({
                                             name: '⌜ FHD ⌟ ' + key.toUpperCase() + ' #' + (index + 1),
                                             url: finalUrl,
                                             type: finalUrl.indexOf('.m3u8') !== -1 ? 'M3U8' : 'VIDEO',
-                                            headers: Object.assign({}, STREAM_HEADERS, { 'Referer': decoded }) // Referer olarak iframe linkini kullan
-                                        };
+                                            headers: Object.assign({}, STREAM_HEADERS, { 'Referer': decoded })
+                                        });
                                     }
                                 }
-                                return null;
-                            }).catch(function() { return null; });
-                        streamPromises.push(p);
-                    } else if (decoded && decoded.indexOf('http') !== -1) {
-                        streamPromises.push(Promise.resolve({
+                                pending--;
+                                if (pending === 0) resolve(results);
+                            }).catch(function() { 
+                                pending--; 
+                                if (pending === 0) resolve(results); 
+                            });
+                    } 
+                    // 2. Durum: Doğrudan m3u8 olan kaynaklar (Proton, Fast vb.)
+                    else if (decoded.indexOf('http') !== -1) {
+                        results.push({
                             name: '⌜ FHD ⌟ ' + key.toUpperCase() + ' #' + (index + 1),
                             url: decoded,
                             type: decoded.indexOf('.m3u8') !== -1 ? 'M3U8' : 'VIDEO',
                             headers: Object.assign({}, STREAM_HEADERS, { 'Referer': obj.url })
-                        }));
+                        });
                     }
                 });
             });
 
-            Promise.all(streamPromises).then(function(res) {
-                var filtered = res.filter(function(x) { return x !== null; });
-                resolve(filtered);
-            });
+            // Eğer hiç bekleyen (pending) işlem yoksa (sadece doğrudan linkler varsa) hemen dön
+            if (pending === 0) resolve(results);
+
         }).catch(function() { resolve([]); });
     });
 }
