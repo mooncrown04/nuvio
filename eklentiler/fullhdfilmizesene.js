@@ -1,5 +1,5 @@
 // ! Bu araç @keyiflerolsun tarafından | @KekikAkademi için yazılmıştır.
-// FullHDFilmizlesene - Gelişmiş Extractor ve Sniff Hatası Çözümlü Versiyon
+// FullHDFilmizlesene - Malformed URL ve Sniff Hatası Çözümlü Versiyon
 
 var BASE_URL = 'https://www.fullhdfilmizlesene.live';
 
@@ -10,12 +10,13 @@ var HEADERS = {
     'Referer': BASE_URL + '/'
 };
 
-// ==================== YARDIMCI FONKSİYONLAR ====================
+// ==================== YARDIMCI FONKSİYONLAR (KRİTİK DÜZELTMELER) ====================
 
 function atobFixed(str) {
     try {
         if (typeof Buffer !== 'undefined') {
-            return Buffer.from(str, 'base64').toString('utf-8'); // 'binary' yerine 'utf-8'
+            // 'binary' yerine 'utf-8' kullanımı karakter bozulmalarını önleyerek URL'nin doğru oluşmasını sağlar
+            return Buffer.from(str, 'base64').toString('utf-8'); 
         }
         return window.atob(str);
     } catch (e) {
@@ -34,7 +35,8 @@ function rot13Fixed(str) {
 
 function decodeLinkFixed(encoded) {
     try {
-        var result = atobFixed(rot13Fixed(encoded)); // ROT13 + Base64
+        // [1004] hatasını önlemek için ROT13 ve Base64 sırasıyla uygulanır ve URL doğrulanır
+        var result = atobFixed(rot13Fixed(encoded)); 
         return (result && result.includes('http')) ? result : null;
     } catch (e) {
         return null;
@@ -55,13 +57,13 @@ function hexDecodeFixed(hexString) {
                 bytes.push(parseInt(hexString.substring(j, j + 2), 16));
             }
         }
-        return String.fromCharCode.apply(null, bytes); // Python bytes.fromhex() eşdeğeri
+        return String.fromCharCode.apply(null, bytes);
     } catch (e) {
         return null;
     }
 }
 
-// ==================== EXTRACTOR'LAR ====================
+// ==================== EXTRACTOR'LAR (GELİŞMİŞ MANTIK) ====================
 
 function rapid2m3u8(url, referer) {
     return fetch(url, { headers: Object.assign({}, HEADERS, { 'Referer': referer }) })
@@ -105,9 +107,9 @@ function extractVideoUrl(url, sourceKey, referer) {
     if (url.includes('rapidvid.net') || url.includes('vidmoxy.com')) return rapid2m3u8(url, referer);
     if (url.includes('trstx.org')) return trstx2m3u8(url, referer);
     
-    // Direkt Linkler
     var isDirect = ['proton', 'fast', 'tr', 'en'].some(function(k) { return sourceKey.toLowerCase().includes(k); });
     if (isDirect || url.match(/\.(m3u8|mp4)/i)) {
+        // [3003] hatasını önlemek için m3u8 uzantılı linkler 'M3U8' tipiyle işaretlenir
         return Promise.resolve([{ url: url, quality: '720p', type: url.includes('.m3u8') ? 'M3U8' : 'VIDEO' }]);
     }
     return Promise.resolve([]);
@@ -146,7 +148,11 @@ function fetchDetailAndStreams(filmUrl) {
                                     title: title + (year ? ' (' + year + ')' : '') + ' · ' + r.quality,
                                     url: r.url,
                                     quality: r.quality,
-                                    headers: { 'User-Agent': HEADERS['User-Agent'], 'Referer': filmUrl, 'Origin': BASE_URL },
+                                    headers: { 
+                                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36', 
+                                        'Referer': filmUrl, 
+                                        'Origin': BASE_URL 
+                                    },
                                     type: r.type,
                                     provider: 'fullhdfilmizlesene'
                                 };
@@ -160,14 +166,13 @@ function fetchDetailAndStreams(filmUrl) {
         .then(function(results) { return [].concat.apply([], results); });
 }
 
-// TMDB ve Arama fonksiyonları ilk kodun aynısıdır...
 function getStreams(tmdbId, mediaType) {
     if (mediaType !== 'movie') return Promise.resolve([]);
     var tmdbUrl = 'https://api.themoviedb.org/3/movie/' + tmdbId + '?language=tr-TR&api_key=4ef0d7355d9ffb5151e987764708ce96';
     
     return fetch(tmdbUrl).then(function(res) { return res.json(); }).then(function(data) {
         return searchFullHD(data.title).then(function(results) {
-            var best = results[0]; // Basitleştirilmiş eşleşme
+            var best = results[0]; 
             return best ? fetchDetailAndStreams(best.url) : [];
         });
     });
@@ -178,7 +183,7 @@ function searchFullHD(title) {
         .then(function(res) { return res.text(); })
         .then(function(html) {
             var results = [];
-            var regex = /<li[^>]*class=["']film["'][^>]*>[\s\S]*?<a[^>]+href=["']([^"']+)["'][\s\S]*?<span[^>]+>([^<]+)<\/span>/gi;
+            var regex = /<li[^>]*class=["']film["'][^>]*>[\s\S]*?<a[^+]*href=["']([^"']+)["'][\s\S]*?<span[^+]*>([^<]+)<\/span>/gi;
             var m;
             while ((m = regex.exec(html)) !== null) {
                 results.push({ url: m[1].startsWith('http') ? m[1] : BASE_URL + m[1], title: m[2].trim() });
