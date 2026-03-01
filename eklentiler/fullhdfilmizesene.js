@@ -1,36 +1,43 @@
-// ! Bu araç @keyiflerolsun tarafından | @KekikAkademi için yazılmıştır.
+/**
+ * FullHDFilmizlesene Extractor - Modern Asenkron Yapı
+ * SineWix ve Kuudere örneklerinden esinlenilmiştir.
+ */
+
 var BASE_URL = 'https://www.fullhdfilmizlesene.live';
 
+// SineWix'ten gelen, 3003 (Sniff) hatasını aşan en kararlı header seti
 var STREAM_HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Accept': '*/*',
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+    'Accept': 'video/webm,video/ogg,video/*;q=0.9,application/ogg;q=0.7,audio/*;q=0.6,*/*;q=0.5',
+    'Accept-Encoding': 'identity',
     'Connection': 'keep-alive',
     'Sec-Fetch-Dest': 'video',
     'Sec-Fetch-Mode': 'no-cors',
     'Sec-Fetch-Site': 'cross-site'
 };
 
-// ==================== KRİTİK DECODE VE TEMİZLİK ====================
+// ==================== EXTRACTORS (KUUDERE MANTIĞI) ====================
 
-function rot13(str) {
-    if (!str) return null;
-    return str.replace(/[a-zA-Z]/g, function(c) {
-        return String.fromCharCode((c <= "Z" ? 90 : 122) >= (c = c.charCodeAt(0) + 13) ? c : c - 26);
-    });
+// Atom ve RapidVid linklerini çözen fonksiyon (Kotlin'deki rapid2m3u8'in JS karşılığı)
+function extractAtomSource(embedUrl, pageUrl) {
+    return fetch(embedUrl, { headers: { 'Referer': pageUrl } })
+        .then(function(res) { return res.text(); })
+        .then(function(html) {
+            // Hex kodlu video adresini yakala
+            var fileMatch = html.match(/file["']:\s*["']([^"']+)["']/);
+            if (!fileMatch) return null;
+            
+            // Hex -> String dönüşümü (Kotlin'deki temizlik mantığı)
+            var raw = fileMatch[1].replace(/\\\\x/g, '').replace(/\\x/g, '');
+            var decoded = '';
+            for (var i = 0; i < raw.length; i += 2) {
+                decoded += String.fromCharCode(parseInt(raw.substr(i, 2), 16));
+             dec
+            return decoded.replace(/\\/g, '').replace(/["']/g, "").trim();
+        }).catch(function() { return null; });
 }
 
-function hexToUrl(hex) {
-    try {
-        var raw = hex.replace(/\\\\x/g, '').replace(/\\x/g, '');
-        var str = '';
-        for (var i = 0; i < raw.length; i += 2) {
-            str += String.fromCharCode(parseInt(raw.substr(i, 2), 16));
-        }
-        return str.replace(/\\/g, '').replace(/"/g, "").replace(/'/g, "").trim();
-    } catch (e) { return null; }
-}
-
-// ==================== ANA MOTOR ====================
+// ==================== ANA MOTOR (SINEWIX MANTIĞI) ====================
 
 function getStreams(tmdbId, mediaType) {
     return new Promise(function(resolve) {
@@ -41,73 +48,64 @@ function getStreams(tmdbId, mediaType) {
         fetch(tmdbUrl).then(function(res) { return res.json(); }).then(function(data) {
             return fetch(BASE_URL + '/arama/' + encodeURIComponent(data.title));
         }).then(function(res) { return res.text(); }).then(function(searchHtml) {
+            // Arama sonucundan filmi bul
             var filmMatch = searchHtml.match(/<li[^>]*class=["']film["'][^>]*>[\s\S]*?<a[^>]+href=["']([^"']+)["']/i);
             if (!filmMatch) return resolve([]);
             
-            var filmUrl = filmMatch[1].indexOf('http') === -1 ? BASE_URL + filmMatch[1] : filmMatch[1];
+            var filmUrl = filmMatch[1].startsWith('http') ? filmMatch[1] : BASE_URL + filmMatch[1];
             return fetch(filmUrl).then(function(res) { 
                 return res.text().then(function(html) { return { html: html, url: filmUrl }; });
             });
-        }).then(function(obj) {
-            var scxMatch = obj.html.match(/scx\s*=\s*(\{[\s\S]*?\});/);
+        }).then(function(detail) {
+            // SCX değişkenini yakala (Sitedeki tüm kaynaklar burada gizli)
+            var scxMatch = detail.html.match(/scx\s*=\s*(\{[\s\S]*?\});/);
             if (!scxMatch) return resolve([]);
             
             var scx = JSON.parse(scxMatch[1]);
             var keys = ['atom', 'advid', 'proton', 'fast', 'tr', 'en'];
-            var results = [];
-            var pending = 0;
+            var streamPromises = [];
 
             keys.forEach(function(key) {
                 if (!scx[key] || !scx[key].sx || !scx[key].sx.t) return;
                 var t = scx[key].sx.t;
-                var rawLinks = Array.isArray(t) ? t : Object.values(t);
+                var links = Array.isArray(t) ? t : Object.values(t);
 
-                rawLinks.forEach(function(enc, index) {
-                    var decoded = atob(rot13(enc));
+                links.forEach(function(enc, index) {
+                    // ROT13 + Base64 Çözümü (Site standardı)
+                    var decoded = atob(enc.replace(/[a-zA-Z]/g, function(c){
+                        return String.fromCharCode((c<="Z"?90:122)>=(c=c.charCodeAt(0)+13)?c:c-26);
+                    }));
+
                     if (!decoded) return;
 
-                    // 1. Durum: Atom/Rapid/Vidmoxy gibi ayıklanması gereken kaynaklar
-                    if (decoded.indexOf('http') !== -1 && (decoded.indexOf('rapidvid') !== -1 || decoded.indexOf('vidmoxy') !== -1 || decoded.indexOf('atom') !== -1)) {
-                        pending++;
-                        fetch(decoded, { headers: { 'Referer': obj.url } })
-                            .then(function(r) { return r.text(); })
-                            .then(function(fHtml) {
-                                var fileMatch = fHtml.match(/file["']:\s*["']([^"']+)["']/);
-                                if (fileMatch) {
-                                    var finalUrl = hexToUrl(fileMatch[1]);
-                                    if (finalUrl) {
-                                        results.push({
-                                            name: '⌜ FHD ⌟ ' + key.toUpperCase() + ' #' + (index + 1),
-                                            url: finalUrl,
-                                            type: finalUrl.indexOf('.m3u8') !== -1 ? 'M3U8' : 'VIDEO',
-                                            headers: Object.assign({}, STREAM_HEADERS, { 'Referer': decoded })
-                                        });
-                                    }
-                                }
-                                pending--;
-                                if (pending === 0) resolve(results);
-                            }).catch(function() { 
-                                pending--; 
-                                if (pending === 0) resolve(results); 
-                            });
-                    } 
-                    // 2. Durum: Doğrudan m3u8 olan kaynaklar (Proton, Fast vb.)
-                    else if (decoded.indexOf('http') !== -1) {
-                        results.push({
+                    // Eğer Atom/Rapid gibi bir "ara sayfa" ise içine girip gerçek linki çek
+                    if (decoded.includes('atom') || decoded.includes('rapidvid') || decoded.includes('vidmoxy')) {
+                        streamPromises.push(
+                            extractAtomSource(decoded, detail.url).then(function(realVideoUrl) {
+                                if (!realVideoUrl) return null;
+                                return {
+                                    name: '⌜ FHD ⌟ ' + key.toUpperCase() + ' #' + (index + 1),
+                                    url: realVideoUrl,
+                                    type: realVideoUrl.includes('.m3u8') ? 'M3U8' : 'VIDEO',
+                                    headers: Object.assign({}, STREAM_HEADERS, { 'Referer': decoded }) // Sniff hatası için kritik
+                                };
+                            })
+                        );
+                    } else {
+                        // Doğrudan link ise (Proton, Fast vb.)
+                        streamPromises.push(Promise.resolve({
                             name: '⌜ FHD ⌟ ' + key.toUpperCase() + ' #' + (index + 1),
                             url: decoded,
-                            type: decoded.indexOf('.m3u8') !== -1 ? 'M3U8' : 'VIDEO',
-                            headers: Object.assign({}, STREAM_HEADERS, { 'Referer': obj.url })
-                        });
+                            type: decoded.includes('.m3u8') ? 'M3U8' : 'VIDEO',
+                            headers: Object.assign({}, STREAM_HEADERS, { 'Referer': detail.url })
+                        }));
                     }
                 });
             });
 
-            // Eğer hiç bekleyen (pending) işlem yoksa (sadece doğrudan linkler varsa) hemen dön
-            if (pending === 0) resolve(results);
-
+            return Promise.all(streamPromises);
+        }).then(function(results) {
+            resolve(results.filter(function(x) { return x !== null; }));
         }).catch(function() { resolve([]); });
     });
 }
-
-if (typeof module !== 'undefined') module.exports = { getStreams };
