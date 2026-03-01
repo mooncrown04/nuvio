@@ -1,5 +1,4 @@
 // ! Bu araç @keyiflerolsun tarafından | @KekikAkademi için yazılmıştır.
-// FullHDFilmizlesene - Gelişmiş Extractor ve Sniff Hatası Çözümlü Versiyon
 
 var BASE_URL = 'https://www.fullhdfilmizlesene.live';
 
@@ -10,17 +9,26 @@ var HEADERS = {
     'Referer': BASE_URL + '/'
 };
 
+// Video oynatılırken gönderilmesi gereken kritik başlıklar (DiziPal/SineWix örneğinden)
+var STREAM_HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+    'Accept': 'video/webm,video/ogg,video/*;q=0.9,application/ogg;q=0.7,audio/*;q=0.6,*/*;q=0.5',
+    'Referer': BASE_URL + '/',
+    'Origin': BASE_URL,
+    'Sec-Fetch-Dest': 'video',
+    'Sec-Fetch-Mode': 'no-cors',
+    'Sec-Fetch-Site': 'cross-site'
+};
+
 // ==================== YARDIMCI FONKSİYONLAR ====================
 
 function atobFixed(str) {
     try {
         if (typeof Buffer !== 'undefined') {
-            return Buffer.from(str, 'base64').toString('utf-8'); // 'binary' yerine 'utf-8'
+            return Buffer.from(str, 'base64').toString('utf-8');
         }
         return window.atob(str);
-    } catch (e) {
-        return null;
-    }
+    } catch (e) { return null; }
 }
 
 function rot13Fixed(str) {
@@ -34,31 +42,21 @@ function rot13Fixed(str) {
 
 function decodeLinkFixed(encoded) {
     try {
-        var result = atobFixed(rot13Fixed(encoded)); // ROT13 + Base64
+        var result = atobFixed(rot13Fixed(encoded));
         return (result && result.includes('http')) ? result : null;
-    } catch (e) {
-        return null;
-    }
+    } catch (e) { return null; }
 }
 
 function hexDecodeFixed(hexString) {
     if (!hexString) return null;
     try {
-        var bytes = [];
-        if (hexString.includes('\\x')) {
-            var parts = hexString.split('\\x');
-            for (var i = 1; i < parts.length; i++) {
-                bytes.push(parseInt(parts[i].substring(0, 2), 16));
-            }
-        } else {
-            for (var j = 0; j < hexString.length; j += 2) {
-                bytes.push(parseInt(hexString.substring(j, j + 2), 16));
-            }
+        var cleanHex = hexString.replace(/\\x/g, '').replace(/\\\\x/g, '');
+        var str = '';
+        for (var i = 0; i < cleanHex.length; i += 2) {
+            str += String.fromCharCode(parseInt(cleanHex.substr(i, 2), 16));
         }
-        return String.fromCharCode.apply(null, bytes); // Python bytes.fromhex() eşdeğeri
-    } catch (e) {
-        return null;
-    }
+        return str;
+    } catch (e) { return null; }
 }
 
 // ==================== EXTRACTOR'LAR ====================
@@ -69,8 +67,8 @@ function rapid2m3u8(url, referer) {
         .then(function(text) {
             var match = text.match(/file":\s*"(.*?)"/) || text.match(/file":"(.*?)"/);
             if (!match) return [];
-            var decoded = hexDecodeFixed(match[1].replace(/\\\\x/g, '\\x'));
-            return decoded ? [{ url: decoded, quality: '720p', type: 'M3U8' }] : [];
+            var decoded = hexDecodeFixed(match[1]);
+            return decoded ? [{ url: decoded, quality: '720p' }] : [];
         }).catch(function() { return []; });
 }
 
@@ -83,7 +81,7 @@ function trstx2m3u8(url, referer) {
             if (!match) return [];
             return fetch(baseUrl + '/' + match[1].replace(/\\/g, ''), {
                 method: 'POST',
-                headers: Object.assign({}, HEADERS, { 'Referer': referer, 'Content-Type': 'application/x-www-form-urlencoded' }),
+                headers: Object.assign({}, HEADERS, { 'Referer': referer }),
                 body: ''
             });
         })
@@ -95,22 +93,10 @@ function trstx2m3u8(url, referer) {
                     headers: Object.assign({}, HEADERS, { 'Referer': referer }),
                     body: ''
                 }).then(function(r) { return r.text(); })
-                  .then(function(url) { return { url: url.trim(), quality: item.title, type: 'M3U8' }; });
+                  .then(function(url) { return { url: url.trim(), quality: item.title }; });
             });
             return Promise.all(promises);
         }).catch(function() { return []; });
-}
-
-function extractVideoUrl(url, sourceKey, referer) {
-    if (url.includes('rapidvid.net') || url.includes('vidmoxy.com')) return rapid2m3u8(url, referer);
-    if (url.includes('trstx.org')) return trstx2m3u8(url, referer);
-    
-    // Direkt Linkler
-    var isDirect = ['proton', 'fast', 'tr', 'en'].some(function(k) { return sourceKey.toLowerCase().includes(k); });
-    if (isDirect || url.match(/\.(m3u8|mp4)/i)) {
-        return Promise.resolve([{ url: url, quality: '720p', type: url.includes('.m3u8') ? 'M3U8' : 'VIDEO' }]);
-    }
-    return Promise.resolve([]);
 }
 
 // ==================== ANA MANTIK ====================
@@ -119,8 +105,11 @@ function fetchDetailAndStreams(filmUrl) {
     return fetch(filmUrl, { headers: HEADERS })
         .then(function(res) { return res.text(); })
         .then(function(html) {
-            var title = (html.match(/<h1[^>]*>([^<]+)<\/h1>/i) || [null, 'FullHD'])[1].trim();
-            var year = (html.match(/(\d{4})/ ) || [null, null])[1];
+            var titleMatch = html.match(/<h1[^>]*>([^<]+)<\/h1>/i);
+            var title = titleMatch ? titleMatch[1].trim() : 'FullHD Film';
+            var yearMatch = html.match(/(\d{4})/);
+            var year = yearMatch ? yearMatch[1] : '';
+            
             var scxMatch = html.match(/scx\s*=\s*(\{[\s\S]*?\});/);
             if (!scxMatch) return [];
 
@@ -139,15 +128,29 @@ function fetchDetailAndStreams(filmUrl) {
                 items.forEach(function(item) {
                     var decoded = decodeLinkFixed(item.encoded);
                     if (decoded) {
-                        allPromises.push(extractVideoUrl(decoded, key, filmUrl).then(function(results) {
+                        var extractorPromise;
+                        if (decoded.includes('rapidvid.net') || decoded.includes('vidmoxy.com')) {
+                            extractorPromise = rapid2m3u8(decoded, filmUrl);
+                        } else if (decoded.includes('trstx.org')) {
+                            extractorPromise = trstx2m3u8(decoded, filmUrl);
+                        } else {
+                            extractorPromise = Promise.resolve([{ url: decoded, quality: '720p' }]);
+                        }
+
+                        allPromises.push(extractorPromise.then(function(results) {
                             return results.map(function(r) {
+                                // Dinamik Tip Belirleme (Kritik)
+                                var type = 'VIDEO';
+                                if (r.url.includes('.m3u8')) type = 'M3U8';
+                                else if (r.url.includes('.mpd')) type = 'DASH';
+
                                 return {
                                     name: '⌜ FullHD ⌟ | ' + item.label,
                                     title: title + (year ? ' (' + year + ')' : '') + ' · ' + r.quality,
                                     url: r.url,
                                     quality: r.quality,
-                                    headers: { 'User-Agent': HEADERS['User-Agent'], 'Referer': filmUrl, 'Origin': BASE_URL },
-                                    type: r.type,
+                                    headers: STREAM_HEADERS, // Yukarıdaki geniş başlıklar kullanılıyor
+                                    type: type,
                                     provider: 'fullhdfilmizlesene'
                                 };
                             });
@@ -160,17 +163,17 @@ function fetchDetailAndStreams(filmUrl) {
         .then(function(results) { return [].concat.apply([], results); });
 }
 
-// TMDB ve Arama fonksiyonları ilk kodun aynısıdır...
 function getStreams(tmdbId, mediaType) {
     if (mediaType !== 'movie') return Promise.resolve([]);
     var tmdbUrl = 'https://api.themoviedb.org/3/movie/' + tmdbId + '?language=tr-TR&api_key=4ef0d7355d9ffb5151e987764708ce96';
     
     return fetch(tmdbUrl).then(function(res) { return res.json(); }).then(function(data) {
-        return searchFullHD(data.title).then(function(results) {
-            var best = results[0]; // Basitleştirilmiş eşleşme
+        var searchTitle = data.title || data.original_title;
+        return searchFullHD(searchTitle).then(function(results) {
+            var best = results[0]; 
             return best ? fetchDetailAndStreams(best.url) : [];
         });
-    });
+    }).catch(function() { return []; });
 }
 
 function searchFullHD(title) {
@@ -178,10 +181,10 @@ function searchFullHD(title) {
         .then(function(res) { return res.text(); })
         .then(function(html) {
             var results = [];
-            var regex = /<li[^>]*class=["']film["'][^>]*>[\s\S]*?<a[^>]+href=["']([^"']+)["'][\s\S]*?<span[^>]+>([^<]+)<\/span>/gi;
+            var regex = /<li[^>]*class=["']film["'][^>]*>[\s\S]*?<a[^>]+href=["']([^"']+)["']/gi;
             var m;
             while ((m = regex.exec(html)) !== null) {
-                results.push({ url: m[1].startsWith('http') ? m[1] : BASE_URL + m[1], title: m[2].trim() });
+                results.push({ url: m[1].startsWith('http') ? m[1] : BASE_URL + m[1] });
             }
             return results;
         });
