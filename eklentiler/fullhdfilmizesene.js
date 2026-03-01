@@ -2,18 +2,11 @@
 
 var BASE_URL = 'https://www.fullhdfilmizlesene.live';
 
-// Site içi gezinti başlıkları
-var HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-    'Accept-Language': 'tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7',
-    'Referer': BASE_URL + '/'
-};
-
-// Player'ın "Source Error" vermemesi için gerekli kritik başlıklar (DiziPal/SineWix örneğinden)
+// Oynatıcı hatasını engellemek için gerekli standart başlıklar
 var STREAM_HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-    'Accept': 'video/webm,video/ogg,video/*;q=0.9,application/ogg;q=0.7,audio/*;q=0.6,*/*;q=0.5',
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Accept': '*/*',
+    'Accept-Language': 'tr-TR,tr;q=0.9',
     'Origin': BASE_URL,
     'Referer': BASE_URL + '/',
     'Sec-Fetch-Dest': 'video',
@@ -21,31 +14,27 @@ var STREAM_HEADERS = {
     'Sec-Fetch-Site': 'cross-site'
 };
 
-// ==================== YARDIMCI FONKSİYONLAR ====================
+// ==================== KRİTİK DECODE FONKSİYONLARI ====================
 
 function rot13(str) {
     if (!str) return null;
-    return str.replace(/[a-zA-Z]/g, function(char) {
-        var code = char.charCodeAt(0);
-        var base = code < 97 ? 65 : 97;
-        return String.fromCharCode(((code - base + 13) % 26) + base);
+    return str.replace(/[a-zA-Z]/g, function(c) {
+        return String.fromCharCode((c <= "Z" ? 90 : 122) >= (c = c.charCodeAt(0) + 13) ? c : c - 26);
     });
 }
 
 function decodeFHD(encoded) {
     try {
-        // Kotlin kodundaki mantık: atob(rtt(link)) -> Önce ROT13, sonra Base64
+        // Cloudstream Kotlin mantığı: Önce ROT13, sonra Base64
         var rotated = rot13(encoded);
         if (typeof Buffer !== 'undefined') {
             return Buffer.from(rotated, 'base64').toString('utf-8');
         }
         return window.atob(rotated);
-    } catch (e) {
-        return null;
-    }
+    } catch (e) { return null; }
 }
 
-// ==================== ANA MANTIK ====================
+// ==================== ANA MOTOR ====================
 
 function getStreams(tmdbId, mediaType) {
     return new Promise(function(resolve) {
@@ -55,46 +44,47 @@ function getStreams(tmdbId, mediaType) {
 
         fetch(tmdbUrl).then(res => res.json()).then(async data => {
             var searchUrl = BASE_URL + '/arama/' + encodeURIComponent(data.title);
-            var searchHtml = await (await fetch(searchUrl, { headers: HEADERS })).text();
+            var searchHtml = await (await fetch(searchUrl)).text();
             
-            // Film sayfasının URL'sini bul
+            // Film sayfasını bulma
             var filmMatch = searchHtml.match(/<li[^>]*class=["']film["'][^>]*>[\s\S]*?<a[^>]+href=["']([^"']+)["']/i);
             if (!filmMatch) return resolve([]);
             
             var filmUrl = filmMatch[1].startsWith('http') ? filmMatch[1] : BASE_URL + filmMatch[1];
-            var filmPage = await (await fetch(filmUrl, { headers: HEADERS })).text();
+            var filmPage = await (await fetch(filmUrl)).text();
 
-            // scx verisini ayıkla
+            // Sayfadaki scx değişkenini yakalama
             var scxMatch = filmPage.match(/scx\s*=\s*(\{[\s\S]*?\});/);
             if (!scxMatch) return resolve([]);
             
             var scx = JSON.parse(scxMatch[1]);
-            var results = [];
-            var keys = ['atom', 'advid', 'proton', 'fast', 'tr', 'en'];
+            var streams = [];
+            // Kotlin dosyasındaki tüm anahtar listesi
+            var keys = ['atom', 'advid', 'advidprox', 'proton', 'fast', 'fastly', 'tr', 'en'];
 
             keys.forEach(function(key) {
                 if (!scx[key] || !scx[key].sx || !scx[key].sx.t) return;
                 var t = scx[key].sx.t;
-
-                // t verisi dizi veya obje olabilir (Kotlin kodundaki kontrol)
                 var rawLinks = Array.isArray(t) ? t : Object.values(t);
 
                 rawLinks.forEach(function(enc, index) {
                     var decoded = decodeFHD(enc);
                     if (decoded && decoded.includes('http')) {
-                        results.push({
-                            name: '⌜ FullHD ⌟ | ' + key.toUpperCase() + (rawLinks.length > 1 ? ' #' + (index + 1) : ''),
-                            title: data.title + ' · HD',
+                        // Sniff hatasını önlemek için doğru tipi atamak şart
+                        var isM3U8 = decoded.includes('.m3u8') || decoded.includes('playlist');
+                        
+                        streams.push({
+                            name: '⌜ FullHD ⌟ ' + key.toUpperCase() + (rawLinks.length > 1 ? ' #' + (index + 1) : ''),
                             url: decoded,
-                            quality: '720p',
+                            title: data.title + ' · HD',
+                            type: isM3U8 ? 'M3U8' : 'VIDEO',
                             headers: Object.assign({}, STREAM_HEADERS, { 'Referer': filmUrl }),
-                            type: decoded.includes('m3u8') ? 'M3U8' : 'VIDEO',
                             provider: 'fullhdfilmizlesene'
                         });
                     }
                 });
             });
-            resolve(results);
+            resolve(streams);
         }).catch(() => resolve([]));
     });
 }
