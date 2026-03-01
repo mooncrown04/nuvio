@@ -1,5 +1,4 @@
 // ! Bu araç @keyiflerolsun tarafından | @KekikAkademi için yazılmıştır.
-
 var BASE_URL = 'https://www.fullhdfilmizlesene.live';
 
 var STREAM_HEADERS = {
@@ -12,35 +11,37 @@ var STREAM_HEADERS = {
     'Sec-Fetch-Site': 'cross-site'
 };
 
-// ==================== KRİTİK AYIKLAYICILAR ====================
+// ==================== YARDIMCI ARAÇLAR ====================
 
-function rot13(str) {
-    if (!str) return null;
-    return str.replace(/[a-zA-Z]/g, function(c) {
-        return String.fromCharCode((c <= "Z" ? 90 : 122) >= (c = c.charCodeAt(0) + 13) ? c : c - 26);
-    });
-}
-
-function decodeFHD(encoded) {
+function decodeFHD(enc) {
     try {
-        return atob(rot13(encoded));
+        // ROT13 + Base64
+        var rotated = enc.replace(/[a-zA-Z]/g, function(c) {
+            return String.fromCharCode((c <= "Z" ? 90 : 122) >= (c = c.charCodeAt(0) + 13) ? c : c - 26);
+        });
+        return atob(rotated);
     } catch (e) { return null; }
 }
 
-// RapidVid ve VidMoxy gibi servislerin içinden gerçek m3u8'i çekme
-async function extractExternal(url) {
+// RapidVid / VidMoxy içerisinden m3u8 ayıklama
+async function rapidExtractor(url, filmUrl) {
     try {
-        const res = await fetch(url, { headers: { 'Referer': BASE_URL + '/' } });
+        const res = await fetch(url, { headers: { 'Referer': filmUrl } });
         const text = await res.text();
-        // Sitenin içindeki 'file': '...' yapısını veya hex kodunu yakalar
-        const match = text.match(/file["']:\s*["']([^"']+)["']/) || text.match(/source\s*:\s*["']([^"']+)["']/);
+        // file": "hex_data" yapısını yakala
+        const match = text.match(/file["']:\s*["']([^"']+)["']/);
         if (match) {
-            let link = match[1];
-            // Eğer link hex kodlu gelirse (\x...) onu temizle (Python kodundaki mantık)
-            if (link.includes('\\x')) {
-                link = link.replace(/\\x/g, '').replace(/[^a-zA-Z0-9]/g, ''); // Basit temizleme
+            let data = match[1];
+            if (data.includes('\\x')) {
+                // Hex decode işlemi
+                data = data.replace(/\\\\x/g, '').replace(/\\x/g, '');
+                let str = '';
+                for (let i = 0; i < data.length; i += 2) {
+                    str += String.fromCharCode(parseInt(data.substr(i, 2), 16));
+                }
+                return str;
             }
-            return link;
+            return data;
         }
     } catch (e) { return null; }
     return url;
@@ -52,13 +53,10 @@ async function getStreams(tmdbId, mediaType) {
     if (mediaType !== 'movie') return [];
 
     try {
-        const tmdbUrl = `https://api.themoviedb.org/3/movie/${tmdbId}?language=tr-TR&api_key=4ef0d7355d9ffb5151e987764708ce96`;
-        const tmdbRes = await fetch(tmdbUrl);
+        const tmdbRes = await fetch(`https://api.themoviedb.org/3/movie/${tmdbId}?language=tr-TR&api_key=4ef0d7355d9ffb5151e987764708ce96`);
         const tmdbData = await tmdbRes.json();
         
-        const searchUrl = `${BASE_URL}/arama/${encodeURIComponent(tmdbData.title)}`;
-        const searchHtml = await (await fetch(searchUrl)).text();
-        
+        const searchHtml = await (await fetch(`${BASE_URL}/arama/${encodeURIComponent(tmdbData.title)}`)).text();
         const filmMatch = searchHtml.match(/<li[^>]*class="film"[^>]*>[\s\S]*?<a href="([^"]+)"/i);
         if (!filmMatch) return [];
         
@@ -81,33 +79,26 @@ async function getStreams(tmdbId, mediaType) {
                 let decoded = decodeFHD(enc);
                 if (!decoded) continue;
 
-                // EKSTRA AYIKLAMA (Kotlin/Python Mantığı)
-                // Eğer link bir iframe ise içeriğine girip gerçek m3u8'i almalıyız
-                if (decoded.includes('rapidvid') || decoded.includes('vidmoxy') || decoded.includes('trstx')) {
-                    const realUrl = await extractExternal(decoded);
-                    if (realUrl) decoded = realUrl;
+                // EXTRACTOR DEVREYE GİRİYOR
+                if (decoded.includes('rapidvid') || decoded.includes('vidmoxy') || decoded.includes('atom')) {
+                    const extracted = await rapidExtractor(decoded, filmUrl);
+                    if (extracted) decoded = extracted;
                 }
 
                 if (decoded.includes('http')) {
-                    const isM3U8 = decoded.includes('.m3u8') || decoded.includes('playlist');
-                    
                     streams.push({
                         name: `⌜ FullHD ⌟ ${key.toUpperCase()} #${index + 1}`,
                         url: decoded,
                         title: `${tmdbData.title} · HD`,
-                        type: isM3U8 ? 'M3U8' : 'VIDEO',
-                        headers: {
-                            ...STREAM_HEADERS,
-                            'Referer': filmUrl // Sunucunun videoyu reddetmemesi için şart
-                        }
+                        type: decoded.includes('m3u8') ? 'M3U8' : 'VIDEO',
+                        headers: { ...STREAM_HEADERS, 'Referer': filmUrl },
+                        provider: 'fullhdfilmizlesene'
                     });
                 }
             }
         }
         return streams;
-    } catch (e) {
-        return [];
-    }
+    } catch (e) { return []; }
 }
 
 if (typeof module !== 'undefined') module.exports = { getStreams };
