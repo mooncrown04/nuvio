@@ -1,5 +1,5 @@
 // ! Bu araç @keyiflerolsun tarafından | @KekikAkademi için yazılmıştır.
-// DiziYou JavaScript versiyonu - SineWix yapısı
+// DiziYou JavaScript versiyonu - SineWix/DiziPal yapısı
 
 var BASE_URL = 'https://www.diziyou.one';
 var STORAGE_URL = 'https://storage.diziyou.one';
@@ -161,9 +161,10 @@ function extractM3u8FromIframe(iframeSrc) {
     })
     .then(function(res) { return res.text(); })
     .then(function(html) {
-        // m3u8 ara
+        // m3u8 ara - DiziYou spesifik patternler
         var m3uMatch = html.match(/file:"([^"]+\.m3u8[^"]*)"/) ||
-                      html.match(/"file"\s*:\s*"([^"]+\.m3u8[^"]*)"/);
+                      html.match(/"file"\s*:\s*"([^"]+\.m3u8[^"]*)"/) ||
+                      html.match(/src:\s*['"]([^'"]+\.m3u8[^'"]*)['"]/);
         
         if (!m3uMatch) return null;
         
@@ -194,11 +195,14 @@ function fetchDetailAndStreams(diziyouId, mediaType, seasonNum, episodeNum) {
                             html.match(/<title>([^<]+)<\/title>/i);
             var title = titleMatch ? titleMatch[1].trim() : 'DiziYou';
             
-            var yearMatch = html.match(/(\d{4})/);
+            var yearMatch = html.match(/Yapım Yılı<\/span>\s*(\d{4})/i) ||
+                           html.match(/(\d{4})/);
             var year = yearMatch ? yearMatch[1] : null;
 
-            // iframe bul
-            var iframeMatch = html.match(/<iframe[^>]+src="([^"]+)"[^>]*class="[^"]*(?:responsive-player|series-player)[^"]*"/) ||
+            // DiziYou iframe patternleri
+            var iframeMatch = html.match(/<iframe[^>]*id="diziyouPlayer"[^>]+src="([^"]+)"/) ||
+                             html.match(/<iframe[^>]+src="([^"]+)"[^>]*id="diziyouPlayer"/) ||
+                             html.match(/<iframe[^>]+src="([^"]+)"[^>]*class="[^"]*(?:responsive-player|series-player)[^"]*"/) ||
                              html.match(/class="[^"]*(?:responsive-player|series-player)[^"]*"[^>]*>[\s\S]*?<iframe[^>]+src="([^"]+)"/) ||
                              html.match(/<div[^>]*id="vast_new"[^>]*>[\s\S]*?<iframe[^>]+src="([^"]+)"/) ||
                              html.match(/<iframe[^>]+src="([^"]+)"/);
@@ -224,15 +228,39 @@ function fetchDetailAndStreams(diziyouId, mediaType, seasonNum, episodeNum) {
                         .then(function(parsed) {
                             var videoLinks = [];
 
+                            // DiziYou'da Türkçe dublaj ve altyazılı seçenekleri var
+                            // Seçenekleri kontrol et
+                            var hasTurkceDublaj = html.includes('turkceDublaj') || 
+                                                 html.includes('Türkçe Dublaj') ||
+                                                 result.url.includes('_tr');
+                            
+                            var hasAltyazili = html.includes('turkceAltyazili') || 
+                                              html.includes('Orjinal Dil') ||
+                                              !hasTurkceDublaj;
+
                             if (parsed.qualities.length > 0) {
-                                videoLinks.push({
-                                    name: 'Altyazılı',
-                                    qualities: parsed.qualities,
-                                    iframeOrigin: result.iframeOrigin
-                                });
+                                if (hasAltyazili) {
+                                    videoLinks.push({
+                                        name: 'Altyazılı',
+                                        qualities: parsed.qualities,
+                                        iframeOrigin: result.iframeOrigin
+                                    });
+                                }
+                                
+                                // Türkçe dublaj için farklı URL patterni kontrolü
+                                if (hasTurkceDublaj) {
+                                    var trUrl = result.url.replace('/play.m3u8', '_tr/play.m3u8');
+                                    videoLinks.push({
+                                        name: 'Türkçe Dublaj',
+                                        url: trUrl,
+                                        quality: '720p',
+                                        iframeOrigin: result.iframeOrigin
+                                    });
+                                }
                             } else {
+                                // Tek kalite
                                 videoLinks.push({
-                                    name: 'Altyazılı',
+                                    name: hasTurkceDublaj ? 'Türkçe Dublaj' : 'Altyazılı',
                                     url: result.url,
                                     quality: '720p',
                                     iframeOrigin: result.iframeOrigin
@@ -260,7 +288,7 @@ function searchDiziYou(title) {
         .then(function(html) {
             var results = [];
             
-            // Link pattern
+            // DiziYou arama sonuçları patterni
             var linkRegex = /<a[^>]+href="(https:\/\/www\.diziyou\.one\/dizi\/[^"]+)"[^>]*title="([^"]+)"/gi;
             var match;
             
