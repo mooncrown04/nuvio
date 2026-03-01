@@ -1,8 +1,22 @@
 {
-  "name": "kerim nuvio",
+  "name": "mooncrown",
   "version": "1.0.0",
   "scrapers": [
-    {
+   
+	      {
+      "id": "inattv",
+      "name": "InatTv",
+      "description": "Türkçe film, dizi ve anime - 5000+ HD içerik, Türkçe altyazılı, anime arşivi",
+      "version": "1.0.0",
+      "author": "kerimmkirac",
+      "supportedTypes": ["movie", "tv"],
+      "filename": "eklentiler/inattv.js",
+      "enabled": true,
+      "formats": ["mp4", "mkv"],
+      "logo": "https://play-lh.googleusercontent.com/brwGNmr7IjA_MKk_TTPs0va10hdKE_bD_a1lnKoiMuCayW98EHpRv55edA6aEoJlmwfX=w240-h480",
+      "contentLanguage": ["tr"]
+    },
+	  {
       "id": "sinewix",
       "name": "SineWix",
       "description": "Türkçe film, dizi ve anime - 5000+ HD içerik, Türkçe altyazılı, anime arşivi",
