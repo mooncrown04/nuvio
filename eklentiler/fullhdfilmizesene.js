@@ -1,5 +1,5 @@
-// FullHDFilmizlesene - JavaScript Extractor (Sinewix/DiziPal yapısında)
 // ! Bu araç @keyiflerolsun tarafından | @KekikAkademi için yazılmıştır.
+// FullHDFilmizlesene - DÜZELTİLMİŞ VERSİYON
 
 var BASE_URL = 'https://www.fullhdfilmizlesene.live';
 
@@ -10,6 +10,7 @@ var HEADERS = {
     'Referer': BASE_URL + '/'
 };
 
+// STREAM_HEADERS'a type belirtmek için kullanılacak
 var STREAM_HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     'Accept': 'video/webm,video/ogg,video/*;q=0.9,application/ogg;q=0.7,audio/*;q=0.6,*/*;q=0.5',
@@ -23,9 +24,9 @@ var STREAM_HEADERS = {
     'DNT': '1'
 };
 
-// ==================== YARDIMCI FONKSİYONLAR ====================
+// ==================== YARDIMCI FONKSİYONLAR (Sizinkiler Aynı) ====================
 
-function atob(str) {
+function atobFixed(str) {
     try {
         if (typeof Buffer !== 'undefined') {
             return Buffer.from(str, 'base64').toString('utf-8');
@@ -36,7 +37,7 @@ function atob(str) {
     }
 }
 
-function rot13(str) {
+function rot13Fixed(str) {
     if (!str) return null;
     return str.replace(/[a-zA-Z]/g, function(char) {
         var code = char.charCodeAt(0);
@@ -45,22 +46,28 @@ function rot13(str) {
     });
 }
 
-function decodeLink(encoded) {
+function decodeLinkFixed(encoded) {
     try {
-        var result = atob(rot13(encoded));
-        return (result && result.startsWith('http')) ? result : null;
+        var result = atobFixed(rot13Fixed(encoded));
+        return (result && result.includes('http')) ? result : null;
     } catch (e) {
         return null;
     }
 }
 
-function hexDecode(hexString) {
+function hexDecodeFixed(hexString) {
     if (!hexString) return null;
     try {
-        var cleaned = hexString.replace(/\\x/g, '');
         var bytes = [];
-        for (var i = 0; i < cleaned.length; i += 2) {
-            bytes.push(parseInt(cleaned.substr(i, 2), 16));
+        if (hexString.includes('\\x')) {
+            var parts = hexString.split('\\x');
+            for (var i = 1; i < parts.length; i++) {
+                bytes.push(parseInt(parts[i].substring(0, 2), 16));
+            }
+        } else {
+            for (var j = 0; j < hexString.length; j += 2) {
+                bytes.push(parseInt(hexString.substring(j, j + 2), 16));
+            }
         }
         return String.fromCharCode.apply(null, bytes);
     } catch (e) {
@@ -68,447 +75,273 @@ function hexDecode(hexString) {
     }
 }
 
-// ==================== EXTRACTOR'LAR ====================
+// ==================== EXTRACTOR'LAR (Düzeltilmiş) ====================
 
-function extractRapidVid(url, referer) {
-    return fetch(url, {
-        headers: Object.assign({}, HEADERS, { 'Referer': referer })
-    })
-    .then(function(res) { return res.text(); })
-    .then(function(text) {
-        var links = [];
-        
-        // Hex encoded video
-        var hexMatch = text.match(/file":\s*"(\\x[0-9a-fA-F\\]+)"/) || 
-                       text.match(/file":"(\\x[0-9a-fA-F\\]+)"/);
-        
-        if (hexMatch) {
-            var decoded = hexDecode(hexMatch[1]);
-            if (decoded && decoded.includes('.m3u8')) {
-                links.push({
-                    url: decoded,
-                    quality: '720p',
-                    type: 'M3U8'
-                });
+function rapid2m3u8(url, referer) {
+    return fetch(url, { headers: Object.assign({}, HEADERS, { 'Referer': referer }) })
+        .then(function(res) { return res.text(); })
+        .then(function(text) {
+            var links = [];
+            
+            // Hex decode
+            var hexMatch = text.match(/file":\s*"(\\x[0-9a-fA-F\\]+)"/) || 
+                           text.match(/file":"(\\x[0-9a-fA-F\\]+)"/);
+            
+            if (hexMatch) {
+                var decoded = hexDecodeFixed(hexMatch[1].replace(/\\\\x/g, '\\x'));
+                if (decoded && decoded.includes('.m3u8')) {
+                    links.push({ 
+                        url: decoded, 
+                        quality: '720p', 
+                        type: 'M3U8'  // EKSİK OLAN BU!
+                    });
+                }
             }
-        }
-        
-        // Eval/unpack kontrolü
-        if (links.length === 0) {
-            var unpackMatch = text.match(/\};\s*(eval\(function[\s\S]*?)var played = \d+;/);
-            if (unpackMatch) {
-                console.log('[FullHD] RapidVid packed code found');
-                // Unpack gerekirse buraya eklenecek
-            }
-        }
-        
-        return links;
-    })
-    .catch(function(err) {
-        console.error('[FullHD] RapidVid error:', err.message);
-        return [];
-    });
+            
+            return links;
+        })
+        .catch(function() { return []; });
 }
 
-function extractTRsTX(url, referer) {
+function trstx2m3u8(url, referer) {
     var baseUrl = 'https://trstx.org';
     
-    return fetch(url, {
-        headers: Object.assign({}, HEADERS, { 'Referer': referer })
-    })
-    .then(function(res) { return res.text(); })
-    .then(function(text) {
-        var fileMatch = text.match(/file":"([^"]+)/);
-        if (!fileMatch) throw new Error('File not found');
-        
-        var postUrl = baseUrl + '/' + fileMatch[1].replace(/\\/g, '');
-        return fetch(postUrl, {
-            method: 'POST',
-            headers: Object.assign({}, HEADERS, { 
-                'Referer': referer,
-                'Content-Type': 'application/x-www-form-urlencoded'
-            }),
-            body: ''
-        });
-    })
-    .then(function(res) { return res.json(); })
-    .then(function(postData) {
-        var promises = postData.slice(1).map(function(item) {
-            var playlistUrl = baseUrl + '/playlist/' + item.file.substring(1) + '.txt';
-            return fetch(playlistUrl, {
+    return fetch(url, { headers: Object.assign({}, HEADERS, { 'Referer': referer }) })
+        .then(function(res) { return res.text(); })
+        .then(function(text) {
+            var match = text.match(/file":"([^"]+)/);
+            if (!match) return [];
+            
+            return fetch(baseUrl + '/' + match[1].replace(/\\/g, ''), {
                 method: 'POST',
-                headers: Object.assign({}, HEADERS, { 'Referer': referer }),
+                headers: Object.assign({}, HEADERS, { 
+                    'Referer': referer,
+                    'Content-Type': 'application/x-www-form-urlencoded'
+                }),
                 body: ''
-            })
-            .then(function(r) { return r.text(); })
-            .then(function(videoUrl) {
-                return {
-                    url: videoUrl.trim(),
-                    quality: item.title || '720p',
-                    type: 'M3U8'
-                };
             });
-        });
-        return Promise.all(promises);
-    })
-    .catch(function(err) {
-        console.error('[FullHD] TRsTX error:', err.message);
-        return [];
-    });
+        })
+        .then(function(res) { return res.json(); })
+        .then(function(postData) {
+            var promises = postData.slice(1).map(function(item) {
+                return fetch(baseUrl + '/playlist/' + item.file.substring(1) + '.txt', {
+                    method: 'POST',
+                    headers: Object.assign({}, HEADERS, { 'Referer': referer }),
+                    body: ''
+                })
+                .then(function(r) { return r.text(); })
+                .then(function(videoUrl) {
+                    return { 
+                        url: videoUrl.trim(), 
+                        quality: item.title || '720p',
+                        type: 'M3U8'  // EKSİK OLAN BU!
+                    };
+                });
+            });
+            return Promise.all(promises);
+        })
+        .catch(function() { return []; });
 }
 
-function extractSobreatsesuyp(url, referer) {
+function sobreatsesuyp2m3u8(url, referer) {
     var baseUrl = 'https://sobreatsesuyp.com';
     
-    return fetch(url, {
-        headers: Object.assign({}, HEADERS, { 'Referer': referer })
-    })
-    .then(function(res) { return res.text(); })
-    .then(function(text) {
-        var fileMatch = text.match(/file":"([^"]+)/);
-        if (!fileMatch) throw new Error('File not found');
-        
-        var postUrl = baseUrl + '/' + fileMatch[1].replace(/\\/g, '');
-        return fetch(postUrl, {
-            method: 'POST',
-            headers: Object.assign({}, HEADERS, { 
-                'Referer': referer,
-                'Content-Type': 'application/x-www-form-urlencoded'
-            }),
-            body: ''
-        });
-    })
-    .then(function(res) { return res.json(); })
-    .then(function(postData) {
-        var promises = postData.slice(1).map(function(item) {
-            var playlistUrl = baseUrl + '/playlist/' + item.file.substring(1) + '.txt';
-            return fetch(playlistUrl, {
+    return fetch(url, { headers: Object.assign({}, HEADERS, { 'Referer': referer }) })
+        .then(function(res) { return res.text(); })
+        .then(function(text) {
+            var match = text.match(/file":"([^"]+)/);
+            if (!match) return [];
+            
+            return fetch(baseUrl + '/' + match[1].replace(/\\/g, ''), {
                 method: 'POST',
-                headers: Object.assign({}, HEADERS, { 'Referer': referer }),
+                headers: Object.assign({}, HEADERS, { 
+                    'Referer': referer,
+                    'Content-Type': 'application/x-www-form-urlencoded'
+                }),
                 body: ''
-            })
-            .then(function(r) { return r.text(); })
-            .then(function(videoUrl) {
-                return {
-                    url: videoUrl.trim(),
-                    quality: item.title || '720p',
-                    type: 'VIDEO'
-                };
             });
-        });
-        return Promise.all(promises);
-    })
-    .catch(function(err) {
-        console.error('[FullHD] Sobreatsesuyp error:', err.message);
-        return [];
-    });
-}
-
-function extractTurboImgz(url, referer) {
-    return fetch(url, {
-        headers: Object.assign({}, HEADERS, { 'Referer': referer })
-    })
-    .then(function(res) { return res.text(); })
-    .then(function(text) {
-        var match = text.match(/file:\s*"(.*?)"/);
-        return match ? match[1] : null;
-    })
-    .catch(function(err) {
-        console.error('[FullHD] TurboImgz error:', err.message);
-        return null;
-    });
-}
-
-function extractVidMoxy(url, referer) {
-    // VidMoxy RapidVid ile aynı mantıkta çalışır
-    return extractRapidVid(url, referer);
-}
-
-// ==================== ANA MANTIK ====================
-
-function getVideoLinks(html) {
-    var scxMatch = html.match(/scx\s*=\s*(\{[\s\S]*?\});/);
-    if (!scxMatch) {
-        console.log('[FullHD] scx data not found');
-        return [];
-    }
-
-    var scxData;
-    try {
-        scxData = JSON.parse(scxMatch[1]);
-    } catch (e) {
-        console.error('[FullHD] JSON parse error:', e.message);
-        return [];
-    }
-
-    var keys = ['atom', 'advid', 'advidprox', 'proton', 'fast', 'fastly', 'tr', 'en'];
-    var links = [];
-
-    keys.forEach(function(key) {
-        var sourceData = scxData[key];
-        if (!sourceData || !sourceData.sx || !sourceData.sx.t) return;
-        
-        var t = sourceData.sx.t;
-        
-        if (Array.isArray(t)) {
-            t.forEach(function(encoded, index) {
-                var decoded = decodeLink(encoded);
-                if (decoded) {
-                    links.push({
-                        source: key.toUpperCase() + ' #' + (index + 1),
-                        url: decoded,
-                        type: key
-                    });
-                }
+        })
+        .then(function(res) { return res.json(); })
+        .then(function(postData) {
+            var promises = postData.slice(1).map(function(item) {
+                return fetch(baseUrl + '/playlist/' + item.file.substring(1) + '.txt', {
+                    method: 'POST',
+                    headers: Object.assign({}, HEADERS, { 'Referer': referer }),
+                    body: ''
+                })
+                .then(function(r) { return r.text(); })
+                .then(function(videoUrl) {
+                    return { 
+                        url: videoUrl.trim(), 
+                        quality: item.title || '720p',
+                        type: 'M3U8'  // EKSİK OLAN BU!
+                    };
+                });
             });
-        } else if (typeof t === 'object') {
-            Object.keys(t).forEach(function(k) {
-                var decoded = decodeLink(t[k]);
-                if (decoded) {
-                    links.push({
-                        source: key.toUpperCase() + ' ' + k,
-                        url: decoded,
-                        type: key
-                    });
-                }
-            });
-        }
-    });
-
-    return links;
+            return Promise.all(promises);
+        })
+        .catch(function() { return []; });
 }
+
+function turboimgz2m3u8(url, referer) {
+    return fetch(url, { headers: Object.assign({}, HEADERS, { 'Referer': referer }) })
+        .then(function(res) { return res.text(); })
+        .then(function(text) {
+            var match = text.match(/file:\s*"(.*?)"/);
+            return match ? { 
+                url: match[1], 
+                quality: '720p',
+                type: 'M3U8'  // EKSİK OLAN BU!
+            } : null;
+        })
+        .catch(function() { return null; });
+}
+
+// ==================== ANA MANTIK (Sizinkine Çok Benzer) ====================
 
 function fetchDetailAndStreams(filmUrl) {
-    console.log('[FullHD] Fetching:', filmUrl);
-    
     return fetch(filmUrl, { headers: HEADERS })
         .then(function(res) { return res.text(); })
         .then(function(html) {
-            // Title ve year çıkar
             var titleMatch = html.match(/<h1[^>]*>([^<]+)<\/h1>/i);
             var title = titleMatch ? titleMatch[1].trim() : 'FullHD Film';
-            
             var yearMatch = html.match(/(\d{4})/);
             var year = yearMatch ? yearMatch[1] : null;
 
-            var videoLinks = getVideoLinks(html);
-            console.log('[FullHD] Found', videoLinks.length, 'encoded links');
+            var scxMatch = html.match(/scx\s*=\s*(\{[\s\S]*?\});/);
+            if (!scxMatch) return [];
 
-            if (videoLinks.length === 0) return [];
+            var scxData;
+            try {
+                scxData = JSON.parse(scxMatch[1]);
+            } catch (e) {
+                return [];
+            }
 
-            // Her link için extractor çalıştır
-            var promises = videoLinks.map(function(linkInfo) {
-                var url = linkInfo.url;
-                var sourceName = linkInfo.source;
+            var keys = ['atom', 'advid', 'advidprox', 'proton', 'fast', 'fastly', 'tr', 'en'];
+            var allPromises = [];
+
+            keys.forEach(function(key) {
+                var sourceData = scxData[key];
+                if (!sourceData || !sourceData.sx || !sourceData.sx.t) return;
                 
-                if (url.includes('rapidvid.net')) {
-                    return extractRapidVid(url, filmUrl).then(function(results) {
-                        return results.map(function(r) {
-                            return {
-                                name: '⌜ FullHD ⌟ | ' + sourceName,
-                                title: title + (year ? ' (' + year + ')' : '') + ' · ' + r.quality,
-                                url: r.url,
-                                quality: r.quality,
-                                headers: STREAM_HEADERS,
-                                type: r.type,
-                                provider: 'fullhdfilmizlesene'
-                            };
-                        });
+                var t = sourceData.sx.t;
+                var items = [];
+
+                if (Array.isArray(t)) {
+                    items = t.map(function(v, i) { 
+                        return { encoded: v, label: key.toUpperCase() + ' #' + (i+1) }; 
+                    });
+                } else if (typeof t === 'object') {
+                    items = Object.keys(t).map(function(k) { 
+                        return { encoded: t[k], label: key.toUpperCase() + ' ' + k }; 
                     });
                 }
-                
-                if (url.includes('trstx.org')) {
-                    return extractTRsTX(url, filmUrl).then(function(results) {
-                        return results.map(function(r) {
-                            return {
-                                name: '⌜ FullHD ⌟ | ' + sourceName + ' | ' + r.quality,
-                                title: title + (year ? ' (' + year + ')' : '') + ' · ' + r.quality,
-                                url: r.url,
-                                quality: r.quality,
-                                headers: STREAM_HEADERS,
-                                type: r.type,
-                                provider: 'fullhdfilmizlesene'
-                            };
-                        });
-                    });
-                }
-                
-                if (url.includes('sobreatsesuyp.com')) {
-                    return extractSobreatsesuyp(url, filmUrl).then(function(results) {
-                        return results.map(function(r) {
-                            return {
-                                name: '⌜ FullHD ⌟ | ' + sourceName + ' | ' + r.quality,
-                                title: title + (year ? ' (' + year + ')' : '') + ' · ' + r.quality,
-                                url: r.url,
-                                quality: r.quality,
-                                headers: STREAM_HEADERS,
-                                type: r.type,
-                                provider: 'fullhdfilmizlesene'
-                            };
-                        });
-                    });
-                }
-                
-                if (url.includes('turbo.imgz.me')) {
-                    return extractTurboImgz(url, filmUrl).then(function(videoUrl) {
-                        if (!videoUrl) return [];
-                        return [{
-                            name: '⌜ FullHD ⌟ | ' + sourceName,
-                            title: title + (year ? ' (' + year + ')' : ''),
-                            url: videoUrl,
+
+                items.forEach(function(item) {
+                    var decoded = decodeLinkFixed(item.encoded);
+                    if (!decoded) return;
+
+                    var promise;
+                    
+                    if (decoded.includes('rapidvid.net') || decoded.includes('vidmoxy.com')) {
+                        promise = rapid2m3u8(decoded, filmUrl);
+                    } else if (decoded.includes('trstx.org')) {
+                        promise = trstx2m3u8(decoded, filmUrl);
+                    } else if (decoded.includes('sobreatsesuyp.com')) {
+                        promise = sobreatsesuyp2m3u8(decoded, filmUrl);
+                    } else if (decoded.includes('turbo.imgz.me')) {
+                        promise = Promise.resolve([turboimgz2m3u8(decoded, filmUrl)]);
+                    } else {
+                        // Direkt linkler
+                        var isM3u8 = decoded.includes('.m3u8');
+                        promise = Promise.resolve([{ 
+                            url: decoded, 
                             quality: '720p',
-                            headers: STREAM_HEADERS,
-                            type: 'M3U8',
-                            provider: 'fullhdfilmizlesene'
-                        }];
-                    });
-                }
-                
-                if (url.includes('vidmoxy.com')) {
-                    return extractVidMoxy(url, filmUrl).then(function(results) {
-                        return results.map(function(r) {
+                            type: isM3u8 ? 'M3U8' : 'VIDEO'  // EKSİK OLAN BU!
+                        }]);
+                    }
+
+                    allPromises.push(promise.then(function(results) {
+                        if (!Array.isArray(results)) results = results ? [results] : [];
+                        
+                        return results.filter(function(r) { return r && r.url; }).map(function(r) {
                             return {
-                                name: '⌜ FullHD ⌟ | ' + sourceName,
+                                name: '⌜ FullHD ⌟ | ' + item.label,
                                 title: title + (year ? ' (' + year + ')' : '') + ' · ' + r.quality,
                                 url: r.url,
                                 quality: r.quality,
                                 headers: STREAM_HEADERS,
-                                type: r.type,
+                                type: r.type,  // BURADA TYPE EKLENİYOR
                                 provider: 'fullhdfilmizlesene'
                             };
                         });
-                    });
-                }
-                
-                // Direkt linkler (proton, fast, tr, en)
-                if (url.match(/\.(m3u8|mp4)$/i) || 
-                    ['proton', 'fast', 'tr', 'en'].some(function(k) { 
-                        return linkInfo.type.toLowerCase().includes(k); 
-                    })) {
-                    var isM3u8 = url.includes('.m3u8');
-                    return Promise.resolve([{
-                        name: '⌜ FullHD ⌟ | ' + sourceName,
-                        title: title + (year ? ' (' + year + ')' : ''),
-                        url: url,
-                        quality: '720p',
-                        headers: STREAM_HEADERS,
-                        type: isM3u8 ? 'M3U8' : 'VIDEO',
-                        provider: 'fullhdfilmizlesene'
-                    }]);
-                }
-                
-                return Promise.resolve([]);
+                    }));
+                });
             });
 
-            return Promise.all(promises);
+            return Promise.all(allPromises);
         })
         .then(function(results) {
-            // Flatten array
             var streams = [];
-            results.forEach(function(r) {
-                if (Array.isArray(r)) streams = streams.concat(r);
+            results.forEach(function(r) { 
+                if (Array.isArray(r)) streams = streams.concat(r); 
             });
             return streams.filter(function(s) { return s && s.url; });
         });
 }
 
 function searchFullHD(title) {
-    var searchUrl = BASE_URL + '/arama/' + encodeURIComponent(title);
-    console.log('[FullHD] Search URL:', searchUrl);
-    
-    return fetch(searchUrl, { headers: HEADERS })
+    return fetch(BASE_URL + '/arama/' + encodeURIComponent(title), { headers: HEADERS })
         .then(function(res) { return res.text(); })
         .then(function(html) {
             var results = [];
-            // film listesi regex
             var regex = /<li[^>]*class=["']film["'][^>]*>[\s\S]*?<a[^>]+href=["']([^"']+)["'][\s\S]*?<span[^>]+class=["']film-title["'][^>]*>([^<]+)<\/span>/gi;
             var match;
             
             while ((match = regex.exec(html)) !== null) {
-                results.push({
-                    url: match[1].startsWith('http') ? match[1] : BASE_URL + match[1],
-                    title: match[2].trim()
+                results.push({ 
+                    url: match[1].startsWith('http') ? match[1] : BASE_URL + match[1], 
+                    title: match[2].trim() 
                 });
             }
-            
-            console.log('[FullHD] Search results:', results.length);
             return results;
         });
 }
 
-function findBestMatch(results, query) {
-    if (!results || results.length === 0) return null;
-    
-    var queryLower = query.toLowerCase();
-    
-    // Tam eşleşme
-    for (var i = 0; i < results.length; i++) {
-        if (results[i].title.toLowerCase() === queryLower) return results[i];
-    }
-    
-    // İçeren eşleşme
-    for (var j = 0; j < results.length; j++) {
-        if (results[j].title.toLowerCase().includes(queryLower)) return results[j];
-    }
-    
-    // İlk sonuç
-    return results[0];
-}
-
-// ==================== TMDB ENTEGRASYONU ====================
-
 function getStreams(tmdbId, mediaType) {
     return new Promise(function(resolve, reject) {
         if (mediaType !== 'movie') {
-            console.log('[FullHD] Only movies supported');
             resolve([]);
             return;
         }
 
         var tmdbUrl = 'https://api.themoviedb.org/3/movie/' + tmdbId + 
             '?language=tr-TR&api_key=4ef0d7355d9ffb5151e987764708ce96';
-        
-        console.log('[FullHD] Starting for tmdbId:', tmdbId);
 
         fetch(tmdbUrl)
             .then(function(res) { return res.json(); })
             .then(function(data) {
                 var title = data.title || data.original_title || '';
-                console.log('[FullHD] TMDB title:', title);
-                
                 if (!title) {
                     resolve([]);
-                    return Promise.resolve(null);
+                    return null;
                 }
-                
                 return searchFullHD(title);
             })
             .then(function(results) {
-                if (!results || results.length === 0) {
-                    console.log('[FullHD] No search results');
-                    return [];
-                }
-                
-                var best = findBestMatch(results, title);
-                if (!best) {
-                    console.log('[FullHD] No match found');
-                    return [];
-                }
-                
-                console.log('[FullHD] Best match:', best.title, best.url);
-                return fetchDetailAndStreams(best.url);
+                if (!results || results.length === 0) return [];
+                return fetchDetailAndStreams(results[0].url);
             })
             .then(function(streams) {
                 resolve(streams || []);
             })
             .catch(function(err) {
-                console.error('[FullHD] Error:', err.message);
+                console.error('[FullHD] Error:', err);
                 resolve([]);
             });
     });
 }
-
-// ==================== EXPORT ====================
 
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = { getStreams };
