@@ -1,23 +1,22 @@
 /**
- * FullHDFilmizlesene - Gelişmiş Çözücü
- * Hem linkleri listeler hem de şifreli kaynakları (Atom/Rapid) oynatılabilir yapar.
+ * FullHDFilmizlesene - Hata Arındırılmış (No-Sniff) Versiyon
+ * 1004 ve 3003 hatalarını çözer.
  */
 
 var BASE_URL = 'https://www.fullhdfilmizlesene.live';
 
+// Sniff hatasını engelleyen en kritik header seti
 var HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-    'Accept-Language': 'tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7',
-    'Referer': BASE_URL + '/'
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+    'Accept': '*/*',
+    'Accept-Language': 'tr-TR,tr;q=0.9',
+    'X-Requested-With': 'XMLHttpRequest'
 };
 
-// ==================== YARDIMCI ÇÖZÜCÜLER ====================
+// ==================== YARDIMCI ARAÇLAR ====================
 
 function atobFixed(str) {
-    try {
-        return (typeof Buffer !== 'undefined') ? Buffer.from(str, 'base64').toString('utf-8') : atob(str);
-    } catch (e) { return null; }
+    try { return (typeof Buffer !== 'undefined') ? Buffer.from(str, 'base64').toString('utf-8') : atob(str); } catch (e) { return null; }
 }
 
 function rot13Fixed(str) {
@@ -27,8 +26,8 @@ function rot13Fixed(str) {
     });
 }
 
-// Kotlin dosyasındaki hex temizleme mantığı (Oynatma hatasını çözen kısım)
-function cleanHex(hex) {
+// 1004 Hatasını Çözen Hex-Decoder (Kotlin dosyasındaki mantık)
+function decodeHexVideo(hex) {
     try {
         var raw = hex.replace(/\\\\x/g, '').replace(/\\x/g, '');
         var res = '';
@@ -39,7 +38,7 @@ function cleanHex(hex) {
     } catch (e) { return null; }
 }
 
-// ==================== ANA MOTOR ====================
+// ==================== ANA AKIŞ ====================
 
 function getStreams(tmdbId, mediaType) {
     if (mediaType !== 'movie') return Promise.resolve([]);
@@ -49,25 +48,14 @@ function getStreams(tmdbId, mediaType) {
     return fetch(tmdbUrl)
         .then(function(res) { return res.json(); })
         .then(function(data) {
-            return searchFullHD(data.title);
+            return fetch(BASE_URL + '/arama/' + encodeURIComponent(data.title), { headers: HEADERS });
         })
-        .then(function(results) {
-            var best = results[0];
-            return best ? fetchDetailAndStreams(best.url) : [];
-        });
-}
-
-function searchFullHD(title) {
-    return fetch(BASE_URL + '/arama/' + encodeURIComponent(title), { headers: HEADERS })
         .then(function(res) { return res.text(); })
         .then(function(html) {
-            var results = [];
-            var regex = /<li[^>]*class=["']film["'][^>]*>[\s\S]*?<a[^>]+href=["']([^"']+)["']/gi;
-            var match;
-            while ((match = regex.exec(html)) !== null) {
-                results.push({ url: match[1].startsWith('http') ? match[1] : BASE_URL + match[1] });
-            }
-            return results;
+            var match = html.match(/<li[^>]*class=["']film["'][^>]*>[\s\S]*?<a[^>]+href=["']([^"']+)["']/i);
+            if (!match) return [];
+            var movieUrl = match[1].startsWith('http') ? match[1] : BASE_URL + match[1];
+            return fetchDetailAndStreams(movieUrl);
         });
 }
 
@@ -81,41 +69,45 @@ function fetchDetailAndStreams(movieUrl) {
             var scx = JSON.parse(scxMatch[1]);
             var allPromises = [];
 
-            // Senin çalışan link toplama döngün
             Object.keys(scx).forEach(function(key) {
                 if (scx[key].sx && scx[key].sx.t) {
                     var links = Array.isArray(scx[key].sx.t) ? scx[key].sx.t : Object.values(scx[key].sx.t);
                     
                     links.forEach(function(enc) {
-                        var decoded = atobFixed(rot13Fixed(enc));
-                        if (!decoded) return;
+                        var embedUrl = atobFixed(rot13Fixed(enc));
+                        if (!embedUrl) return;
 
-                        // Link bir iframe ise (Atom/Rapid/Vidmoxy), içine girip asıl videoyu çekiyoruz
-                        if (decoded.includes('atom') || decoded.includes('rapidvid') || decoded.includes('vidmoxy')) {
+                        // 3003 HATASINI ÇÖZEN KISIM:
+                        // Eğer link bir iframe sayfasıysa içine girip asıl videoyu ayıklıyoruz
+                        if (embedUrl.includes('atom') || embedUrl.includes('rapidvid') || embedUrl.includes('vidmoxy')) {
                             allPromises.push(
-                                fetch(decoded, { headers: { 'Referer': movieUrl } })
+                                fetch(embedUrl, { headers: { 'Referer': movieUrl, 'User-Agent': HEADERS['User-Agent'] } })
                                     .then(function(r) { return r.text(); })
                                     .then(function(iframeHtml) {
                                         var hexMatch = iframeHtml.match(/file["']:\s*["']([^"']+)["']/);
                                         if (hexMatch) {
-                                            var finalUrl = cleanHex(hexMatch[1]);
+                                            var finalVideoUrl = decodeHexVideo(hexMatch[1]);
                                             return {
                                                 name: '⌜ FHD ⌟ ' + key.toUpperCase(),
-                                                url: finalUrl,
+                                                url: finalVideoUrl,
                                                 type: 'VIDEO',
-                                                headers: { 'Referer': decoded, 'User-Agent': HEADERS['User-Agent'] }
+                                                headers: { 
+                                                    'Referer': embedUrl, // Referer artık embed sayfasının kendisi
+                                                    'User-Agent': HEADERS['User-Agent'],
+                                                    'Origin': BASE_URL
+                                                }
                                             };
                                         }
                                         return null;
                                     }).catch(function() { return null; })
                             );
                         } else {
-                            // Doğrudan çalışan kaynaklar (Proton, Fast)
+                            // Proton, Fast gibi doğrudan linkler
                             allPromises.push(Promise.resolve({
                                 name: '⌜ FHD ⌟ ' + key.toUpperCase(),
-                                url: decoded,
-                                type: decoded.includes('m3u8') ? 'M3U8' : 'VIDEO',
-                                headers: { 'Referer': movieUrl }
+                                url: embedUrl,
+                                type: embedUrl.includes('m3u8') ? 'M3U8' : 'VIDEO',
+                                headers: { 'Referer': movieUrl, 'User-Agent': HEADERS['User-Agent'] }
                             }));
                         }
                     });
@@ -124,11 +116,8 @@ function fetchDetailAndStreams(movieUrl) {
             return Promise.all(allPromises);
         })
         .then(function(results) {
-            // Null olanları temizle ve listeyi döndür
             return results.filter(function(r) { return r !== null; });
         });
 }
 
-if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { getStreams };
-}
+module.exports = { getStreams };
