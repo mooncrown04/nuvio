@@ -12,7 +12,7 @@
         "tv",
         "movie"
       ],
-      "filename": "providers/kuudere.js",
+      "filename": "eklentiler/kuudere.js",
       "enabled": true,
       "logo": "https://kuudere.ru/favicon.png",
       "contentLanguage": [
@@ -37,7 +37,7 @@
         "tv",
         "movie"
       ],
-      "filename": "providers/animex.js",
+      "filename": "eklentiler/animex.js",
       "enabled": true,
       "logo": "https://animex.one/favicon.ico",
       "contentLanguage": [
