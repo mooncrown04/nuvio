@@ -5,7 +5,7 @@ const FullHDFilmizlesene = (function() {
     'use strict';
     
     // Python kodundan alınan domain
-    const BASE_URL = 'https://www.fullhdfilmizlesene.de';
+    const BASE_URL = 'https://www.fullhdfilmizlesene.live';
     
     // ==================== STRING CODEC ====================
     const StringCodec = {
@@ -566,3 +566,4 @@ if (typeof module !== 'undefined' && module.exports) {
 }
 
 console.log('[FullHD] Module loaded. FullHDFilmizlesene.getStreams available:', typeof FullHDFilmizlesene.getStreams === 'function');
+
