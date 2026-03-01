@@ -20,16 +20,24 @@ function rot13(str) {
     });
 }
 
-// Sunucudan gelen \x68\x74\x74\x70... şeklindeki hex veriyi çözer
+// 1004 Malformed URL hatasını önlemek için URL temizleyici
+function cleanUrl(url) {
+    if (!url) return null;
+    // Çift ters bölüleri, tırnakları ve gereksiz boşlukları temizle
+    var cleaned = url.replace(/\\/g, '').replace(/"/g, '').replace(/'/g, '').trim();
+    if (cleaned.startsWith('//')) cleaned = 'https:' + cleaned;
+    return cleaned;
+}
+
 function hexToString(hex) {
     try {
-        var cleanHex = hex.replace(/\\\\x/g, '').replace(/\\x/g, '');
+        var cleanHex = hex.replace(/\\\\x/g, '').replace(/\\x/g, '').replace(/[^a-fA-F0-9]/g, '');
         var str = '';
         for (var i = 0; i < cleanHex.length; i += 2) {
             str += String.fromCharCode(parseInt(cleanHex.substr(i, 2), 16));
         }
-        return str;
-    } catch (e) { return hex; }
+        return cleanUrl(str); // Çıkan sonucu hemen temizle
+    } catch (e) { return null; }
 }
 
 // ==================== ANA MOTOR ====================
@@ -57,50 +65,49 @@ function getStreams(tmdbId, mediaType) {
             
             var scx = JSON.parse(scxMatch[1]);
             var keys = ['atom', 'advid', 'proton', 'fast', 'tr', 'en'];
-            var allStreams = [];
+            var streamPromises = [];
 
-            // Tüm anahtarları döngüye al
-            var promises = keys.map(function(key) {
-                if (!scx[key] || !scx[key].sx || !scx[key].sx.t) return Promise.resolve([]);
-                
+            keys.forEach(function(key) {
+                if (!scx[key] || !scx[key].sx || !scx[key].sx.t) return;
                 var t = scx[key].sx.t;
                 var rawLinks = Array.isArray(t) ? t : Object.values(t);
-                
-                return Promise.all(rawLinks.map(function(enc, index) {
+
+                rawLinks.forEach(function(enc, index) {
                     var decoded = atob(rot13(enc));
                     
-                    // Eğer link bir extractor sayfasıysa (Rapid/Atom vb.)
-                    if (decoded.indexOf('rapidvid') !== -1 || decoded.indexOf('vidmoxy') !== -1 || decoded.indexOf('atom') !== -1) {
-                        return fetch(decoded, { headers: { 'Referer': obj.url } })
-                            .then(function(res) { return res.text(); })
-                            .then(function(frameHtml) {
-                                var fileMatch = frameHtml.match(/file["']:\s*["']([^"']+)["']/);
+                    // IFRAME/EXTRACTOR İŞLEME (Rapid, Atom, VidMoxy)
+                    if (decoded.indexOf('http') !== -1 && (decoded.indexOf('rapidvid') !== -1 || decoded.indexOf('vidmoxy') !== -1 || decoded.indexOf('atom') !== -1)) {
+                        var p = fetch(decoded, { headers: { 'Referer': obj.url } })
+                            .then(function(r) { return r.text(); })
+                            .then(function(fHtml) {
+                                var fileMatch = fHtml.match(/file["']:\s*["']([^"']+)["']/);
                                 if (fileMatch) {
                                     var finalUrl = hexToString(fileMatch[1]);
-                                    return {
-                                        name: '⌜ FHD ⌟ ' + key.toUpperCase() + ' #' + (index + 1),
-                                        url: finalUrl,
-                                        type: finalUrl.indexOf('.m3u8') !== -1 ? 'M3U8' : 'VIDEO',
-                                        headers: Object.assign({}, STREAM_HEADERS, { 'Referer': obj.url })
-                                    };
+                                    if (finalUrl && finalUrl.indexOf('http') !== -1) {
+                                        return {
+                                            name: '⌜ FHD ⌟ ' + key.toUpperCase() + ' #' + (index + 1),
+                                            url: finalUrl,
+                                            type: finalUrl.indexOf('.m3u8') !== -1 ? 'M3U8' : 'VIDEO',
+                                            headers: Object.assign({}, STREAM_HEADERS, { 'Referer': obj.url })
+                                        };
+                                    }
                                 }
                                 return null;
                             }).catch(function() { return null; });
-                    } else if (decoded.indexOf('http') !== -1) {
-                        return Promise.resolve({
+                        streamPromises.push(p);
+                    } else if (decoded && decoded.indexOf('http') !== -1) {
+                        streamPromises.push(Promise.resolve({
                             name: '⌜ FHD ⌟ ' + key.toUpperCase() + ' #' + (index + 1),
-                            url: decoded,
+                            url: cleanUrl(decoded),
                             type: decoded.indexOf('.m3u8') !== -1 ? 'M3U8' : 'VIDEO',
                             headers: Object.assign({}, STREAM_HEADERS, { 'Referer': obj.url })
-                        });
+                        }));
                     }
-                    return Promise.resolve(null);
-                }));
+                });
             });
 
-            Promise.all(promises).then(function(results) {
-                var flatResults = [].concat.apply([], results).filter(function(x) { return x !== null; });
-                resolve(flatResults);
+            Promise.all(streamPromises).then(function(results) {
+                resolve(results.filter(function(x) { return x !== null; }));
             });
         }).catch(function() { resolve([]); });
     });
