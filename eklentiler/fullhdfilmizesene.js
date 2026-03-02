@@ -1,50 +1,78 @@
 // ! Bu araç @keyiflerolsun tarafından | @KekikAkademi için yazılmıştır.
+// FullHDFilmizlesene - Dahili Player & 3003 Extractor Fix
+
 var BASE_URL = 'https://www.fullhdfilmizlesene.live';
 
-// Arama ve Link Yakalama için Standart Header
 var HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-    'Accept-Language': 'tr-TR,tr;q=0.9',
+    'Accept': '*/*',
     'Referer': BASE_URL + '/'
 };
 
-// Dahili Player'ın (Proton/Atom) 1004 hatası almaması için gerekli header
+// Player'ın kimlik hatası (1004/3003) almaması için gereken başlıklar
 var STREAM_HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
     'Referer': BASE_URL + '/',
     'Origin': BASE_URL,
     'Accept-Encoding': 'identity'
 };
 
 // ==================== YARDIMCI FONKSİYONLAR ====================
-function atobFixed(str) { try { return typeof Buffer !== 'undefined' ? Buffer.from(str, 'base64').toString('utf-8') : window.atob(str); } catch (e) { return null; } }
-function rot13Fixed(str) { if (!str) return null; return str.replace(/[a-zA-Z]/g, function(char) { var code = char.charCodeAt(0); var base = code < 97 ? 65 : 97; return String.fromCharCode(((code - base + 13) % 26) + base); }); }
-function decodeLinkFixed(encoded) { try { var result = atobFixed(rot13Fixed(encoded)); return (result && result.startsWith('http')) ? result : null; } catch (e) { return null; } }
-function hexDecodeFixed(hexString) { 
-    if (!hexString) return null; 
-    try { 
+
+function atobFixed(str) {
+    try {
+        if (typeof Buffer !== 'undefined') return Buffer.from(str, 'base64').toString('utf-8');
+        return window.atob(str);
+    } catch (e) { return null; }
+}
+
+function rot13Fixed(str) {
+    if (!str) return null;
+    return str.replace(/[a-zA-Z]/g, function(char) {
+        var code = char.charCodeAt(0);
+        var base = code < 97 ? 65 : 97;
+        return String.fromCharCode(((code - base + 13) % 26) + base);
+    });
+}
+
+function decodeLinkFixed(encoded) {
+    try {
+        var result = atobFixed(rot13Fixed(encoded));
+        return (result && result.startsWith('http')) ? result : null;
+    } catch (e) { return null; }
+}
+
+function hexDecodeFixed(hexString) {
+    if (!hexString) return null;
+    try {
         var cleaned = hexString.replace(/\\\\x/g, '\\x').replace(/\\x/g, '');
         var bytes = [];
-        for (var i = 0; i < cleaned.length; i += 2) { bytes.push(parseInt(cleaned.substr(i, 2), 16)); }
-        return String.fromCharCode.apply(null, bytes); 
-    } catch (e) { return null; } 
+        for (var i = 0; i < cleaned.length; i += 2) {
+            bytes.push(parseInt(cleaned.substr(i, 2), 16));
+        }
+        return String.fromCharCode.apply(null, bytes);
+    } catch (e) { return null; }
 }
 
 // ==================== EXTRACTOR'LAR ====================
+
 function extractVideoUrl(url, sourceKey, referer) {
-    // Senin çalışan M3U8 kontrol mantığın
     var isHls = url.includes('.m3u8') || sourceKey === 'proton' || sourceKey === 'fast';
     
     if (isHls) {
         return fetch(url, { headers: HEADERS })
-            .then(function(res) { return res.ok ? [{ url: url, quality: 'HD', type: 'hls' }] : []; })
+            .then(function(res) {
+                if (!res.ok) return [];
+                // Player'ın dosyayı tanıması için tipi önceden belirliyoruz
+                return [{ url: url, quality: 'HD', type: 'hls' }];
+            })
             .catch(function() { return []; });
     }
     return Promise.resolve([{ url: url, quality: 'HD', type: 'video' }]);
 }
 
 // ==================== ANA MANTIK ====================
+
 function fetchDetailAndStreams(filmUrl) {
     return fetch(filmUrl, { headers: HEADERS })
         .then(function(res) { return res.text(); })
@@ -56,7 +84,7 @@ function fetchDetailAndStreams(filmUrl) {
 
             var scxData = JSON.parse(scxMatch[1]);
             var allPromises = [];
-            // Senin tercih ettiğin anahtar sırası
+            // Senin tercih ettiğin çalışan kaynak sırası
             var keys = ['atom', 'advid', 'proton', 'fast', 'tr', 'en'];
 
             keys.forEach(function(key) {
@@ -78,12 +106,18 @@ function fetchDetailAndStreams(filmUrl) {
                                 title: title + (year ? ' (' + year + ')' : '') + ' · ' + r.quality,
                                 url: r.url,
                                 quality: r.quality,
-                                headers: STREAM_HEADERS, // Player için kritik olan headers
+                                headers: STREAM_HEADERS,
                                 is_direct: true,
-                                type: r.type,
-                                hw_decode: false, // Dahili player fix
-                                force_sw: true,
-                                android_config: { "is_hls": r.type === 'hls', "force_software": true }
+                                // Player Fixleri (Extractor Hatasını Çözen Kısım)
+                                streamType: r.type === 'hls' ? 'hls' : 'video',
+                                mimeType: r.type === 'hls' ? 'application/x-mpegURL' : 'video/mp4',
+                                hw_decode: false, // Donanım hızlandırmayı kapat (MTK Fix)
+                                force_sw: true,    // Yazılımsal çözücüyü zorla
+                                android_config: {
+                                    "is_hls": r.type === 'hls',
+                                    "force_software": true,
+                                    "prefer_extension_decoders": true
+                                }
                             };
                         });
                     }));
