@@ -1,58 +1,10 @@
 var BASE_URL = 'https://www.filmmodu.ws';
 
-// Cookie jar simülasyonu
-var cookieJar = {};
-
-function getCookies() {
-    var cookies = [];
-    for (var key in cookieJar) {
-        cookies.push(key + '=' + cookieJar[key]);
-    }
-    return cookies.join('; ');
-}
-
-function parseCookies(setCookieHeader) {
-    if (!setCookieHeader) return;
-    var cookies = Array.isArray(setCookieHeader) ? setCookieHeader : [setCookieHeader];
-    cookies.forEach(function(cookie) {
-        var parts = cookie.split(';')[0].split('=');
-        if (parts.length === 2) {
-            cookieJar[parts[0].trim()] = parts[1].trim();
-        }
-    });
-}
-
-function fetchWithCookies(url, options) {
-    var headers = Object.assign({}, options.headers || {});
-    
-    // Mevcut cookie'leri ekle
-    var cookies = getCookies();
-    if (cookies) {
-        headers['Cookie'] = cookies;
-    }
-    
-    return fetch(url, Object.assign({}, options, { headers: headers, redirect: 'follow' }))
-        .then(function(res) {
-            // Gelen cookie'leri kaydet
-            var setCookie = res.headers.get('set-cookie');
-            if (setCookie) {
-                parseCookies(setCookie);
-            }
-            return res;
-        });
-}
-
 var HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
     'Accept-Language': 'tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7',
-    'Accept-Encoding': 'gzip, deflate, br',
-    'Upgrade-Insecure-Requests': '1',
-    'Sec-Fetch-Dest': 'document',
-    'Sec-Fetch-Mode': 'navigate',
-    'Sec-Fetch-Site': 'none',
-    'Sec-Fetch-User': '?1',
-    'Connection': 'keep-alive'
+    'Referer': BASE_URL + '/'
 };
 
 function findFirst(html, pattern) {
@@ -63,8 +15,7 @@ function findFirst(html, pattern) {
 
 function searchFilmModu(title) {
     var searchUrl = BASE_URL + '/film-ara?term=' + encodeURIComponent(title);
-    
-    return fetchWithCookies(searchUrl, { headers: HEADERS })
+    return fetch(searchUrl, { headers: HEADERS })
         .then(function(res) { return res.text(); })
         .then(function(html) {
             var results = [];
@@ -100,7 +51,7 @@ function findBestMatch(results, query) {
 }
 
 function loadMoviePage(url) {
-    return fetchWithCookies(url, { headers: HEADERS })
+    return fetch(url, { headers: HEADERS })
         .then(function(res) { return res.text(); })
         .then(function(html) {
             var streams = [];
@@ -134,8 +85,7 @@ function loadMoviePage(url) {
 }
 
 function extractVideoFromAlternate(altUrl, altName, mainTitle, year) {
-    // Cookie'leri taşıyarak istek yap
-    return fetchWithCookies(altUrl, { headers: HEADERS })
+    return fetch(altUrl, { headers: HEADERS })
         .then(function(res) { return res.text(); })
         .then(function(html) {
             var vidIdMatch = findFirst(html, "var\\s+videoId\\s*=\\s*['\"]([^'\"]+)['\"]");
@@ -143,26 +93,17 @@ function extractVideoFromAlternate(altUrl, altName, mainTitle, year) {
             
             if (!vidIdMatch || !vidTypeMatch) return [];
             
-            var videoId = vidIdMatch[1];
-            var videoType = vidTypeMatch[1];
-            var sourceUrl = BASE_URL + '/get-source?movie_id=' + videoId + '&type=' + videoType;
+            var sourceUrl = BASE_URL + '/get-source?movie_id=' + vidIdMatch[1] + '&type=' + vidTypeMatch[1];
             
-            // API isteği - mevcut cookie'lerle
-            var apiHeaders = {
-                'User-Agent': HEADERS['User-Agent'],
-                'Accept': 'application/json, text/javascript, */*; q=0.01',
-                'Accept-Language': 'tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7',
-                'X-Requested-With': 'XMLHttpRequest',
-                'Referer': altUrl,
-                'Origin': BASE_URL,
-                'Sec-Fetch-Dest': 'empty',
-                'Sec-Fetch-Mode': 'cors',
-                'Sec-Fetch-Site': 'same-origin',
-                'Connection': 'keep-alive'
-            };
-            
-            return fetchWithCookies(sourceUrl, { headers: apiHeaders })
-                .then(function(r) { return r.json(); });
+            return fetch(sourceUrl, { 
+                headers: {
+                    'User-Agent': HEADERS['User-Agent'],
+                    'Accept': 'application/json, text/javascript, */*; q=0.01',
+                    'X-Requested-With': 'XMLHttpRequest',
+                    'Referer': altUrl,
+                    'Origin': BASE_URL
+                }
+            }).then(function(r) { return r.json(); });
         })
         .then(function(data) {
             if (!data || !data.sources) return [];
@@ -180,7 +121,7 @@ function extractVideoFromAlternate(altUrl, altName, mainTitle, year) {
             data.sources.forEach(function(source, idx) {
                 var streamUrl = source.src.startsWith('http') ? source.src : BASE_URL + source.src;
                 
-                var quality = Qualities.Unknown;
+                var quality = '720p';
                 if (source.label) {
                     var label = source.label.toLowerCase();
                     if (label.includes('1080')) quality = '1080p';
@@ -189,14 +130,13 @@ function extractVideoFromAlternate(altUrl, altName, mainTitle, year) {
                     else if (label.includes('360')) quality = '360p';
                 }
                 
-                // CloudStream3'teki EXACT yapı
+                // DENEY 1: type: 'mp4'
                 streams.push({
                     name: '⌜ FilmModu ⌟ | ' + (altName || 'Kaynak') + ' ' + (idx + 1),
                     title: mainTitle + (year ? ' (' + year + ')' : '') + ' · ' + quality,
                     url: streamUrl,
                     quality: quality,
-                    size: 'HLS',
-                    // CloudStream3'teki gibi referer
+                    size: 'MP4',
                     headers: {
                         'User-Agent': HEADERS['User-Agent'],
                         'Referer': BASE_URL + '/',
@@ -204,7 +144,7 @@ function extractVideoFromAlternate(altUrl, altName, mainTitle, year) {
                     },
                     subtitles: subtitles,
                     provider: 'filmmodu',
-                    type: 'hls'
+                    type: 'mp4'  // HLS yerine MP4 dene
                 });
             });
             
