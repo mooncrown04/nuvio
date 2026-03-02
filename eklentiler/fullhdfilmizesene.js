@@ -1,6 +1,7 @@
 // ! Bu araç @keyiflerolsun tarafından | @KekikAkademi için yazılmıştır.
 var BASE_URL = 'https://www.fullhdfilmizlesene.live';
 
+// Sunucunun (Atom/Proton) istediği zorunlu kimlik bilgileri
 var HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     'Referer': BASE_URL + '/',
@@ -8,28 +9,13 @@ var HEADERS = {
     'X-Requested-With': 'XMLHttpRequest'
 };
 
-// ==================== YARDIMCI FONKSİYONLAR ====================
+// ==================== DECODE SİSTEMİ ====================
 
-function atobFixed(str) {
+function decodeFHD(encoded) {
     try {
-        if (typeof Buffer !== 'undefined') return Buffer.from(str, 'base64').toString('utf-8');
-        return atob(str);
-    } catch (e) { return null; }
-}
-
-function rot13Fixed(str) {
-    if (!str) return null;
-    return str.replace(/[a-zA-Z]/g, function(char) {
-        var code = char.charCodeAt(0);
-        var base = code < 97 ? 65 : 97;
-        return String.fromCharCode(((code - base + 13) % 26) + base);
-    });
-}
-
-function decodeLinkFixed(encoded) {
-    try {
-        var result = atobFixed(rot13Fixed(encoded));
-        return (result && result.startsWith('http')) ? result : null;
+        var rot13 = function(s) { return s.replace(/[a-zA-Z]/g, function(c) { return String.fromCharCode((c<="Z"?90:122)>=(c=c.charCodeAt(0)+13)?c:c-26); }); };
+        var step1 = rot13(encoded).replace(/\s/g, '');
+        return (typeof Buffer !== 'undefined') ? Buffer.from(step1, 'base64').toString('utf-8') : atob(step1);
     } catch (e) { return null; }
 }
 
@@ -59,22 +45,23 @@ async function fetchDetailAndStreams(filmUrl) {
                 : Object.keys(t).map(k => ({ encoded: t[k], label: key.toUpperCase() + ' ' + k }));
 
             for (const item of items) {
-                const decoded = decodeLinkFixed(item.encoded);
-                if (!decoded) continue;
+                const decoded = decodeFHD(item.encoded);
+                if (!decoded || !decoded.startsWith('http')) continue;
 
-                // --- VLC ve Player Fix: Linkin sonuna Header'ları zorla gömüyoruz ---
-                // Bazı uygulamalar headers objesini okumaz, bu yüzden linke ekliyoruz.
-                const finalUrl = decoded + "|User-Agent=" + encodeURIComponent(HEADERS['User-Agent']) + "&Referer=" + encodeURIComponent(BASE_URL + "/");
-
+                // ÖNEMLİ: Linkin sonuna | eklemek bazı playerları bozar. 
+                // Linki saf (pure) bırakıp headerları obje olarak veriyoruz.
                 allStreams.push({
                     name: '⌜ FHD ⌟ | ' + item.label,
                     title: title + ' · 1080p',
-                    url: finalUrl, // Header gömülü link
+                    url: decoded, // Saf link
                     quality: '1080p',
-                    headers: HEADERS, // Hem objede hem linkte kalsın
+                    headers: HEADERS, // Çoğu oynatıcı burayı okur
+                    is_direct: false, // Proxy kullanımını zorlar, VLC kopmasını engeller
                     behaviorHints: {
                         notDirect: true,
-                        proxyHeaders: { "common": HEADERS }
+                        proxyHeaders: {
+                            "common": HEADERS
+                        }
                     }
                 });
             }
@@ -102,10 +89,14 @@ async function getStreams(tmdbId, mediaType) {
     try {
         const tmdbRes = await fetch(`https://api.themoviedb.org/3/movie/${tmdbId}?language=tr-TR&api_key=4ef0d7355d9ffb5151e987764708ce96`);
         const movieData = await tmdbRes.json();
+        
         let searchResults = await searchFullHD(movieData.title);
         if (searchResults.length === 0) searchResults = await searchFullHD(movieData.original_title);
-        if (searchResults.length === 0) return [];
-        return await fetchDetailAndStreams(searchResults[0]);
+        
+        if (searchResults.length > 0) {
+            return await fetchDetailAndStreams(searchResults[0]);
+        }
+        return [];
     } catch (e) { return []; }
 }
 
