@@ -1,18 +1,58 @@
 var BASE_URL = 'https://www.filmmodu.ws';
 
-// CloudStream3'teki exact header'lar
+// Cookie jar simülasyonu
+var cookieJar = {};
+
+function getCookies() {
+    var cookies = [];
+    for (var key in cookieJar) {
+        cookies.push(key + '=' + cookieJar[key]);
+    }
+    return cookies.join('; ');
+}
+
+function parseCookies(setCookieHeader) {
+    if (!setCookieHeader) return;
+    var cookies = Array.isArray(setCookieHeader) ? setCookieHeader : [setCookieHeader];
+    cookies.forEach(function(cookie) {
+        var parts = cookie.split(';')[0].split('=');
+        if (parts.length === 2) {
+            cookieJar[parts[0].trim()] = parts[1].trim();
+        }
+    });
+}
+
+function fetchWithCookies(url, options) {
+    var headers = Object.assign({}, options.headers || {});
+    
+    // Mevcut cookie'leri ekle
+    var cookies = getCookies();
+    if (cookies) {
+        headers['Cookie'] = cookies;
+    }
+    
+    return fetch(url, Object.assign({}, options, { headers: headers, redirect: 'follow' }))
+        .then(function(res) {
+            // Gelen cookie'leri kaydet
+            var setCookie = res.headers.get('set-cookie');
+            if (setCookie) {
+                parseCookies(setCookie);
+            }
+            return res;
+        });
+}
+
 var HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-    'Accept-Language': 'tr-TR,tr;q=0.8,en-US;q=0.5,en;q=0.3',
+    'Accept-Language': 'tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7',
     'Accept-Encoding': 'gzip, deflate, br',
-    'Connection': 'keep-alive',
     'Upgrade-Insecure-Requests': '1',
     'Sec-Fetch-Dest': 'document',
     'Sec-Fetch-Mode': 'navigate',
     'Sec-Fetch-Site': 'none',
     'Sec-Fetch-User': '?1',
-    'Cache-Control': 'max-age=0'
+    'Connection': 'keep-alive'
 };
 
 function findFirst(html, pattern) {
@@ -23,30 +63,28 @@ function findFirst(html, pattern) {
 
 function searchFilmModu(title) {
     var searchUrl = BASE_URL + '/film-ara?term=' + encodeURIComponent(title);
-    return fetch(searchUrl, { 
-        headers: HEADERS,
-        redirect: 'follow'
-    })
-    .then(function(res) { return res.text(); })
-    .then(function(html) {
-        var results = [];
-        var moviePattern = /<div[^>]*class="[^"]*movie[^"]*"[^>]*>([\s\S]*?)<\/div>\s*(?=<div[^>]*class="[^"]*movie[^"]*"|$)/gi;
-        var movieMatches = html.match(moviePattern) || [];
-        
-        movieMatches.forEach(function(movieHtml) {
-            var linkMatch = findFirst(movieHtml, '<a[^>]+href="([^"]+)"[^>]*>([^<]*)<\\/a>');
-            if (!linkMatch) return;
-            var href = linkMatch[1];
-            var movieTitle = linkMatch[2].trim();
-            if (href && movieTitle) {
-                results.push({
-                    title: movieTitle,
-                    url: href.startsWith('http') ? href : BASE_URL + href
-                });
-            }
+    
+    return fetchWithCookies(searchUrl, { headers: HEADERS })
+        .then(function(res) { return res.text(); })
+        .then(function(html) {
+            var results = [];
+            var moviePattern = /<div[^>]*class="[^"]*movie[^"]*"[^>]*>([\s\S]*?)<\/div>\s*(?=<div[^>]*class="[^"]*movie[^"]*"|$)/gi;
+            var movieMatches = html.match(moviePattern) || [];
+            
+            movieMatches.forEach(function(movieHtml) {
+                var linkMatch = findFirst(movieHtml, '<a[^>]+href="([^"]+)"[^>]*>([^<]*)<\\/a>');
+                if (!linkMatch) return;
+                var href = linkMatch[1];
+                var movieTitle = linkMatch[2].trim();
+                if (href && movieTitle) {
+                    results.push({
+                        title: movieTitle,
+                        url: href.startsWith('http') ? href : BASE_URL + href
+                    });
+                }
+            });
+            return results;
         });
-        return results;
-    });
 }
 
 function findBestMatch(results, query) {
@@ -62,125 +100,120 @@ function findBestMatch(results, query) {
 }
 
 function loadMoviePage(url) {
-    return fetch(url, { 
-        headers: HEADERS,
-        redirect: 'follow'
-    })
-    .then(function(res) { return res.text(); })
-    .then(function(html) {
-        var streams = [];
-        var altPattern = /<div[^>]*class="[^"]*alternates[^"]*"[^>]*>([\s\S]*?)<\/div>/i;
-        var altMatch = html.match(altPattern);
-        
-        if (altMatch) {
-            var altHtml = altMatch[1];
-            var linkPattern = /<a[^>]+href="([^"]+)"[^>]*>([^<]*)<\/a>/gi;
-            var linkMatch;
-            while ((linkMatch = linkPattern.exec(altHtml)) !== null) {
-                var altUrl = linkMatch[1];
-                var altName = linkMatch[2].trim();
-                if (altName === 'Fragman') continue;
-                streams.push({
-                    url: altUrl.startsWith('http') ? altUrl : BASE_URL + altUrl,
-                    name: altName
-                });
+    return fetchWithCookies(url, { headers: HEADERS })
+        .then(function(res) { return res.text(); })
+        .then(function(html) {
+            var streams = [];
+            var altPattern = /<div[^>]*class="[^"]*alternates[^"]*"[^>]*>([\s\S]*?)<\/div>/i;
+            var altMatch = html.match(altPattern);
+            
+            if (altMatch) {
+                var altHtml = altMatch[1];
+                var linkPattern = /<a[^>]+href="([^"]+)"[^>]*>([^<]*)<\/a>/gi;
+                var linkMatch;
+                while ((linkMatch = linkPattern.exec(altHtml)) !== null) {
+                    var altUrl = linkMatch[1];
+                    var altName = linkMatch[2].trim();
+                    if (altName === 'Fragman') continue;
+                    streams.push({
+                        url: altUrl.startsWith('http') ? altUrl : BASE_URL + altUrl,
+                        name: altName
+                    });
+                }
             }
-        }
-        
-        var titleMatch = findFirst(html, '<div[^>]*class="[^"]*titles[^"]*"[^>]*>\\s*<h1[^>]*>([^<]*)<\\/h1>');
-        var yearMatch = findFirst(html, '<span[^>]*itemprop="dateCreated"[^>]*>([^<]*)<\\/span>');
-        
-        return {
-            title: titleMatch ? titleMatch[1].trim() : '',
-            year: yearMatch ? yearMatch[1].trim() : '',
-            alternatives: streams
-        };
-    });
+            
+            var titleMatch = findFirst(html, '<div[^>]*class="[^"]*titles[^"]*"[^>]*>\\s*<h1[^>]*>([^<]*)<\\/h1>');
+            var yearMatch = findFirst(html, '<span[^>]*itemprop="dateCreated"[^>]*>([^<]*)<\\/span>');
+            
+            return {
+                title: titleMatch ? titleMatch[1].trim() : '',
+                year: yearMatch ? yearMatch[1].trim() : '',
+                alternatives: streams
+            };
+        });
 }
 
 function extractVideoFromAlternate(altUrl, altName, mainTitle, year) {
-    return fetch(altUrl, { 
-        headers: HEADERS,
-        redirect: 'follow'
-    })
-    .then(function(res) { return res.text(); })
-    .then(function(html) {
-        var vidIdMatch = findFirst(html, "var\\s+videoId\\s*=\\s*['\"]([^'\"]+)['\"]");
-        var vidTypeMatch = findFirst(html, "var\\s+videoType\\s*=\\s*['\"]([^'\"]+)['\"]");
-        
-        if (!vidIdMatch || !vidTypeMatch) return [];
-        
-        var sourceUrl = BASE_URL + '/get-source?movie_id=' + vidIdMatch[1] + '&type=' + vidTypeMatch[1];
-        
-        return fetch(sourceUrl, { 
-            headers: {
+    // Cookie'leri taşıyarak istek yap
+    return fetchWithCookies(altUrl, { headers: HEADERS })
+        .then(function(res) { return res.text(); })
+        .then(function(html) {
+            var vidIdMatch = findFirst(html, "var\\s+videoId\\s*=\\s*['\"]([^'\"]+)['\"]");
+            var vidTypeMatch = findFirst(html, "var\\s+videoType\\s*=\\s*['\"]([^'\"]+)['\"]");
+            
+            if (!vidIdMatch || !vidTypeMatch) return [];
+            
+            var videoId = vidIdMatch[1];
+            var videoType = vidTypeMatch[1];
+            var sourceUrl = BASE_URL + '/get-source?movie_id=' + videoId + '&type=' + videoType;
+            
+            // API isteği - mevcut cookie'lerle
+            var apiHeaders = {
                 'User-Agent': HEADERS['User-Agent'],
                 'Accept': 'application/json, text/javascript, */*; q=0.01',
                 'Accept-Language': 'tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7',
                 'X-Requested-With': 'XMLHttpRequest',
                 'Referer': altUrl,
-                'Origin': BASE_URL
-            },
-            redirect: 'follow'
-        })
-        .then(function(r) { return r.json(); });
-    })
-    .then(function(data) {
-        if (!data || !data.sources) return [];
-        
-        var streams = [];
-        var subtitles = [];
-        
-        if (data.subtitle) {
-            subtitles.push({
-                label: 'türkçee',
-                url: data.subtitle.startsWith('http') ? data.subtitle : BASE_URL + data.subtitle
-            });
-        }
-        
-        data.sources.forEach(function(source, idx) {
-            var streamUrl = source.src.startsWith('http') ? source.src : BASE_URL + source.src;
+                'Origin': BASE_URL,
+                'Sec-Fetch-Dest': 'empty',
+                'Sec-Fetch-Mode': 'cors',
+                'Sec-Fetch-Site': 'same-origin',
+                'Connection': 'keep-alive'
+            };
             
-            var quality = '720p';
-            if (source.label) {
-                var label = source.label.toLowerCase();
-                if (label.includes('1080')) quality = '1080p';
-                else if (label.includes('720')) quality = '720p';
-                else if (label.includes('480')) quality = '480p';
-                else if (label.includes('360')) quality = '360p';
+            return fetchWithCookies(sourceUrl, { headers: apiHeaders })
+                .then(function(r) { return r.json(); });
+        })
+        .then(function(data) {
+            if (!data || !data.sources) return [];
+            
+            var streams = [];
+            var subtitles = [];
+            
+            if (data.subtitle) {
+                subtitles.push({
+                    label: 'türkçee',
+                    url: data.subtitle.startsWith('http') ? data.subtitle : BASE_URL + data.subtitle
+                });
             }
             
-            // CloudStream3'teki gibi EXACT header yapısı
-            streams.push({
-                name: '⌜ FilmModu ⌟ | ' + (altName || 'Kaynak') + ' ' + (idx + 1),
-                title: mainTitle + (year ? ' (' + year + ')' : '') + ' · ' + quality,
-                url: streamUrl,
-                quality: quality,
-                size: 'HLS',
-                headers: {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                    'Accept': '*/*',
-                    'Accept-Language': 'tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7',
-                    'Accept-Encoding': 'identity;q=1, *;q=0',
-                    'Referer': BASE_URL + '/',
-                    'Origin': BASE_URL,
-                    'Connection': 'keep-alive',
-                    'Sec-Fetch-Dest': 'video',
-                    'Sec-Fetch-Mode': 'no-cors',
-                    'Sec-Fetch-Site': 'cross-site'
-                },
-                subtitles: subtitles,
-                provider: 'filmmodu',
-                type: 'hls'
+            data.sources.forEach(function(source, idx) {
+                var streamUrl = source.src.startsWith('http') ? source.src : BASE_URL + source.src;
+                
+                var quality = Qualities.Unknown;
+                if (source.label) {
+                    var label = source.label.toLowerCase();
+                    if (label.includes('1080')) quality = '1080p';
+                    else if (label.includes('720')) quality = '720p';
+                    else if (label.includes('480')) quality = '480p';
+                    else if (label.includes('360')) quality = '360p';
+                }
+                
+                // CloudStream3'teki EXACT yapı
+                streams.push({
+                    name: '⌜ FilmModu ⌟ | ' + (altName || 'Kaynak') + ' ' + (idx + 1),
+                    title: mainTitle + (year ? ' (' + year + ')' : '') + ' · ' + quality,
+                    url: streamUrl,
+                    quality: quality,
+                    size: 'HLS',
+                    // CloudStream3'teki gibi referer
+                    headers: {
+                        'User-Agent': HEADERS['User-Agent'],
+                        'Referer': BASE_URL + '/',
+                        'Origin': BASE_URL
+                    },
+                    subtitles: subtitles,
+                    provider: 'filmmodu',
+                    type: 'hls'
+                });
             });
+            
+            return streams;
+        })
+        .catch(function(err) {
+            console.error('[FilmModu] Error:', err.message);
+            return [];
         });
-        
-        return streams;
-    })
-    .catch(function(err) {
-        console.error('[FilmModu] Error:', err.message);
-        return [];
-    });
 }
 
 function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
