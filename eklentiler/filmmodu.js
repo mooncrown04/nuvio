@@ -30,6 +30,32 @@ function findFirst(html, pattern) {
     return match ? match : null;
 }
 
+function detectFormat(url) {
+    var lowerUrl = url.toLowerCase();
+    
+    if (lowerUrl.includes('.m3u8') || lowerUrl.includes('/m3u8/') || lowerUrl.includes('playlist')) {
+        return 'HLS';
+    }
+    if (lowerUrl.includes('.mpd') || lowerUrl.includes('/mpd/')) {
+        return 'DASH';
+    }
+    if (lowerUrl.includes('.mp4') || lowerUrl.includes('/mp4/')) {
+        return 'MP4';
+    }
+    if (lowerUrl.includes('.ts') || lowerUrl.includes('/ts/')) {
+        return 'TS';
+    }
+    if (lowerUrl.includes('.mkv')) {
+        return 'MKV';
+    }
+    if (lowerUrl.includes('.webm')) {
+        return 'WEBM';
+    }
+    
+    // URL'den format tespit edilemezse varsayılan
+    return 'HLS';
+}
+
 function searchFilmModu(title) {
     var searchUrl = BASE_URL + '/film-ara?term=' + encodeURIComponent(title);
     console.log('[FilmModu] Search URL:', searchUrl);
@@ -186,24 +212,20 @@ function extractVideoFromAlternate(altUrl, altName, mainTitle, year) {
                     
                     var streamUrl = source.src.startsWith('http') ? source.src : BASE_URL + source.src;
                     
-                    // URL'nin son halini al (redirect varsa)
                     return resolveRedirect(streamUrl).then(function(finalUrl) {
-                        // URL .m3u8 içermiyorsa ekle
-                        if (!finalUrl.includes('.m3u8') && !finalUrl.includes('m3u')) {
-                            console.log('[FilmModu] Warning: URL does not contain m3u8:', finalUrl);
-                        }
+                        var format = detectFormat(finalUrl);
                         
                         return {
                             name: '⌜ FilmModu ⌟ | ' + (altName || 'Kaynak'),
                             title: mainTitle + (year ? ' (' + year + ')' : '') + ' · ' + quality,
                             url: finalUrl,
                             quality: quality,
-                            size: 'Unknown',
+                            size: format, // Format bilgisi burada gösterilecek
                             headers: STREAM_HEADERS,
                             subtitles: subtitles,
                             provider: 'filmmodu',
-                            // ExoPlayer için ek metadata
-                            type: 'hls'
+                            type: format.toLowerCase() === 'hls' ? 'hls' : 
+                                  format.toLowerCase() === 'dash' ? 'dash' : 'mp4'
                         };
                     });
                 })).then(function(resolvedStreams) {
