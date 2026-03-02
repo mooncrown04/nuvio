@@ -1,5 +1,5 @@
 // ! Bu araç @keyiflerolsun tarafından | @KekikAkademi için yazılmıştır.
-// FullHDFilmizlesene - ÇALIŞAN VERSİYON (VLC ile test edilmiş)
+// FullHDFilmizlesene - H.264/AVC Uyumlu (Nuvio/ExoPlayer için)
 
 var BASE_URL = 'https://www.fullhdfilmizlesene.live';
 
@@ -41,72 +41,7 @@ function decodeLinkFixed(encoded) {
     }
 }
 
-function hexDecodeFixed(hexString) {
-    if (!hexString) return null;
-    try {
-        var cleaned = hexString.replace(/\\\\x/g, '\\x').replace(/\\x/g, '');
-        var bytes = [];
-        for (var i = 0; i < cleaned.length; i += 2) {
-            bytes.push(parseInt(cleaned.substr(i, 2), 16));
-        }
-        return String.fromCharCode.apply(null, bytes);
-    } catch (e) {
-        return null;
-    }
-}
-
-// ==================== EXTRACTOR'LAR ====================
-
-function rapid2m3u8(url, referer) {
-    return fetch(url, { headers: Object.assign({}, HEADERS, { 'Referer': referer }) })
-        .then(function(res) { return res.text(); })
-        .then(function(text) {
-            var match = text.match(/file":\s*"(.*?)"/) || text.match(/file":"(.*?)"/);
-            if (!match) return [];
-            var decoded = hexDecodeFixed(match[1].replace(/\\\\x/g, '\\x'));
-            return decoded ? [{ url: decoded, quality: '720p', type: 'M3U8' }] : [];
-        }).catch(function() { return []; });
-}
-
-function trstx2m3u8(url, referer) {
-    var baseUrl = 'https://trstx.org';
-    return fetch(url, { headers: Object.assign({}, HEADERS, { 'Referer': referer }) })
-        .then(function(res) { return res.text(); })
-        .then(function(text) {
-            var match = text.match(/file":"([^"]+)/);
-            if (!match) return [];
-            return fetch(baseUrl + '/' + match[1].replace(/\\/g, ''), {
-                method: 'POST',
-                headers: Object.assign({}, HEADERS, { 'Referer': referer, 'Content-Type': 'application/x-www-form-urlencoded' }),
-                body: ''
-            });
-        })
-        .then(function(res) { return res.json(); })
-        .then(function(postData) {
-            var promises = postData.slice(1).map(function(item) {
-                return fetch(baseUrl + '/playlist/' + item.file.substring(1) + '.txt', {
-                    method: 'POST',
-                    headers: Object.assign({}, HEADERS, { 'Referer': referer }),
-                    body: ''
-                }).then(function(r) { return r.text(); })
-                  .then(function(url) { return { url: url.trim(), quality: item.title, type: 'M3U8' }; });
-            });
-            return Promise.all(promises);
-        }).catch(function() { return []; });
-}
-
-function extractVideoUrl(url, sourceKey, referer) {
-    if (url.includes('rapidvid.net') || url.includes('vidmoxy.com')) return rapid2m3u8(url, referer);
-    if (url.includes('trstx.org')) return trstx2m3u8(url, referer);
-    
-    var isDirect = ['proton', 'fast', 'tr', 'en'].some(function(k) { return sourceKey.toLowerCase().includes(k); });
-    if (isDirect || url.match(/\.(m3u8|mp4)/i)) {
-        return Promise.resolve([{ url: url, quality: '720p', type: url.includes('.m3u8') ? 'M3U8' : 'VIDEO' }]);
-    }
-    return Promise.resolve([]);
-}
-
-// ==================== ANA MANTIK (ÇALIŞAN) ====================
+// ==================== ANA MANTIK (SADECE PROTON - H.264 UYUMLU) ====================
 
 function fetchDetailAndStreams(filmUrl) {
     return fetch(filmUrl, { headers: HEADERS })
@@ -118,44 +53,68 @@ function fetchDetailAndStreams(filmUrl) {
             if (!scxMatch) return [];
 
             var scxData = JSON.parse(scxMatch[1]);
-            var allPromises = [];
-            var keys = ['atom', 'advid', 'proton', 'fast', 'tr', 'en'];
-
-            keys.forEach(function(key) {
-                var sourceData = scxData[key];
-                if (!sourceData || !sourceData.sx || !sourceData.sx.t) return;
-                var t = sourceData.sx.t;
-
-                var items = Array.isArray(t) ? t.map(function(v, i) { return { encoded: v, label: key.toUpperCase() + ' #' + (i+1) }; }) 
-                                           : Object.keys(t).map(function(k) { return { encoded: t[k], label: key.toUpperCase() + ' ' + k }; });
-
+            var streams = [];
+            
+            // SADECE PROTON - H.264/AVC formatı için optimize
+            if (scxData.proton && scxData.proton.sx && scxData.proton.sx.t) {
+                var t = scxData.proton.sx.t;
+                var items = [];
+                
+                if (Array.isArray(t)) {
+                    items = t.map(function(v, i) { 
+                        return { encoded: v, label: 'PROTON #' + (i+1) }; 
+                    });
+                } else if (typeof t === 'object') {
+                    items = Object.keys(t).map(function(k) { 
+                        return { encoded: t[k], label: 'PROTON ' + k }; 
+                    });
+                }
+                
                 items.forEach(function(item) {
                     var decoded = decodeLinkFixed(item.encoded);
-                    if (!decoded) return;
-
-                    allPromises.push(extractVideoUrl(decoded, key, filmUrl).then(function(results) {
-                        return results.map(function(r) {
-                            // ÇALIŞAN STREAM OBJESİ - Yorum yok!
-                            return {
-                                name: '⌜ FullHD ⌟ | ' + item.label,
-                                title: title + (year ? ' (' + year + ')' : '') + ' · ' + r.quality,
-                                url: r.url,
-                                quality: r.quality,
-                                headers: { 'User-Agent': HEADERS['User-Agent'], 'Referer': filmUrl, 'Origin': BASE_URL },
-                                type: r.type,
-                                provider: 'fullhdfilmizlesene'
-                            };
-                        });
-                    }));
+                    if (!decoded || !decoded.startsWith('http')) return;
+                    
+                    // URL'den formatı belirle
+                    var isMp4 = decoded.includes('.mp4');
+                    var isM3u8 = decoded.includes('.m3u8');
+                    
+                    // ==================== EXOPLAYER/NUVIO UYUMLU H.264 STREAM ====================
+                    streams.push({
+                        name: '⌜ FullHD ⌟ | ' + item.label,
+                        title: title + (year ? ' (' + year + ')' : '') + ' · 720p',
+                        url: decoded,
+                        quality: '720p',
+                        
+                        // H.264/AVC için uygun type ve mimeType
+                        type: isM3u8 ? 'hls' : 'video',
+                        mimeType: isM3u8 ? 'application/x-mpegURL' : 'video/mp4',
+                        container: isM3u8 ? 'm3u8' : 'mp4',
+                        
+                        // Codec bilgisi (H.264/AVC)
+                        codecs: 'avc1.640028', // H.264 High Profile Level 4.0
+                        
+                        // ExoPlayer için gerekli alanlar
+                        drmScheme: null,
+                        drmLicenseUrl: null,
+                        
+                        // Headers
+                        headers: { 
+                            'User-Agent': HEADERS['User-Agent'], 
+                            'Referer': filmUrl, 
+                            'Origin': BASE_URL 
+                        },
+                        
+                        provider: 'fullhdfilmizlesene'
+                    });
                 });
-            });
-
-            return Promise.all(allPromises);
+            }
+            
+            console.log('[FullHD] Proton streams:', streams.length);
+            return streams;
         })
-        .then(function(results) { 
-            var streams = [];
-            results.forEach(function(r) { if (Array.isArray(r)) streams = streams.concat(r); });
-            return streams.filter(function(s) { return s && s.url; });
+        .catch(function(err) {
+            console.error('[FullHD] Error:', err.message);
+            return [];
         });
 }
 
@@ -164,10 +123,13 @@ function searchFullHD(title) {
         .then(function(res) { return res.text(); })
         .then(function(html) {
             var results = [];
-            var regex = /<li[^>]*class=["']film["'][^>]*>[\s\S]*?<a[^>]+href=["']([^"']+)["'][\s\S]*?<span[^>]+>([^<]+)<\/span>/gi;
+            var regex = /<li[^>]*class=["']film["'][^>]*>[\s\S]*?<a[^>]+href=["']([^"']+)["'][\s\S]*?<span[^>]+class=["']film-title["'][^>]*>([^<]+)<\/span>/gi;
             var m;
             while ((m = regex.exec(html)) !== null) {
-                results.push({ url: m[1].startsWith('http') ? m[1] : BASE_URL + m[1], title: m[2].trim() });
+                results.push({ 
+                    url: m[1].startsWith('http') ? m[1] : BASE_URL + m[1], 
+                    title: m[2].trim() 
+                });
             }
             return results;
         });
@@ -177,12 +139,16 @@ function getStreams(tmdbId, mediaType) {
     if (mediaType !== 'movie') return Promise.resolve([]);
     var tmdbUrl = 'https://api.themoviedb.org/3/movie/' + tmdbId + '?language=tr-TR&api_key=4ef0d7355d9ffb5151e987764708ce96';
     
-    return fetch(tmdbUrl).then(function(res) { return res.json(); }).then(function(data) {
-        return searchFullHD(data.title).then(function(results) {
-            var best = results[0];
-            return best ? fetchDetailAndStreams(best.url) : [];
-        });
-    });
+    return fetch(tmdbUrl)
+        .then(function(res) { return res.json(); })
+        .then(function(data) {
+            return searchFullHD(data.title);
+        })
+        .then(function(results) {
+            if (!results || results.length === 0) return [];
+            return fetchDetailAndStreams(results[0].url);
+        })
+        .catch(function() { return []; });
 }
 
 if (typeof module !== 'undefined') module.exports = { getStreams };
