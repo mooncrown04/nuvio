@@ -1,8 +1,9 @@
 // ! Bu araç @keyiflerolsun tarafından | @KekikAkademi için yazılmıştır.
-// FullHDFilmizlesene - Nuvio APK Uyumlu
+// FullHDFilmizlesene - Minimal Nuvio Uyumlu
 
 var BASE_URL = 'https://www.fullhdfilmizlesene.live';
 
+// ==================== SABİT HEADERS (DEĞİŞMEZ) ====================
 var HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
@@ -10,7 +11,8 @@ var HEADERS = {
     'Referer': BASE_URL + '/'
 };
 
-// Nuvio için Stream Headers
+// ==================== STREAM HEADERS (SABİT) ====================
+// Bu obje FONKSİYON İÇİNDE oluşturulmayacak, global kalacak!
 var STREAM_HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     'Accept': '*/*',
@@ -154,7 +156,7 @@ function extractVideoUrl(url, sourceKey, referer) {
     return Promise.resolve([]);
 }
 
-// ==================== ANA MANTIK (NUVIO UYUMLU) ====================
+// ==================== ANA MANTIK (SADELEŞTİRİLMİŞ) ====================
 
 function fetchDetailAndStreams(filmUrl) {
     return fetch(filmUrl, { headers: HEADERS })
@@ -182,31 +184,21 @@ function fetchDetailAndStreams(filmUrl) {
                     if (!decoded) return;
 
                     var promise = extractVideoUrl(decoded, key, filmUrl).then(function(results) {
+                        // ==================== SADE STREAM OBJESİ ====================
+                        // Sadece gerekli alanlar, ekstra type/container YOK!
+                        
                         return results.map(function(r) {
-                            // ==================== NUVIO UYUMLU STREAM OBJESİ ====================
-                            // Sinewix/DiziPal yapısına benzer ama Nuvio için optimize
-                            
-                            var isM3u8 = r.url.includes('.m3u8');
-                            
+                            // KRİTİK: STREAM_HEADERS'ı doğrudan kullan, kopyalama!
                             return {
                                 name: '⌜ FullHD ⌟ | ' + item.label,
                                 title: title + (year ? ' (' + year + ')' : '') + ' · ' + r.quality,
                                 url: r.url,
                                 quality: r.quality,
-                                
-                                // Nuvio için kritik alanlar:
-                                type: isM3u8 ? 'hls' : 'video',  // 'hls' veya 'video'
-                                container: isM3u8 ? 'm3u8' : 'mp4',
-                                
-                                // Headers - Nuvio formatında
-                                headers: STREAM_HEADERS,
-                                
-                                // Ek Nuvio alanları
-                                source: 'fullhdfilmizlesene',
-                                provider: 'fullhdfilmizlesene',
-                                
-                                // Subtitle desteği varsa
-                                subtitles: []
+                                headers: STREAM_HEADERS,  // SABİT GLOBAL!
+                                provider: 'fullhdfilmizlesene'
+                                // type YOK!
+                                // container YOK!
+                                // source YOK!
                             };
                         });
                     });
