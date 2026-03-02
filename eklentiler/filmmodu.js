@@ -1,56 +1,51 @@
 var BASE_URL = 'https://www.filmmodu.ws';
 
 function getStreams(tmdbId, mediaType) {
-    if (mediaType !== 'movie') return Promise.resolve([]);
+    if (mediaType !== 'movie') return [];
 
-    // 1. Film Adını Al
+    // 1. TMDB'den Film Adını Al
     var tmdbUrl = 'https://api.themoviedb.org/3/movie/' + tmdbId + '?language=tr-TR&api_key=4ef0d7355d9ffb5151e987764708ce96';
-
-    return fetch(tmdbUrl)
-        .then(function(res) { return res.json(); })
-        .then(function(data) {
-            // 2. FilmModu'nda Ara
-            var name = data.title || data.original_title;
-            return fetch(BASE_URL + '/film-ara?term=' + encodeURIComponent(name));
-        })
-        .then(function(res) { return res.text(); })
-        .then(function(html) {
-            // 3. İlk çıkan film linkini yakala
-            var match = html.match(/href="([^"]+\/izle\/[^"]+)"/);
-            if (!match) return [];
-
-            var movieUrl = match[1].startsWith('http') ? match[1] : BASE_URL + match[1];
-            return fetch(movieUrl);
-        })
-        .then(function(res) { return res.text(); })
-        .then(function(html) {
-            // 4. Video ID ve Tipini Bul
-            var idMatch = html.match(/var\s+videoId\s*=\s*['"]([^'"]+)['"]/);
-            var typeMatch = html.match(/var\s+videoType\s*=\s*['"]([^'"]+)['"]/);
-            
-            if (!idMatch) return [];
-
-            // 5. Kaynağı Al
-            var sourceUrl = BASE_URL + '/get-source?movie_id=' + idMatch[1] + '&type=' + typeMatch[1];
-            return fetch(sourceUrl, { headers: { 'X-Requested-With': 'XMLHttpRequest' } });
-        })
-        .then(function(res) { return res.json(); })
-        .then(function(data) {
-            if (!data || !data.sources) return [];
-
-            return data.sources.map(function(s) {
-                return {
-                    name: '⌜ FilmModu ⌟',
-                    title: s.label || 'Video',
-                    url: s.src.startsWith('http') ? s.src : BASE_URL + s.src,
-                    // PLAYER'I ZORLAMAK İÇİN EN TEMEL AYARLAR
-                    headers: {
-                        'User-Agent': 'Mozilla/5.0',
-                        'Referer': BASE_URL + '/'
-                    },
-                    is_direct: true
-                };
-            });
-        })
-        .catch(function() { return []; });
+    
+    try {
+        var tmdbRes = JSON.parse(http.get(tmdbUrl));
+        var movieName = tmdbRes.title || tmdbRes.original_title;
+        
+        // 2. FilmModu'nda Ara
+        var searchUrl = BASE_URL + '/film-ara?term=' + encodeURIComponent(movieName);
+        var searchHtml = http.get(searchUrl);
+        
+        // Regex ile film sayfa linkini bul
+        var movieLinkMatch = searchHtml.match(/href="([^"]+\/izle\/[^"]+)"/);
+        if (!movieLinkMatch) return [];
+        
+        var moviePageUrl = movieLinkMatch[1].indexOf('http') === 0 ? movieLinkMatch[1] : BASE_URL + movieLinkMatch[1];
+        var movieHtml = http.get(moviePageUrl);
+        
+        // 3. Video ID ve Tipini Bul
+        var videoId = movieHtml.match(/var\s+videoId\s*=\s*['"]([^'"]+)['"]/)[1];
+        var videoType = movieHtml.match(/var\s+videoType\s*=\s*['"]([^'"]+)['"]/)[1];
+        
+        // 4. Kaynak Linklerini Al (AJAX isteği simülasyonu)
+        var sourceUrl = BASE_URL + '/get-source?movie_id=' + videoId + '&type=' + videoType;
+        var sourcesJson = JSON.parse(http.get(sourceUrl, {
+            "headers": { "X-Requested-With": "XMLHttpRequest", "Referer": moviePageUrl }
+        }));
+        
+        if (!sourcesJson || !sourcesJson.sources) return [];
+        
+        // 5. Player'a Gönder
+        return sourcesJson.sources.map(function(s) {
+            return {
+                "name": "⌜ FilmModu ⌟",
+                "title": s.label || "Video",
+                "url": s.src.indexOf('http') === 0 ? s.src : BASE_URL + s.src,
+                "headers": {
+                    "User-Agent": "Mozilla/5.0",
+                    "Referer": BASE_URL + "/"
+                }
+            };
+        });
+    } catch (e) {
+        return [];
+    }
 }
