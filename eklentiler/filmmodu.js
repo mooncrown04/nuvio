@@ -130,22 +130,23 @@ function extractVideoFromAlternate(altUrl, altName, mainTitle, year) {
                     else if (label.includes('360')) quality = '360p';
                 }
                 
-                // DENEY 1: type: 'mp4'
-                streams.push({
-                    name: '⌜ FilmModu ⌟ | ' + (altName || 'Kaynak') + ' ' + (idx + 1),
-                    title: mainTitle + (year ? ' (' + year + ')' : '') + ' · ' + quality,
-                    url: streamUrl,
-                    quality: quality,
-                    size: 'MP4',
-                    headers: {
-                        'User-Agent': HEADERS['User-Agent'],
-                        'Referer': BASE_URL + '/',
-                        'Origin': BASE_URL
-                    },
-                    subtitles: subtitles,
-                    provider: 'filmmodu',
-                    type: 'mp4'  // HLS yerine MP4 dene
-                });
+       // Sadece değişen kısım (extractVideoFromAlternate içindeki streams.push):
+
+streams.push({
+    name: '⌜ FilmModu ⌟ | ' + (altName || 'Kaynak') + ' ' + (idx + 1),
+    title: mainTitle + (year ? ' (' + year + ')' : '') + ' · ' + quality,
+    url: streamUrl,
+    quality: quality,
+    size: 'DASH',
+    headers: {
+        'User-Agent': HEADERS['User-Agent'],
+        'Referer': BASE_URL + '/',
+        'Origin': BASE_URL
+    },
+    subtitles: subtitles,
+    provider: 'filmmodu',
+    type: 'dash'  // HLS yerine DASH dene
+});
             });
             
             return streams;
@@ -208,3 +209,4 @@ if (typeof module !== 'undefined' && module.exports) {
 } else {
     global.getStreams = getStreams;
 }
+
