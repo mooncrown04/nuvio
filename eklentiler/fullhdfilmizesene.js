@@ -7,7 +7,7 @@ var HEADERS = {
     'Referer': BASE_URL + '/'
 };
 
-// Player (Oynatıcı) için kritik başlıklar
+// Player için gerekli başlıklar
 var STREAM_HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
     'Referer': BASE_URL + '/',
@@ -30,12 +30,52 @@ function rot13Fixed(str) {
 
 function decodeLinkFixed(encoded) {
     try {
-        var decoded = atobFixed(rot13Fixed(encoded));
-        return (decoded && decoded.startsWith('http')) ? decoded : null;
+        var result = atobFixed(rot13Fixed(encoded));
+        return (result && result.startsWith('http')) ? result : null;
     } catch (e) { return null; }
 }
 
-// ==================== ANA MANTIK ====================
+// HEX şifreli m3u8 linklerini çözmek için (Rapid/Vidmoxy için)
+function hexDecodeFixed(hexString) {
+    if (!hexString) return null;
+    try {
+        var cleaned = hexString.replace(/\\\\x/g, '').replace(/\\x/g, '');
+        var str = '';
+        for (var i = 0; i < cleaned.length; i += 2) {
+            str += String.fromCharCode(parseInt(cleaned.substr(i, 2), 16));
+        }
+        return str;
+    } catch (e) { return null; }
+}
+
+// ==================== EXTRACTOR MANTIĞI ====================
+
+function extractVideoUrl(url, sourceKey, referer) {
+    // 1. Rapidvid veya Vidmoxy ise (Senin gönderdiğin örnekteki mantık)
+    if (url.includes('rapidvid.net') || url.includes('vidmoxy.com')) {
+        return fetch(url, { headers: Object.assign({}, HEADERS, { 'Referer': referer }) })
+            .then(function(res) { return res.text(); })
+            .then(function(text) {
+                var match = text.match(/file":\s*"(.*?)"/) || text.match(/file":"(.*?)"/);
+                if (!match) return [];
+                var decoded = hexDecodeFixed(match[1]);
+                if (decoded && decoded.includes('.m3u8')) {
+                    return [{ url: decoded, quality: '1080p' }];
+                }
+                return [];
+            }).catch(function() { return []; });
+    }
+
+    // 2. Direkt m3u8 veya mp4 ise (Proton, Fast, Atom vb.)
+    var isDirect = ['proton', 'fast', 'atom', 'tr', 'en'].some(function(k) { return sourceKey.toLowerCase().includes(k); });
+    if (isDirect || url.includes('.m3u8')) {
+        return Promise.resolve([{ url: url, quality: '1080p' }]);
+    }
+
+    return Promise.resolve([]);
+}
+
+// ==================== ANA AKIŞ ====================
 
 function fetchDetailAndStreams(filmUrl) {
     return fetch(filmUrl, { headers: HEADERS })
@@ -48,39 +88,45 @@ function fetchDetailAndStreams(filmUrl) {
             if (!scxMatch) return [];
 
             var scxData = JSON.parse(scxMatch[1]);
-            var allStreams = [];
-            // CloudStream'deki tüm kaynaklar
+            var allPromises = [];
             var keys = ["atom", "advid", "proton", "fast", "tr", "en"];
 
             keys.forEach(function(key) {
                 if (!scxData[key] || !scxData[key].sx || !scxData[key].sx.t) return;
                 var t = scxData[key].sx.t;
                 
-                var items = Array.isArray(t) ? t.map(function(v, i) { return { val: v, label: key.toUpperCase() + ' #' + (i+1) }; }) 
-                                           : Object.keys(t).map(function(k) { return { val: t[k], label: key.toUpperCase() + ' ' + k }; });
+                var items = Array.isArray(t) ? t.map(function(v, i) { return { encoded: v, label: key.toUpperCase() + ' #' + (i+1) }; }) 
+                                           : Object.keys(t).map(function(k) { return { encoded: t[k], label: key.toUpperCase() + ' ' + k }; });
 
                 items.forEach(function(item) {
-                    var decoded = decodeLinkFixed(item.val);
+                    var decoded = decodeLinkFixed(item.encoded);
                     if (!decoded) return;
 
-                    // M3U8 Kontrolü (Senin örneğindeki gibi)
-                    var isHls = decoded.includes('.m3u8') || ["proton", "fast", "atom"].indexOf(key) > -1;
-
-                    allStreams.push({
-                        name: '⌜ FHD ⌟ | ' + item.label,
-                        title: title,
-                        url: decoded,
-                        quality: '1080p',
-                        // ÖNEMLİ: Nuvio oynatıcısı bu headerlar olmadan 3003 hatası verir
-                        headers: STREAM_HEADERS,
-                        is_direct: true,
-                        streamType: isHls ? 'hls' : 'video',
-                        mimeType: isHls ? 'application/x-mpegURL' : 'video/mp4'
+                    var p = extractVideoUrl(decoded, key, filmUrl).then(function(results) {
+                        return results.map(function(r) {
+                            var isHls = r.url.includes('.m3u8') || ["proton", "fast", "atom"].indexOf(key) > -1;
+                            return {
+                                name: '⌜ FHD ⌟ | ' + item.label,
+                                title: title,
+                                url: r.url,
+                                quality: r.quality,
+                                headers: STREAM_HEADERS,
+                                is_direct: true,
+                                streamType: isHls ? 'hls' : 'video',
+                                mimeType: isHls ? 'application/x-mpegURL' : 'video/mp4'
+                            };
+                        });
                     });
+                    allPromises.push(p);
                 });
             });
 
-            return allStreams;
+            return Promise.all(allPromises);
+        })
+        .then(function(results) { 
+            var streams = [];
+            results.forEach(function(r) { if (Array.isArray(r)) streams = streams.concat(r); });
+            return streams;
         });
 }
 
