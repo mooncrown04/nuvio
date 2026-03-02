@@ -132,20 +132,21 @@ function extractVideoFromAlternate(altUrl, altName, mainTitle, year) {
                 
        // Sadece değişen kısım (extractVideoFromAlternate içindeki streams.push):
 
+
 streams.push({
     name: '⌜ FilmModu ⌟ | ' + (altName || 'Kaynak') + ' ' + (idx + 1),
     title: mainTitle + (year ? ' (' + year + ')' : '') + ' · ' + quality,
     url: streamUrl,
     quality: quality,
-    size: 'DASH',
+    size: 'AUTO',
     headers: {
         'User-Agent': HEADERS['User-Agent'],
         'Referer': BASE_URL + '/',
         'Origin': BASE_URL
     },
     subtitles: subtitles,
-    provider: 'filmmodu',
-    type: 'dash'  // HLS yerine DASH dene
+    provider: 'filmmodu'
+    // type belirtmiyoruz - auto detect
 });
             });
             
@@ -209,4 +210,5 @@ if (typeof module !== 'undefined' && module.exports) {
 } else {
     global.getStreams = getStreams;
 }
+
 
