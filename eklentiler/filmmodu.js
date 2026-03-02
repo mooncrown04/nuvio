@@ -1,86 +1,105 @@
-var import_cheerio_without_node_native = __toESM(require("cheerio-without-node-native"));
+var BASE_URL = 'https://www.filmmodu.ws';
 
-// FilmModu Extractor
-async function extractStreams(tmdbId, mediaType, season, episode) {
-  try {
-    const BASE_URL = 'https://www.filmmodu.ws';
-    const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+// FilmModu için özel tarayıcı kimlikleri
+var HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+    'Referer': BASE_URL + '/'
+};
 
-    // 1. TMDB'den Film Bilgisini Al
-    const tmdbRes = yield fetch(`https://api.themoviedb.org/3/movie/${tmdbId}?language=tr-TR&api_key=4ef0d7355d9ffb5151e987764708ce96`);
-    const movieData = yield tmdbRes.json();
-    const movieName = movieData.title || movieData.original_title;
+// Player'ın videoyu çekerken kullanacağı başlıklar (MTK Hatasını Önlemek İçin Kritik)
+var STREAM_HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+    'Origin': BASE_URL,
+    'Referer': BASE_URL + '/',
+    'Sec-Fetch-Dest': 'video',
+    'Sec-Fetch-Mode': 'no-cors',
+    'Sec-Fetch-Site': 'cross-site'
+};
 
-    // 2. FilmModu'nda Ara
-    const searchRes = yield fetch(`${BASE_URL}/film-ara?term=${encodeURIComponent(movieName)}`, { headers: { 'User-Agent': UA } });
-    const searchHtml = yield searchRes.text();
-    const $search = import_cheerio_without_node_native.default.load(searchHtml);
-    
-    // İlk film linkini bul
-    const movieRelativePath = $search('.movie a').first().attr('href');
-    if (!movieRelativePath) return [];
+function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
+    return new Promise(function(resolve, reject) {
+        // Sadece filmleri destekler
+        if (mediaType !== 'movie') {
+            return resolve([]);
+        }
 
-    const movieUrl = movieRelativePath.startsWith('http') ? movieRelativePath : BASE_URL + movieRelativePath;
+        var tmdbUrl = 'https://api.themoviedb.org/3/movie/' + tmdbId +
+            '?language=tr-TR&api_key=4ef0d7355d9ffb5151e987764708ce96';
 
-    // 3. Film Sayfasına Git ve Kaynakları Bul
-    const movieRes = yield fetch(movieUrl, { headers: { 'User-Agent': UA } });
-    const movieHtml = yield movieRes.text();
-    
-    // Video ID ve Type'ı HTML içinden ayıkla
-    const videoId = movieHtml.match(/var\s+videoId\s*=\s*['"]([^'"]+)['"]/)[1];
-    const videoType = movieHtml.match(/var\s+videoType\s*=\s*['"]([^'"]+)['"]/)[1];
+        console.log('[FilmModu] Başlatılıyor:', tmdbId);
 
-    if (!videoId) return [];
+        fetch(tmdbUrl)
+            .then(function(res) { return res.json(); })
+            .then(function(data) {
+                var title = data.title || data.original_title || '';
+                var year = (data.release_date || '').substring(0, 4);
+                
+                if (!title) return resolve([]);
 
-    // 4. Gerçek Kaynak Linklerini Çek (AJAX)
-    const sourceRes = yield fetch(`${BASE_URL}/get-source?movie_id=${videoId}&type=${videoType}`, {
-      headers: { 
-        'X-Requested-With': 'XMLHttpRequest',
-        'Referer': movieUrl,
-        'User-Agent': UA
-      }
+                // 1. FilmModu'nda Arama Yap
+                var searchUrl = BASE_URL + '/film-ara?term=' + encodeURIComponent(title);
+                return fetch(searchUrl, { headers: HEADERS })
+                    .then(function(res) { return res.text(); })
+                    .then(function(html) {
+                        // Regex ile ilk film linkini yakala
+                        var movieMatch = html.match(/href="([^"]*\/izle\/[^"]*)"/i);
+                        if (!movieMatch) return [];
+
+                        var movieUrl = movieMatch[1].indexOf('http') === 0 ? movieMatch[1] : BASE_URL + movieMatch[1];
+                        
+                        // 2. Film Sayfasını Yükle
+                        return fetch(movieUrl, { headers: HEADERS })
+                            .then(function(res) { return res.text(); })
+                            .then(function(html) {
+                                // 3. Video ID ve Tipi Ayıkla
+                                var vIdMatch = html.match(/var\s+videoId\s*=\s*['"]([^'"]+)['"]/);
+                                var vTypeMatch = html.match(/var\s+videoType\s*=\s*['"]([^'"]+)['"]/);
+                                
+                                if (!vIdMatch) return [];
+
+                                var sourceUrl = BASE_URL + '/get-source?movie_id=' + vIdMatch[1] + '&type=' + vTypeMatch[1];
+                                
+                                // 4. AJAX ile Kaynakları Al
+                                return fetch(sourceUrl, {
+                                    headers: { 
+                                        'X-Requested-With': 'XMLHttpRequest',
+                                        'Referer': movieUrl,
+                                        'User-Agent': HEADERS['User-Agent']
+                                    }
+                                }).then(function(res) { return res.json(); });
+                            })
+                            .then(function(data) {
+                                if (!data || !data.sources) return [];
+
+                                // 5. Player'a Uygun Formatla Gönder
+                                return data.sources.map(function(s) {
+                                    return {
+                                        name: '⌜ FilmModu ⌟',
+                                        title: title + (year ? ' (' + year + ')' : '') + ' · ' + (s.label || 'HD'),
+                                        url: s.src.indexOf('http') === 0 ? s.src : BASE_URL + s.src,
+                                        quality: s.label || 'HD',
+                                        headers: STREAM_HEADERS, // Player için özel başlıklar
+                                        is_direct: true,
+                                        provider: 'filmmodu'
+                                    };
+                                });
+                            });
+                    });
+            })
+            .then(function(streams) {
+                resolve(streams || []);
+            })
+            .catch(function(err) {
+                console.error('[FilmModu] Hata:', err.message);
+                resolve([]);
+            });
     });
-    const data = yield sourceRes.json();
-
-    if (!data || !data.sources) return [];
-
-    // 5. MTK İşlemci Dostu Stream Objelerini Oluştur
-    return data.sources.map(s => ({
-      name: "⌜ FilmModu ⌟",
-      title: `${movieName} - ${s.label}`,
-      url: s.src.startsWith('http') ? s.src : BASE_URL + s.src,
-      is_direct: true,
-      // Kendi player'ında MTK hatasını önlemek için donanım hızlandırmayı kapatan flagler
-      hw_decode: false,
-      force_sw: true,
-      headers: {
-        "User-Agent": UA,
-        "Referer": BASE_URL + "/",
-        "Origin": BASE_URL
-      }
-    }));
-
-  } catch (error) {
-    console.error(`[FilmModu] Extractor Error: ${error.message}`);
-    return [];
-  }
 }
 
-// Şablondaki getStreams fonksiyonuna bağla
-function getStreams(tmdbId, mediaType, season, episode) {
-  return __async(this, null, function* () {
-    try {
-      console.log(`[FilmModu] İstek: ${mediaType} ${tmdbId}`);
-      // Sadece filmleri destekle (Dizi desteği istenirse geliştirilebilir)
-      if (mediaType !== 'movie') return [];
-      
-      const streams = yield extractStreams(tmdbId, mediaType, season, episode);
-      return streams;
-    } catch (error) {
-      console.error(`[FilmModu] Genel Hata: ${error.message}`);
-      return [];
-    }
-  });
+// Modül export yapısı (Örneklerdeki gibi)
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = { getStreams };
+} else {
+    global.getStreams = getStreams;
 }
-
-module.exports = { getStreams };
