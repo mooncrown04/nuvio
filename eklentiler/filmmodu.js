@@ -55,6 +55,19 @@ function detectFormat(url) {
     return 'HLS';
 }
 
+function getStreamDomain(url) {
+    try {
+        if (url.startsWith('//')) {
+            url = 'https:' + url;
+        }
+        var urlObj = new URL(url);
+        return urlObj.origin;
+    } catch(e) {
+        console.log('[FilmModu] URL parse error:', e.message);
+        return BASE_URL;
+    }
+}
+
 function searchFilmModu(title) {
     var searchUrl = BASE_URL + '/film-ara?term=' + encodeURIComponent(title);
     console.log('[FilmModu] Search URL:', searchUrl);
@@ -140,7 +153,7 @@ function loadMoviePage(url) {
             var title = titleMatch ? titleMatch[1].trim() : '';
             
             var yearMatch = findFirst(html, '<span[^>]*itemprop="dateCreated"[^>]*>([^<]*)<\\/span>');
-            var year = yearMatch ? titleMatch[1].trim() : '';
+            var year = yearMatch ? yearMatch[1].trim() : '';
             
             return {
                 title: title,
@@ -152,31 +165,13 @@ function loadMoviePage(url) {
 
 function resolveRedirect(url) {
     return fetch(url, {
-        method: 'GET', // HEAD yerine GET kullan
+        method: 'GET',
         headers: STREAM_HEADERS,
         redirect: 'follow'
     }).then(function(res) {
         return res.url;
     }).catch(function() {
         return url;
-    });
-}
-
-function fetchM3u8Content(url) {
-    return fetch(url, {
-        headers: STREAM_HEADERS
-    }).then(function(res) {
-        return res.text();
-    }).then(function(content) {
-        return {
-            url: url,
-            content: content,
-            isMaster: content.includes('#EXT-X-STREAM-INF'),
-            hasSegments: content.includes('#EXTINF')
-        };
-    }).catch(function(err) {
-        console.log('[FilmModu] M3U8 fetch error:', err.message);
-        return null;
     });
 }
 
@@ -229,41 +224,39 @@ function extractVideoFromAlternate(altUrl, altName, mainTitle, year) {
                     
                     var streamUrl = source.src.startsWith('http') ? source.src : BASE_URL + source.src;
                     
-                    // M3U8 içeriğini kontrol et
-                    return fetchM3u8Content(streamUrl).then(function(m3u8Info) {
-                        if (!m3u8Info) return null;
+                    return resolveRedirect(streamUrl).then(function(finalUrl) {
+                        var format = detectFormat(finalUrl);
+                        var streamDomain = getStreamDomain(finalUrl);
                         
-                        var format = detectFormat(m3u8Info.url);
-                        var finalUrl = m3u8Info.url;
+                        console.log('[FilmModu] Final URL:', finalUrl.substring(0, 80) + '...');
+                        console.log('[FilmModu] Stream domain:', streamDomain);
                         
-                        // Eğer master playlist ise ve tek bir stream varsa, direkt onu kullan
-                        if (m3u8Info.isMaster) {
-                            console.log('[FilmModu] Master playlist detected');
-                        }
+                        // Domain'e göre headers ayarla
+                        var customHeaders = {
+                            'User-Agent': STREAM_HEADERS['User-Agent'],
+                            'Accept': '*/*',
+                            'Accept-Language': 'tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7',
+                            'Accept-Encoding': 'identity;q=1, *;q=0',
+                            'Referer': streamDomain + '/',
+                            'Origin': streamDomain,
+                            'Sec-Fetch-Dest': 'video',
+                            'Sec-Fetch-Mode': 'no-cors',
+                            'Sec-Fetch-Site': 'cross-site',
+                            'DNT': '1',
+                            'Connection': 'keep-alive'
+                        };
                         
-                        // Stream objesi - HLS için özel ayarlar
-                        var streamObj = {
+                        return {
                             name: '⌜ FilmModu ⌟ | ' + (altName || 'Kaynak'),
                             title: mainTitle + (year ? ' (' + year + ')' : '') + ' · ' + quality,
                             url: finalUrl,
                             quality: quality,
-                            size: format + (m3u8Info.isMaster ? ' (Master)' : ' (Direct)'),
-                            headers: {
-                                'User-Agent': STREAM_HEADERS['User-Agent'],
-                                'Accept': '*/*',
-                                'Referer': BASE_URL + '/',
-                                'Origin': BASE_URL
-                            },
+                            size: format,
+                            headers: customHeaders,
                             subtitles: subtitles,
                             provider: 'filmmodu',
                             type: 'hls'
                         };
-                        
-                        console.log('[FilmModu] Stream URL:', finalUrl.substring(0, 100) + '...');
-                        console.log('[FilmModu] Is Master:', m3u8Info.isMaster);
-                        console.log('[FilmModu] Has Segments:', m3u8Info.hasSegments);
-                        
-                        return streamObj;
                     });
                 })).then(function(resolvedStreams) {
                     return resolvedStreams.filter(function(s) { return s && s.url; });
