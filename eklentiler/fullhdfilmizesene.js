@@ -1,5 +1,5 @@
 // ! Bu araç @keyiflerolsun tarafından | @KekikAkademi için yazılmıştır.
-// FullHDFilmizlesene - ORİJİNAL ÇALIŞAN KOD (VLC ile çalışan hali)
+// FullHDFilmizlesene - Sadece Direkt Linkler (Proton/Fast/Tr/En) + Nuvio Uyumlu
 
 var BASE_URL = 'https://www.fullhdfilmizlesene.live';
 
@@ -9,6 +9,8 @@ var HEADERS = {
     'Accept-Language': 'tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7',
     'Referer': BASE_URL + '/'
 };
+
+// ==================== YARDIMCI FONKSİYONLAR ====================
 
 function atobFixed(str) {
     try {
@@ -33,80 +35,13 @@ function rot13Fixed(str) {
 function decodeLinkFixed(encoded) {
     try {
         var result = atobFixed(rot13Fixed(encoded));
-        return (result && result.includes('http')) ? result : null;
+        return (result && result.startsWith('http')) ? result : null;
     } catch (e) {
         return null;
     }
 }
 
-function hexDecodeFixed(hexString) {
-    if (!hexString) return null;
-    try {
-        var bytes = [];
-        if (hexString.includes('\\x')) {
-            var parts = hexString.split('\\x');
-            for (var i = 1; i < parts.length; i++) {
-                bytes.push(parseInt(parts[i].substring(0, 2), 16));
-            }
-        } else {
-            for (var j = 0; j < hexString.length; j += 2) {
-                bytes.push(parseInt(hexString.substring(j, j + 2), 16));
-            }
-        }
-        return String.fromCharCode.apply(null, bytes);
-    } catch (e) {
-        return null;
-    }
-}
-
-function rapid2m3u8(url, referer) {
-    return fetch(url, { headers: Object.assign({}, HEADERS, { 'Referer': referer }) })
-        .then(function(res) { return res.text(); })
-        .then(function(text) {
-            var match = text.match(/file":\s*"(.*?)"/) || text.match(/file":"(.*?)"/);
-            if (!match) return [];
-            var decoded = hexDecodeFixed(match[1].replace(/\\\\x/g, '\\x'));
-            return decoded ? [{ url: decoded, quality: '720p', type: 'M3U8' }] : [];
-        }).catch(function() { return []; });
-}
-
-function trstx2m3u8(url, referer) {
-    var baseUrl = 'https://trstx.org';
-    return fetch(url, { headers: Object.assign({}, HEADERS, { 'Referer': referer }) })
-        .then(function(res) { return res.text(); })
-        .then(function(text) {
-            var match = text.match(/file":"([^"]+)/);
-            if (!match) return [];
-            return fetch(baseUrl + '/' + match[1].replace(/\\/g, ''), {
-                method: 'POST',
-                headers: Object.assign({}, HEADERS, { 'Referer': referer, 'Content-Type': 'application/x-www-form-urlencoded' }),
-                body: ''
-            });
-        })
-        .then(function(res) { return res.json(); })
-        .then(function(postData) {
-            var promises = postData.slice(1).map(function(item) {
-                return fetch(baseUrl + '/playlist/' + item.file.substring(1) + '.txt', {
-                    method: 'POST',
-                    headers: Object.assign({}, HEADERS, { 'Referer': referer }),
-                    body: ''
-                }).then(function(r) { return r.text(); })
-                  .then(function(url) { return { url: url.trim(), quality: item.title, type: 'M3U8' }; });
-            });
-            return Promise.all(promises);
-        }).catch(function() { return []; });
-}
-
-function extractVideoUrl(url, sourceKey, referer) {
-    if (url.includes('rapidvid.net') || url.includes('vidmoxy.com')) return rapid2m3u8(url, referer);
-    if (url.includes('trstx.org')) return trstx2m3u8(url, referer);
-    
-    var isDirect = ['proton', 'fast', 'tr', 'en'].some(function(k) { return sourceKey.toLowerCase().includes(k); });
-    if (isDirect || url.match(/\.(m3u8|mp4)/i)) {
-        return Promise.resolve([{ url: url, quality: '720p', type: url.includes('.m3u8') ? 'M3U8' : 'VIDEO' }]);
-    }
-    return Promise.resolve([]);
-}
+// ==================== ANA MANTIK - SADECE DİREKT LİNKLER ====================
 
 function fetchDetailAndStreams(filmUrl) {
     return fetch(filmUrl, { headers: HEADERS })
@@ -118,41 +53,69 @@ function fetchDetailAndStreams(filmUrl) {
             if (!scxMatch) return [];
 
             var scxData = JSON.parse(scxMatch[1]);
-            var allPromises = [];
-            var keys = ['atom', 'advid', 'proton', 'fast', 'tr', 'en'];
-
-            keys.forEach(function(key) {
+            var streams = [];
+            
+            // SADECE DİREKT ÇALIŞAN KAYNAKLAR (Proton, Fast, Tr, En)
+            // Atom, Advid, RapidVid vb. şifreli kaynaklar HARİÇ!
+            var directKeys = ['proton', 'fast', 'fastly', 'tr', 'en'];
+            
+            directKeys.forEach(function(key) {
                 var sourceData = scxData[key];
                 if (!sourceData || !sourceData.sx || !sourceData.sx.t) return;
+                
                 var t = sourceData.sx.t;
+                var items = [];
 
-                var items = Array.isArray(t) ? t.map(function(v, i) { return { encoded: v, label: key.toUpperCase() + ' #' + (i+1) }; }) 
-                                           : Object.keys(t).map(function(k) { return { encoded: t[k], label: key.toUpperCase() + ' ' + k }; });
+                if (Array.isArray(t)) {
+                    items = t.map(function(v, i) { 
+                        return { encoded: v, label: key.toUpperCase() + ' #' + (i+1) }; 
+                    });
+                } else if (typeof t === 'object') {
+                    items = Object.keys(t).map(function(k) { 
+                        return { encoded: t[k], label: key.toUpperCase() + ' ' + k }; 
+                    });
+                }
 
                 items.forEach(function(item) {
                     var decoded = decodeLinkFixed(item.encoded);
-                    if (!decoded) return;
-
-                    allPromises.push(extractVideoUrl(decoded, key, filmUrl).then(function(results) {
-                        return results.map(function(r) {
-                            // ORİJİNAL - DEĞİŞTİRİLMEMİŞ
-                            return {
-                                name: '⌜ FullHD ⌟ | ' + item.label,
-                                title: title + (year ? ' (' + year + ')' : '') + ' · ' + r.quality,
-                                url: r.url,
-                                quality: r.quality,
-                                headers: { 'User-Agent': HEADERS['User-Agent'], 'Referer': filmUrl, 'Origin': BASE_URL },
-                                type: r.type,
-                                provider: 'fullhdfilmizlesene'
-                            };
-                        });
-                    }));
+                    if (!decoded || !decoded.startsWith('http')) return;
+                    
+                    // Sadece direkt M3U8 veya MP4
+                    var isM3u8 = decoded.includes('.m3u8');
+                    var isMp4 = decoded.includes('.mp4');
+                    
+                    if (!isM3u8 && !isMp4) return; // Diğer formatları atla
+                    
+                    // ==================== NUVIO UYUMLU STREAM ====================
+                    streams.push({
+                        name: '⌜ FullHD ⌟ | ' + item.label,
+                        title: title + (year ? ' (' + year + ')' : '') + ' · ' + (isM3u8 ? 'M3U8' : 'MP4'),
+                        url: decoded,
+                        quality: '720p',
+                        
+                        // Nuvio/ExoPlayer için kritik alanlar
+                        type: isM3u8 ? 'hls' : 'video',
+                        format: isM3u8 ? 'hls' : 'mp4',
+                        
+                        // Headers - sadece gerekli olanlar
+                        headers: {
+                            'User-Agent': HEADERS['User-Agent'],
+                            'Referer': filmUrl,
+                            'Origin': BASE_URL
+                        },
+                        
+                        provider: 'fullhdfilmizlesene'
+                    });
                 });
             });
 
-            return Promise.all(allPromises);
+            console.log('[FullHD] Direkt streams:', streams.length);
+            return streams;
         })
-        .then(function(results) { return [].concat.apply([], results); });
+        .catch(function(err) {
+            console.error('[FullHD] Error:', err.message);
+            return [];
+        });
 }
 
 function searchFullHD(title) {
