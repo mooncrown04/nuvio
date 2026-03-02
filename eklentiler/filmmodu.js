@@ -1,8 +1,9 @@
 var BASE_URL = 'https://www.filmmodu.ws';
 
+// CloudStream3 ile aynı headers
 var HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
     'Accept-Language': 'tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7',
     'Referer': BASE_URL + '/'
 };
@@ -15,20 +16,8 @@ function findFirst(html, pattern) {
 
 function detectFormat(url) {
     var lowerUrl = url.toLowerCase();
-    if (lowerUrl.includes('.m3u8') || lowerUrl.includes('/m3u8/')) return 'HLS';
-    if (lowerUrl.includes('.mpd')) return 'DASH';
-    if (lowerUrl.includes('.mp4')) return 'MP4';
+    if (lowerUrl.includes('.m3u8')) return 'HLS';
     return 'HLS';
-}
-
-function getStreamDomain(url) {
-    try {
-        if (url.startsWith('//')) url = 'https:' + url;
-        var urlObj = new URL(url);
-        return urlObj.origin;
-    } catch(e) {
-        return BASE_URL;
-    }
 }
 
 function searchFilmModu(title) {
@@ -118,74 +107,6 @@ function loadMoviePage(url) {
         });
 }
 
-function resolveRedirect(url) {
-    return fetch(url, {
-        method: 'GET',
-        headers: HEADERS,
-        redirect: 'follow'
-    }).then(function(res) {
-        return res.url;
-    }).catch(function() {
-        return url;
-    });
-}
-
-function fetchM3u8Content(url) {
-    return fetch(url, {
-        headers: {
-            'User-Agent': HEADERS['User-Agent'],
-            'Accept': '*/*',
-            'Referer': BASE_URL + '/'
-        }
-    }).then(function(res) {
-        return res.text();
-    }).then(function(content) {
-        return {
-            content: content,
-            isMaster: content.includes('#EXT-X-STREAM-INF'),
-            hasSegments: content.includes('#EXTINF'),
-            bandwidths: []
-        };
-    }).catch(function(err) {
-        console.log('[FilmModu] M3U8 fetch error:', err.message);
-        return null;
-    });
-}
-
-function parseMasterPlaylist(baseUrl, m3u8Content) {
-    var lines = m3u8Content.split('\n');
-    var streams = [];
-    var currentInfo = {};
-    
-    for (var i = 0; i < lines.length; i++) {
-        var line = lines[i].trim();
-        
-        if (line.startsWith('#EXT-X-STREAM-INF:')) {
-            var bwMatch = line.match(/BANDWIDTH=(\d+)/);
-            var resMatch = line.match(/RESOLUTION=(\d+x\d+)/);
-            currentInfo = {
-                bandwidth: bwMatch ? parseInt(bwMatch[1]) : 0,
-                resolution: resMatch ? resMatch[1] : ''
-            };
-        } else if (line && !line.startsWith('#') && currentInfo.bandwidth) {
-            var streamUrl = line.startsWith('http') ? line : 
-                (line.startsWith('/') ? getStreamDomain(baseUrl) + line : 
-                baseUrl.substring(0, baseUrl.lastIndexOf('/') + 1) + line);
-            
-            streams.push({
-                url: streamUrl,
-                bandwidth: currentInfo.bandwidth,
-                resolution: currentInfo.resolution
-            });
-            currentInfo = {};
-        }
-    }
-    
-    // Bandwidth'e göre sırala (yüksekten düşüğe)
-    streams.sort(function(a, b) { return b.bandwidth - a.bandwidth; });
-    return streams;
-}
-
 function extractVideoFromAlternate(altUrl, altName, mainTitle, year) {
     console.log('[FilmModu] Loading alternate:', altUrl);
 
@@ -209,9 +130,11 @@ function extractVideoFromAlternate(altUrl, altName, mainTitle, year) {
                 .then(function(res) { return res.json(); });
         })
         .then(function(data) {
-            if (!data || !data.sources) return null;
+            if (!data || !data.sources) return [];
             
+            var streams = [];
             var subtitles = [];
+            
             if (data.subtitle) {
                 subtitles.push({
                     label: 'türkçee',
@@ -219,7 +142,7 @@ function extractVideoFromAlternate(altUrl, altName, mainTitle, year) {
                 });
             }
             
-            return Promise.all(data.sources.map(function(source) {
+            data.sources.forEach(function(source) {
                 var quality = '720p';
                 if (source.label) {
                     var label = source.label.toLowerCase();
@@ -230,77 +153,30 @@ function extractVideoFromAlternate(altUrl, altName, mainTitle, year) {
                 }
                 
                 var streamUrl = source.src.startsWith('http') ? source.src : BASE_URL + source.src;
+                var format = detectFormat(streamUrl);
                 
-                return resolveRedirect(streamUrl).then(function(finalUrl) {
-                    var streamDomain = getStreamDomain(finalUrl);
-                    
-                    console.log('[FilmModu] Final URL:', finalUrl.substring(0, 60) + '...');
-                    console.log('[FilmModu] Domain:', streamDomain);
-                    
-                    // M3U8 içeriğini kontrol et
-                    return fetchM3u8Content(finalUrl).then(function(m3u8Info) {
-                        if (!m3u8Info) return null;
-                        
-                        var streams = [];
-                        
-                        if (m3u8Info.isMaster) {
-                            console.log('[FilmModu] Master playlist found');
-                            var parsedStreams = parseMasterPlaylist(finalUrl, m3u8Info.content);
-                            
-                            parsedStreams.forEach(function(s, idx) {
-                                var resQuality = '720p';
-                                if (s.resolution) {
-                                    if (s.resolution.includes('1920')) resQuality = '1080p';
-                                    else if (s.resolution.includes('1280')) resQuality = '720p';
-                                    else if (s.resolution.includes('854')) resQuality = '480p';
-                                    else if (s.resolution.includes('640')) resQuality = '360p';
-                                }
-                                
-                                streams.push({
-                                    name: '⌜ FilmModu ⌟ | ' + (altName || 'Kaynak') + ' ' + (idx + 1),
-                                    title: mainTitle + (year ? ' (' + year + ')' : '') + ' · ' + resQuality,
-                                    url: s.url,
-                                    quality: resQuality,
-                                    size: 'HLS',
-                                    headers: {
-                                        'User-Agent': HEADERS['User-Agent'],
-                                        'Referer': streamDomain + '/',
-                                        'Origin': streamDomain
-                                    },
-                                    subtitles: subtitles,
-                                    provider: 'filmmodu',
-                                    type: 'hls'
-                                });
-                            });
-                        } else {
-                            console.log('[FilmModu] Direct playlist');
-                            streams.push({
-                                name: '⌜ FilmModu ⌟ | ' + (altName || 'Kaynak'),
-                                title: mainTitle + (year ? ' (' + year + ')' : '') + ' · ' + quality,
-                                url: finalUrl,
-                                quality: quality,
-                                size: 'HLS',
-                                headers: {
-                                    'User-Agent': HEADERS['User-Agent'],
-                                    'Referer': streamDomain + '/',
-                                    'Origin': streamDomain
-                                },
-                                subtitles: subtitles,
-                                provider: 'filmmodu',
-                                type: 'hls'
-                            });
-                        }
-                        
-                        return streams;
-                    });
+                console.log('[FilmModu] Stream URL:', streamUrl.substring(0, 80));
+                
+                // CloudStream3'teki gibi sabit referer kullan
+                streams.push({
+                    name: '⌜ FilmModu ⌟ | ' + (altName || 'Kaynak'),
+                    title: mainTitle + (year ? ' (' + year + ')' : '') + ' · ' + quality,
+                    url: streamUrl,
+                    quality: quality,
+                    size: format,
+                    // CloudStream3 ile aynı header yapısı - sabit referer
+                    headers: {
+                        'User-Agent': HEADERS['User-Agent'],
+                        'Referer': BASE_URL + '/',
+                        'Origin': BASE_URL
+                    },
+                    subtitles: subtitles,
+                    provider: 'filmmodu',
+                    type: 'hls'
                 });
-            })).then(function(results) {
-                var all = [];
-                results.forEach(function(r) {
-                    if (r && Array.isArray(r)) all = all.concat(r);
-                });
-                return all;
             });
+            
+            return streams;
         })
         .catch(function(err) {
             console.error('[FilmModu] Error:', err.message);
