@@ -1,5 +1,5 @@
 // ! Bu araç @keyiflerolsun tarafından | @KekikAkademi için yazılmıştır.
-// FullHDFilmizlesene - Orijinal Kod + Düzeltilmiş Stream Objesi
+// FullHDFilmizlesene - Nuvio APK Uyumlu
 
 var BASE_URL = 'https://www.fullhdfilmizlesene.live';
 
@@ -10,7 +10,17 @@ var HEADERS = {
     'Referer': BASE_URL + '/'
 };
 
-// ==================== YARDIMCI FONKSİYONLAR (Orijinal) ====================
+// Nuvio için Stream Headers
+var STREAM_HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Accept': '*/*',
+    'Accept-Language': 'tr-TR,tr;q=0.9,en;q=0.8',
+    'Accept-Encoding': 'identity',
+    'Referer': BASE_URL + '/',
+    'Origin': BASE_URL
+};
+
+// ==================== YARDIMCI FONKSİYONLAR ====================
 
 function atobFixed(str) {
     try {
@@ -35,7 +45,7 @@ function rot13Fixed(str) {
 function decodeLinkFixed(encoded) {
     try {
         var result = atobFixed(rot13Fixed(encoded));
-        return (result && result.includes('http')) ? result : null;
+        return (result && result.startsWith('http')) ? result : null;
     } catch (e) {
         return null;
     }
@@ -44,16 +54,10 @@ function decodeLinkFixed(encoded) {
 function hexDecodeFixed(hexString) {
     if (!hexString) return null;
     try {
+        var cleaned = hexString.replace(/\\\\x/g, '\\x').replace(/\\x/g, '');
         var bytes = [];
-        if (hexString.includes('\\x')) {
-            var parts = hexString.split('\\x');
-            for (var i = 1; i < parts.length; i++) {
-                bytes.push(parseInt(parts[i].substring(0, 2), 16));
-            }
-        } else {
-            for (var j = 0; j < hexString.length; j += 2) {
-                bytes.push(parseInt(hexString.substring(j, j + 2), 16));
-            }
+        for (var i = 0; i < cleaned.length; i += 2) {
+            bytes.push(parseInt(cleaned.substr(i, 2), 16));
         }
         return String.fromCharCode.apply(null, bytes);
     } catch (e) {
@@ -61,7 +65,7 @@ function hexDecodeFixed(hexString) {
     }
 }
 
-// ==================== EXTRACTOR'LAR (Orijinal) ====================
+// ==================== EXTRACTOR'LAR ====================
 
 function rapid2m3u8(url, referer) {
     return fetch(url, { headers: Object.assign({}, HEADERS, { 'Referer': referer }) })
@@ -70,7 +74,7 @@ function rapid2m3u8(url, referer) {
             var match = text.match(/file":\s*"(.*?)"/) || text.match(/file":"(.*?)"/);
             if (!match) return [];
             var decoded = hexDecodeFixed(match[1].replace(/\\\\x/g, '\\x'));
-            return decoded ? [{ url: decoded, quality: '720p', type: 'M3U8' }] : [];
+            return decoded ? [{ url: decoded, quality: '720p' }] : [];
         }).catch(function() { return []; });
 }
 
@@ -95,32 +99,69 @@ function trstx2m3u8(url, referer) {
                     headers: Object.assign({}, HEADERS, { 'Referer': referer }),
                     body: ''
                 }).then(function(r) { return r.text(); })
-                  .then(function(url) { return { url: url.trim(), quality: item.title, type: 'M3U8' }; });
+                  .then(function(url) { return { url: url.trim(), quality: item.title || '720p' }; });
             });
             return Promise.all(promises);
+        }).catch(function() { return []; });
+}
+
+function sobreatsesuyp2m3u8(url, referer) {
+    var baseUrl = 'https://sobreatsesuyp.com';
+    return fetch(url, { headers: Object.assign({}, HEADERS, { 'Referer': referer }) })
+        .then(function(res) { return res.text(); })
+        .then(function(text) {
+            var match = text.match(/file":"([^"]+)/);
+            if (!match) return [];
+            return fetch(baseUrl + '/' + match[1].replace(/\\/g, ''), {
+                method: 'POST',
+                headers: Object.assign({}, HEADERS, { 'Referer': referer, 'Content-Type': 'application/x-www-form-urlencoded' }),
+                body: ''
+            });
+        })
+        .then(function(res) { return res.json(); })
+        .then(function(postData) {
+            var promises = postData.slice(1).map(function(item) {
+                return fetch(baseUrl + '/playlist/' + item.file.substring(1) + '.txt', {
+                    method: 'POST',
+                    headers: Object.assign({}, HEADERS, { 'Referer': referer }),
+                    body: ''
+                }).then(function(r) { return r.text(); })
+                  .then(function(url) { return { url: url.trim(), quality: item.title || '720p' }; });
+            });
+            return Promise.all(promises);
+        }).catch(function() { return []; });
+}
+
+function turboimgz2m3u8(url, referer) {
+    return fetch(url, { headers: Object.assign({}, HEADERS, { 'Referer': referer }) })
+        .then(function(res) { return res.text(); })
+        .then(function(text) {
+            var match = text.match(/file:\s*"(.*?)"/);
+            return match ? [{ url: match[1], quality: '720p' }] : [];
         }).catch(function() { return []; });
 }
 
 function extractVideoUrl(url, sourceKey, referer) {
     if (url.includes('rapidvid.net') || url.includes('vidmoxy.com')) return rapid2m3u8(url, referer);
     if (url.includes('trstx.org')) return trstx2m3u8(url, referer);
+    if (url.includes('sobreatsesuyp.com')) return sobreatsesuyp2m3u8(url, referer);
+    if (url.includes('turbo.imgz.me')) return turboimgz2m3u8(url, referer);
     
-    // Direkt Linkler
     var isDirect = ['proton', 'fast', 'tr', 'en'].some(function(k) { return sourceKey.toLowerCase().includes(k); });
     if (isDirect || url.match(/\.(m3u8|mp4)/i)) {
-        return Promise.resolve([{ url: url, quality: '720p', type: url.includes('.m3u8') ? 'M3U8' : 'VIDEO' }]);
+        return Promise.resolve([{ url: url, quality: '720p' }]);
     }
     return Promise.resolve([]);
 }
 
-// ==================== ANA MANTIK (Orijinal + Düzeltilmiş Stream) ====================
+// ==================== ANA MANTIK (NUVIO UYUMLU) ====================
 
 function fetchDetailAndStreams(filmUrl) {
     return fetch(filmUrl, { headers: HEADERS })
         .then(function(res) { return res.text(); })
         .then(function(html) {
             var title = (html.match(/<h1[^>]*>([^<]+)<\/h1>/i) || [null, 'FullHD'])[1].trim();
-            var year = (html.match(/(\d{4})/ ) || [null, null])[1];
+            var year = (html.match(/(\d{4})/) || [null, null])[1];
             var scxMatch = html.match(/scx\s*=\s*(\{[\s\S]*?\});/);
             if (!scxMatch) return [];
 
@@ -138,44 +179,50 @@ function fetchDetailAndStreams(filmUrl) {
 
                 items.forEach(function(item) {
                     var decoded = decodeLinkFixed(item.encoded);
-                    if (decoded) {
-                        allPromises.push(extractVideoUrl(decoded, key, filmUrl).then(function(results) {
-                            return results.map(function(r) {
-                                // ==================== DÜZELTİLMİŞ STREAM OBJESİ ====================
-                                // Orijinal kodunuzdaki gibi ama type eklenmiş!
-                                return {
-                                    name: '⌜ FullHD ⌟ | ' + item.label,
-                                    title: title + (year ? ' (' + year + ')' : '') + ' · ' + r.quality,
-                                    url: r.url,
-                                    quality: r.quality,
-                                    // Orijinal: headers: { 'User-Agent': HEADERS['User-Agent'], 'Referer': filmUrl, 'Origin': BASE_URL }
-                                    // Yeni: Sinewix/DiziPal formatında headers
-                                    headers: {
-                                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                                        'Accept': 'video/webm,video/ogg,video/*;q=0.9,application/ogg;q=0.7,audio/*;q=0.6,*/*;q=0.5',
-                                        'Accept-Language': 'tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7',
-                                        'Accept-Encoding': 'identity',
-                                        'Referer': 'https://www.fullhdfilmizlesene.live/',
-                                        'Origin': 'https://www.fullhdfilmizlesene.live',
-                                        'Sec-Fetch-Dest': 'video',
-                                        'Sec-Fetch-Mode': 'no-cors',
-                                        'Sec-Fetch-Site': 'cross-site',
-                                        'DNT': '1'
-                                    },
-                                    type: r.type,  // EKLENEN: 'M3U8' veya 'VIDEO'
-                                    provider: 'fullhdfilmizlesene'
-                                };
-                            });
-                        }));
-                    }
+                    if (!decoded) return;
+
+                    var promise = extractVideoUrl(decoded, key, filmUrl).then(function(results) {
+                        return results.map(function(r) {
+                            // ==================== NUVIO UYUMLU STREAM OBJESİ ====================
+                            // Sinewix/DiziPal yapısına benzer ama Nuvio için optimize
+                            
+                            var isM3u8 = r.url.includes('.m3u8');
+                            
+                            return {
+                                name: '⌜ FullHD ⌟ | ' + item.label,
+                                title: title + (year ? ' (' + year + ')' : '') + ' · ' + r.quality,
+                                url: r.url,
+                                quality: r.quality,
+                                
+                                // Nuvio için kritik alanlar:
+                                type: isM3u8 ? 'hls' : 'video',  // 'hls' veya 'video'
+                                container: isM3u8 ? 'm3u8' : 'mp4',
+                                
+                                // Headers - Nuvio formatında
+                                headers: STREAM_HEADERS,
+                                
+                                // Ek Nuvio alanları
+                                source: 'fullhdfilmizlesene',
+                                provider: 'fullhdfilmizlesene',
+                                
+                                // Subtitle desteği varsa
+                                subtitles: []
+                            };
+                        });
+                    });
+
+                    allPromises.push(promise);
                 });
             });
+
             return Promise.all(allPromises);
         })
-        .then(function(results) { return [].concat.apply([], results); });
+        .then(function(results) { 
+            var streams = [];
+            results.forEach(function(r) { if (Array.isArray(r)) streams = streams.concat(r); });
+            return streams.filter(function(s) { return s && s.url; });
+        });
 }
-
-// ==================== TMDB ve Arama (Orijinal) ====================
 
 function searchFullHD(title) {
     return fetch(BASE_URL + '/arama/' + encodeURIComponent(title), { headers: HEADERS })
