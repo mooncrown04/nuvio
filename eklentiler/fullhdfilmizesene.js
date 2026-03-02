@@ -1,5 +1,5 @@
 // ! Bu araç @keyiflerolsun tarafından | @KekikAkademi için yazılmıştır.
-// FullHDFilmizlesene - ExoPlayer/Nuvio Uyumlu (VLC Çalışıyor)
+// FullHDFilmizlesene - Orijinal Kod + MIME Type (VLC Çalışıyor, Nuvio İçin Deneme)
 
 var BASE_URL = 'https://www.fullhdfilmizlesene.live';
 
@@ -10,21 +10,7 @@ var HEADERS = {
     'Referer': BASE_URL + '/'
 };
 
-// ==================== EXOPLAYER UYUMLU STREAM HEADERS ====================
-// ExoPlayer çok hassas! Sıralama ve değerler önemli!
-var EXO_HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Linux; Android 10; SM-G981B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/80.0.3987.162 Mobile Safari/537.36',
-    'Accept': '*/*',
-    'Accept-Language': 'tr-TR,tr;q=0.9',
-    'Accept-Encoding': 'identity',
-    'Origin': 'https://www.fullhdfilmizlesene.live',
-    'Referer': 'https://www.fullhdfilmizlesene.live/',
-    'Sec-Fetch-Dest': 'empty',
-    'Sec-Fetch-Mode': 'cors',
-    'Sec-Fetch-Site': 'cross-site'
-};
-
-// ==================== YARDIMCI FONKSİYONLAR ====================
+// ==================== YARDIMCI FONKSİYONLAR (ORİJİNAL) ====================
 
 function atobFixed(str) {
     try {
@@ -49,7 +35,7 @@ function rot13Fixed(str) {
 function decodeLinkFixed(encoded) {
     try {
         var result = atobFixed(rot13Fixed(encoded));
-        return (result && result.startsWith('http')) ? result : null;
+        return (result && result.includes('http')) ? result : null;
     } catch (e) {
         return null;
     }
@@ -58,10 +44,16 @@ function decodeLinkFixed(encoded) {
 function hexDecodeFixed(hexString) {
     if (!hexString) return null;
     try {
-        var cleaned = hexString.replace(/\\\\x/g, '\\x').replace(/\\x/g, '');
         var bytes = [];
-        for (var i = 0; i < cleaned.length; i += 2) {
-            bytes.push(parseInt(cleaned.substr(i, 2), 16));
+        if (hexString.includes('\\x')) {
+            var parts = hexString.split('\\x');
+            for (var i = 1; i < parts.length; i++) {
+                bytes.push(parseInt(parts[i].substring(0, 2), 16));
+            }
+        } else {
+            for (var j = 0; j < hexString.length; j += 2) {
+                bytes.push(parseInt(hexString.substring(j, j + 2), 16));
+            }
         }
         return String.fromCharCode.apply(null, bytes);
     } catch (e) {
@@ -69,7 +61,7 @@ function hexDecodeFixed(hexString) {
     }
 }
 
-// ==================== EXTRACTOR'LAR ====================
+// ==================== EXTRACTOR'LAR (ORİJİNAL) ====================
 
 function rapid2m3u8(url, referer) {
     return fetch(url, { headers: Object.assign({}, HEADERS, { 'Referer': referer }) })
@@ -78,7 +70,7 @@ function rapid2m3u8(url, referer) {
             var match = text.match(/file":\s*"(.*?)"/) || text.match(/file":"(.*?)"/);
             if (!match) return [];
             var decoded = hexDecodeFixed(match[1].replace(/\\\\x/g, '\\x'));
-            return decoded ? [{ url: decoded, quality: '720p' }] : [];
+            return decoded ? [{ url: decoded, quality: '720p', type: 'M3U8' }] : [];
         }).catch(function() { return []; });
 }
 
@@ -103,7 +95,7 @@ function trstx2m3u8(url, referer) {
                     headers: Object.assign({}, HEADERS, { 'Referer': referer }),
                     body: ''
                 }).then(function(r) { return r.text(); })
-                  .then(function(url) { return { url: url.trim(), quality: item.title || '720p' }; });
+                  .then(function(url) { return { url: url.trim(), quality: item.title, type: 'M3U8' }; });
             });
             return Promise.all(promises);
         }).catch(function() { return []; });
@@ -115,12 +107,12 @@ function extractVideoUrl(url, sourceKey, referer) {
     
     var isDirect = ['proton', 'fast', 'tr', 'en'].some(function(k) { return sourceKey.toLowerCase().includes(k); });
     if (isDirect || url.match(/\.(m3u8|mp4)/i)) {
-        return Promise.resolve([{ url: url, quality: '720p' }]);
+        return Promise.resolve([{ url: url, quality: '720p', type: url.includes('.m3u8') ? 'M3U8' : 'VIDEO' }]);
     }
     return Promise.resolve([]);
 }
 
-// ==================== ANA MANTIK (EXOPLAYER UYUMLU) ====================
+// ==================== ANA MANTIK (ORİJİNAL + MIME TYPE) ====================
 
 function fetchDetailAndStreams(filmUrl) {
     return fetch(filmUrl, { headers: HEADERS })
@@ -147,48 +139,31 @@ function fetchDetailAndStreams(filmUrl) {
                     var decoded = decodeLinkFixed(item.encoded);
                     if (!decoded) return;
 
-                    var promise = extractVideoUrl(decoded, key, filmUrl).then(function(results) {
+                    allPromises.push(extractVideoUrl(decoded, key, filmUrl).then(function(results) {
                         return results.map(function(r) {
-                            // ==================== EXOPLAYER STREAM OBJESİ ====================
-                            // VLC çalışıyor ama ExoPlayer çalışmıyor = format farkı!
-                            
-                            var isM3u8 = r.url.includes('.m3u8');
-                            
-                            // ExoPlayer için kritik: application/x-mpegURL MIME type
+                            // ORİJİNAL YAPI + MIME TYPE EKLENDİ
                             return {
                                 name: '⌜ FullHD ⌟ | ' + item.label,
                                 title: title + (year ? ' (' + year + ')' : '') + ' · ' + r.quality,
                                 url: r.url,
                                 quality: r.quality,
-                                
-                                // ExoPlayer formatı:
-                                type: isM3u8 ? 'application/x-mpegURL' : 'video/mp4',
-                                mimeType: isM3u8 ? 'application/x-mpegURL' : 'video/mp4',
-                                
-                                // Headers - ExoPlayer sıralaması önemli!
-                                headers: EXO_HEADERS,
-                                
-                                // ExoPlayer ek ayarları
-                                drmScheme: null,
-                                drmLicenseUrl: null,
-                                
+                                headers: { 'User-Agent': HEADERS['User-Agent'], 'Referer': filmUrl, 'Origin': BASE_URL },
+                                type: r.type,
+                                // YENİ: MIME Type (Nuvio için)
+                                mimeType: r.type === 'M3U8' ? 'application/x-mpegURL' : 'video/mp4',
                                 provider: 'fullhdfilmizlesene'
                             };
                         });
-                    });
-
-                    allPromises.push(promise);
+                    }));
                 });
             });
 
             return Promise.all(allPromises);
         })
-        .then(function(results) { 
-            var streams = [];
-            results.forEach(function(r) { if (Array.isArray(r)) streams = streams.concat(r); });
-            return streams.filter(function(s) { return s && s.url; });
-        });
+        .then(function(results) { return [].concat.apply([], results); });
 }
+
+// ==================== TMDB ve Arama (ORİJİNAL) ====================
 
 function searchFullHD(title) {
     return fetch(BASE_URL + '/arama/' + encodeURIComponent(title), { headers: HEADERS })
