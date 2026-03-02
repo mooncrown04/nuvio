@@ -2,7 +2,20 @@
   "name": "mooncrown35",
   "version": "1.0.0",
   "scrapers": [
-      {
+           {
+      "id": "filmmodu",
+      "name": "FilmModu",
+      "description": "Türkçe film, dizi ve anime - 5000+ HD içerik, Türkçe altyazılı, anime arşivi",
+      "version": "1.0.0",
+      "author": "mooncrown",
+      "supportedTypes": ["movie", "tv"],
+      "filename": "eklentiler/filmmodu.js",
+      "enabled": true,
+      "formats": ["mp4", "mkv"],
+      "logo": "https://play-lh.googleusercontent.com/brwGNmr7IjA_MKk_TTPs0va10hdKE_bD_a1lnKoiMuCayW98EHpRv55edA6aEoJlmwfX=w240-h480",
+      "contentLanguage": ["tr"]
+    },
+	  {
       "id": "tuktukcinema",
       "name": "TukTuk Cinema",
       "description": "Arabic streaming content including movies, TV series, and anime from TukTuk Cinema",
