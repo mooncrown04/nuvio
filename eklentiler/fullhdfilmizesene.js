@@ -1,12 +1,10 @@
 // ! Bu araç @keyiflerolsun tarafından | @KekikAkademi için yazılmıştır.
-// FullHDFilmizlesene - Tüm Kaynaklar + Nuvio Uyumlu
+// FullHDFilmizlesene - Nuvio Dahili Player Fixli Sürüm
 
 var BASE_URL = 'https://www.fullhdfilmizlesene.live';
 
 var HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-    'Accept-Language': 'tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7',
     'Referer': BASE_URL + '/'
 };
 
@@ -14,13 +12,8 @@ var HEADERS = {
 
 function atobFixed(str) {
     try {
-        if (typeof Buffer !== 'undefined') {
-            return Buffer.from(str, 'base64').toString('utf-8');
-        }
-        return window.atob(str);
-    } catch (e) {
-        return null;
-    }
+        return typeof Buffer !== 'undefined' ? Buffer.from(str, 'base64').toString('utf-8') : window.atob(str);
+    } catch (e) { return null; }
 }
 
 function rot13Fixed(str) {
@@ -36,9 +29,7 @@ function decodeLinkFixed(encoded) {
     try {
         var result = atobFixed(rot13Fixed(encoded));
         return (result && result.startsWith('http')) ? result : null;
-    } catch (e) {
-        return null;
-    }
+    } catch (e) { return null; }
 }
 
 function hexDecodeFixed(hexString) {
@@ -47,18 +38,12 @@ function hexDecodeFixed(hexString) {
         var bytes = [];
         if (hexString.includes('\\x')) {
             var parts = hexString.split('\\x');
-            for (var i = 1; i < parts.length; i++) {
-                bytes.push(parseInt(parts[i].substring(0, 2), 16));
-            }
+            for (var i = 1; i < parts.length; i++) bytes.push(parseInt(parts[i].substring(0, 2), 16));
         } else {
-            for (var j = 0; j < hexString.length; j += 2) {
-                bytes.push(parseInt(hexString.substring(j, j + 2), 16));
-            }
+            for (var j = 0; j < hexString.length; j += 2) bytes.push(parseInt(hexString.substring(j, j + 2), 16));
         }
         return String.fromCharCode.apply(null, bytes);
-    } catch (e) {
-        return null;
-    }
+    } catch (e) { return null; }
 }
 
 // ==================== EXTRACTOR'LAR ====================
@@ -70,7 +55,7 @@ function rapid2m3u8(url, referer) {
             var match = text.match(/file":\s*"(.*?)"/) || text.match(/file":"(.*?)"/);
             if (!match) return [];
             var decoded = hexDecodeFixed(match[1].replace(/\\\\x/g, '\\x'));
-            return decoded ? [{ url: decoded, quality: '720p', type: 'M3U8' }] : [];
+            return decoded ? [{ url: decoded, quality: '720p', type: 'hls' }] : [];
         }).catch(function() { return []; });
 }
 
@@ -95,7 +80,7 @@ function trstx2m3u8(url, referer) {
                     headers: Object.assign({}, HEADERS, { 'Referer': referer }),
                     body: ''
                 }).then(function(r) { return r.text(); })
-                  .then(function(url) { return { url: url.trim(), quality: item.title, type: 'M3U8' }; });
+                  .then(function(url) { return { url: url.trim(), quality: item.title, type: 'hls' }; });
             });
             return Promise.all(promises);
         }).catch(function() { return []; });
@@ -105,14 +90,11 @@ function extractVideoUrl(url, sourceKey, referer) {
     if (url.includes('rapidvid.net') || url.includes('vidmoxy.com')) return rapid2m3u8(url, referer);
     if (url.includes('trstx.org')) return trstx2m3u8(url, referer);
     
-    var isDirect = ['proton', 'fast', 'tr', 'en'].some(function(k) { return sourceKey.toLowerCase().includes(k); });
-    if (isDirect || url.match(/\.(m3u8|mp4)/i)) {
-        return Promise.resolve([{ url: url, quality: '720p', type: url.includes('.m3u8') ? 'M3U8' : 'VIDEO' }]);
-    }
-    return Promise.resolve([]);
+    var isHls = url.includes('.m3u8');
+    return Promise.resolve([{ url: url, quality: '720p', type: isHls ? 'hls' : 'video' }]);
 }
 
-// ==================== ANA MANTIK (TÜM KAYNAKLAR) ====================
+// ==================== ANA MANTIK ====================
 
 function fetchDetailAndStreams(filmUrl) {
     return fetch(filmUrl, { headers: HEADERS })
@@ -126,8 +108,7 @@ function fetchDetailAndStreams(filmUrl) {
             var scxData = JSON.parse(scxMatch[1]);
             var allPromises = [];
             
-            // TÜM KAYNAKLAR - Proton önce (en güvenli)
-            var keys = ['proton', 'fast', 'tr', 'en', 'atom', 'advid', 'advidprox'];
+            var keys = ['proton', 'fast', 'tr', 'en', 'atom', 'advid'];
 
             keys.forEach(function(key) {
                 var sourceData = scxData[key];
@@ -143,21 +124,27 @@ function fetchDetailAndStreams(filmUrl) {
 
                     allPromises.push(extractVideoUrl(decoded, key, filmUrl).then(function(results) {
                         return results.map(function(r) {
-                            // VLC Uyumlu (çalışan yapı)
-                            var stream = {
+                            return {
                                 name: '⌜ FullHD ⌟ | ' + item.label,
                                 title: title + (year ? ' (' + year + ')' : '') + ' · ' + r.quality,
                                 url: r.url,
                                 quality: r.quality,
-                                headers: { 'User-Agent': HEADERS['User-Agent'], 'Referer': filmUrl, 'Origin': BASE_URL },
+                                is_direct: true,
+                                headers: { 
+                                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)', 
+                                    'Referer': filmUrl, 
+                                    'Origin': 'https://www.fullhdfilmizlesene.live' 
+                                },
+                                // DAHİLİ PLAYER'DA ÇALIŞTIRAN AYARLAR
                                 type: r.type,
-                                provider: 'fullhdfilmizlesene'
+                                is_hls: r.type === 'hls',
+                                hw_decode: false,  // DONANIM HIZLANDIRMAYI KAPAT
+                                force_sw: true,     // YAZILIMSAL ÇÖZÜCÜYÜ ZORLA
+                                android_config: {
+                                    "is_hls": r.type === 'hls',
+                                    "force_software": true
+                                }
                             };
-                            
-                            // Nuvio için ek alanlar (VLC'yi bozmaz)
-                            stream.streamType = r.type === 'M3U8' ? 'hls' : 'video';
-                            
-                            return stream;
                         });
                     }));
                 });
