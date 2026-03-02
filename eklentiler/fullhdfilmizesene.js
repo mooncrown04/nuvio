@@ -3,36 +3,39 @@ var BASE_URL = 'https://www.fullhdfilmizlesene.live';
 
 var HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
     'Referer': BASE_URL + '/'
 };
 
-// Player'ın videoyu çekebilmesi için gereken headerlar
+// Player (Oynatıcı) için kritik başlıklar
 var STREAM_HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
     'Referer': BASE_URL + '/',
-    'Origin': BASE_URL
+    'Origin': BASE_URL,
+    'Accept-Encoding': 'identity'
 };
 
-// --- Şifre Çözücü Yardımcılar ---
+// ==================== YARDIMCI FONKSİYONLAR ====================
 
-// Cloudstream'deki 'atob' karşılığı (Daha güvenli versiyon)
-function decodeBase64(str) {
-    if (!str) return null;
-    try {
-        return decodeURIComponent(escape(atob(str.replace(/\s/g, ''))));
-    } catch (e) {
-        try { return atob(str); } catch (e2) { return null; }
-    }
+function atobFixed(str) {
+    try { return atob(str.replace(/\s/g, '')); } catch (e) { return null; }
 }
 
-// Cloudstream'deki 'rtt' (ROT13) karşılığı
-function rot13(str) {
+function rot13Fixed(str) {
+    if (!str) return null;
     return str.replace(/[a-zA-Z]/g, function(c) {
         return String.fromCharCode((c <= "Z" ? 90 : 122) >= (c = c.charCodeAt(0) + 13) ? c : c - 26);
     });
 }
 
-// --- Ana Fonksiyonlar ---
+function decodeLinkFixed(encoded) {
+    try {
+        var decoded = atobFixed(rot13Fixed(encoded));
+        return (decoded && decoded.startsWith('http')) ? decoded : null;
+    } catch (e) { return null; }
+}
+
+// ==================== ANA MANTIK ====================
 
 function fetchDetailAndStreams(filmUrl) {
     return fetch(filmUrl, { headers: HEADERS })
@@ -41,85 +44,65 @@ function fetchDetailAndStreams(filmUrl) {
             var titleMatch = html.match(/<h1[^>]*>([^<]+)<\/h1>/i);
             var title = titleMatch ? titleMatch[1].trim() : 'Film';
             
-            // scx verisini yakala
             var scxMatch = html.match(/scx\s*=\s*(\{[\s\S]*?\});/);
             if (!scxMatch) return [];
 
             var scxData = JSON.parse(scxMatch[1]);
-            var streams = [];
-            // Cloudstream'deki anahtarlar
-            var keys = ["atom", "advid", "advidprox", "proton", "fast", "fastly", "tr", "en"];
+            var allStreams = [];
+            // CloudStream'deki tüm kaynaklar
+            var keys = ["atom", "advid", "proton", "fast", "tr", "en"];
 
             keys.forEach(function(key) {
                 if (!scxData[key] || !scxData[key].sx || !scxData[key].sx.t) return;
                 var t = scxData[key].sx.t;
                 
-                var sourceEntries = [];
-                if (Array.isArray(t)) {
-                    t.forEach(function(val, i) { sourceEntries.push({ val: val, label: key.toUpperCase() + " #" + (i + 1) }); });
-                } else if (typeof t === 'object') {
-                    Object.keys(t).forEach(function(k) { sourceEntries.push({ val: t[k], label: key.toUpperCase() + " " + k }); });
-                }
+                var items = Array.isArray(t) ? t.map(function(v, i) { return { val: v, label: key.toUpperCase() + ' #' + (i+1) }; }) 
+                                           : Object.keys(t).map(function(k) { return { val: t[k], label: key.toUpperCase() + ' ' + k }; });
 
-                sourceEntries.forEach(function(entry) {
-                    // Cloudstream mantığı: Önce ROT13 sonra Base64 (veya tam tersi)
-                    // Genelde site rot13(base64) kullanır
-                    var decodedUrl = decodeBase64(rot13(entry.val));
-                    
-                    if (!decodedUrl || decodedUrl.indexOf('http') !== 0) {
-                        // Tersini dene: base64(rot13)
-                        decodedUrl = rot13(decodeBase64(entry.val) || "");
-                    }
+                items.forEach(function(item) {
+                    var decoded = decodeLinkFixed(item.val);
+                    if (!decoded) return;
 
-                    if (!decodedUrl || decodedUrl.indexOf('http') !== 0) return;
+                    // M3U8 Kontrolü (Senin örneğindeki gibi)
+                    var isHls = decoded.includes('.m3u8') || ["proton", "fast", "atom"].indexOf(key) > -1;
 
-                    // Oynatıcı Hatasını (3003) Çözen Kısım:
-                    var isHls = decodedUrl.includes('.m3u8') || ["proton", "fast", "atom", "fastly"].indexOf(key) > -1;
-
-                    streams.push({
-                        name: '⌜ FHD ⌟ | ' + entry.label,
+                    allStreams.push({
+                        name: '⌜ FHD ⌟ | ' + item.label,
                         title: title,
-                        url: decodedUrl,
+                        url: decoded,
                         quality: '1080p',
+                        // ÖNEMLİ: Nuvio oynatıcısı bu headerlar olmadan 3003 hatası verir
                         headers: STREAM_HEADERS,
-                        is_direct: true, // Nuvio için doğrudan link olduğunu belirtir
-                        streamType: isHls ? 'hls' : 'video', 
+                        is_direct: true,
+                        streamType: isHls ? 'hls' : 'video',
                         mimeType: isHls ? 'application/x-mpegURL' : 'video/mp4'
                     });
                 });
             });
 
-            return streams;
+            return allStreams;
         });
 }
 
 function getStreams(tmdbId, mediaType) {
     if (mediaType !== 'movie') return Promise.resolve([]);
     
-    // TMDB Bilgilerini Al
     var tmdbUrl = 'https://api.themoviedb.org/3/movie/' + tmdbId + '?language=tr-TR&api_key=4ef0d7355d9ffb5151e987764708ce96';
     
     return fetch(tmdbUrl)
         .then(function(res) { return res.json(); })
         .then(function(data) {
-            var query = data.title || data.original_title;
-            return fetch(BASE_URL + '/arama/' + encodeURIComponent(query), { headers: HEADERS });
+            var searchUrl = BASE_URL + '/arama/' + encodeURIComponent(data.title);
+            return fetch(searchUrl, { headers: HEADERS });
         })
         .then(function(res) { return res.text(); })
         .then(function(html) {
-            // İlk arama sonucunu al
             var match = html.match(/<li class="film">[\s\S]*?<a href="([^"]+)"/);
             if (!match) return [];
-            
-            var filmUrl = match[1];
-            if (!filmUrl.startsWith('http')) filmUrl = BASE_URL + filmUrl;
-            
+            var filmUrl = match[1].startsWith('http') ? match[1] : BASE_URL + match[1];
             return fetchDetailAndStreams(filmUrl);
         })
-        .catch(function(err) {
-            console.log("Hata:", err);
-            return [];
-        });
+        .catch(function() { return []; });
 }
 
 if (typeof module !== 'undefined') module.exports = { getStreams };
