@@ -13,6 +13,19 @@ function findFirst(html, pattern) {
     return match ? match : null;
 }
 
+function detectRealFormat(url) {
+    var lowerUrl = url.toLowerCase();
+    if (lowerUrl.includes('.m3u8') || lowerUrl.includes('/m3u8/')) return 'HLS';
+    if (lowerUrl.includes('.mpd') || lowerUrl.includes('/mpd/')) return 'DASH';
+    if (lowerUrl.includes('.mp4') || lowerUrl.includes('/mp4/')) return 'MP4';
+    if (lowerUrl.includes('.ts') || lowerUrl.includes('.mpegts')) return 'TS';
+    if (lowerUrl.includes('.mkv')) return 'MKV';
+    if (lowerUrl.includes('.webm')) return 'WEBM';
+    if (lowerUrl.includes('youtube.com') || lowerUrl.includes('youtu.be')) return 'YOUTUBE';
+    if (lowerUrl.includes('googlevideo.com')) return 'GOOGLEVIDEO';
+    return 'UNKNOWN';
+}
+
 function searchFilmModu(title) {
     var searchUrl = BASE_URL + '/film-ara?term=' + encodeURIComponent(title);
     return fetch(searchUrl, { headers: HEADERS })
@@ -118,8 +131,9 @@ function extractVideoFromAlternate(altUrl, altName, mainTitle, year) {
                 });
             }
             
-            data.sources.forEach(function(source, idx) {
+            return Promise.all(data.sources.map(function(source, idx) {
                 var streamUrl = source.src.startsWith('http') ? source.src : BASE_URL + source.src;
+                var realFormat = detectRealFormat(streamUrl);
                 
                 var quality = '720p';
                 if (source.label) {
@@ -130,27 +144,65 @@ function extractVideoFromAlternate(altUrl, altName, mainTitle, year) {
                     else if (label.includes('360')) quality = '360p';
                 }
                 
-       // Sadece değişen kısım (extractVideoFromAlternate içindeki streams.push):
-
-
-streams.push({
-    name: '⌜ FilmModu ⌟ | ' + (altName || 'Kaynak') + ' ' + (idx + 1),
-    title: mainTitle + (year ? ' (' + year + ')' : '') + ' · ' + quality,
-    url: streamUrl,
-    quality: quality,
-    size: 'AUTO',
-    headers: {
-        'User-Agent': HEADERS['User-Agent'],
-        'Referer': BASE_URL + '/',
-        'Origin': BASE_URL
-    },
-    subtitles: subtitles,
-    provider: 'filmmodu'
-    // type belirtmiyoruz - auto detect
-});
+                // URL'nin gerçek içeriğini kontrol et
+                return fetch(streamUrl, {
+                    method: 'HEAD',
+                    headers: {
+                        'User-Agent': HEADERS['User-Agent'],
+                        'Referer': BASE_URL + '/'
+                    },
+                    redirect: 'follow'
+                }).then(function(headRes) {
+                    var finalUrl = headRes.url;
+                    var contentType = headRes.headers.get('content-type') || '';
+                    
+                    console.log('[FilmModu] Original URL:', streamUrl.substring(0, 60));
+                    console.log('[FilmModu] Final URL:', finalUrl.substring(0, 60));
+                    console.log('[FilmModu] Content-Type:', contentType);
+                    
+                    // Content-Type'a göre format belirle
+                    var detectedFormat = realFormat;
+                    if (contentType.includes('mpegurl') || contentType.includes('m3u8')) detectedFormat = 'HLS';
+                    else if (contentType.includes('mp4')) detectedFormat = 'MP4';
+                    else if (contentType.includes('webm')) detectedFormat = 'WEBM';
+                    else if (contentType.includes('octet-stream')) detectedFormat = 'OCTET';
+                    
+                    // Son çare: Direkt URL'yi ver, type belirtme
+                    return {
+                        name: '⌜ FilmModu ⌟ | ' + (altName || 'Kaynak') + ' ' + (idx + 1),
+                        title: mainTitle + (year ? ' (' + year + ')' : '') + ' · ' + quality + ' [' + detectedFormat + ']',
+                        url: finalUrl,
+                        quality: quality,
+                        size: detectedFormat,
+                        headers: {
+                            'User-Agent': HEADERS['User-Agent'],
+                            'Referer': BASE_URL + '/',
+                            'Origin': BASE_URL
+                        },
+                        subtitles: subtitles,
+                        provider: 'filmmodu'
+                        // type belirtmiyoruz - Nuvio kendi bilsin
+                    };
+                }).catch(function() {
+                    // HEAD isteği başarısız olursa, orijinal URL ile devam et
+                    return {
+                        name: '⌜ FilmModu ⌟ | ' + (altName || 'Kaynak') + ' ' + (idx + 1),
+                        title: mainTitle + (year ? ' (' + year + ')' : '') + ' · ' + quality + ' [' + realFormat + ']',
+                        url: streamUrl,
+                        quality: quality,
+                        size: realFormat,
+                        headers: {
+                            'User-Agent': HEADERS['User-Agent'],
+                            'Referer': BASE_URL + '/',
+                            'Origin': BASE_URL
+                        },
+                        subtitles: subtitles,
+                        provider: 'filmmodu'
+                    };
+                });
+            })).then(function(results) {
+                return results.filter(function(r) { return r !== null; });
             });
-            
-            return streams;
         })
         .catch(function(err) {
             console.error('[FilmModu] Error:', err.message);
@@ -195,7 +247,7 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                     .then(function(results) {
                         var streams = [];
                         results.forEach(function(r) { 
-                            if (r) streams = streams.concat(r); 
+                            if (r && Array.isArray(r)) streams = streams.concat(r); 
                         });
                         return streams;
                     });
@@ -210,5 +262,3 @@ if (typeof module !== 'undefined' && module.exports) {
 } else {
     global.getStreams = getStreams;
 }
-
-
