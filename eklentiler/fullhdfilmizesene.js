@@ -1,5 +1,5 @@
 // ! Bu araç @keyiflerolsun tarafından | @KekikAkademi için yazılmıştır.
-// FullHDFilmizlesene - ÇALIŞAN VERSİYON (VLC ile test edilmiş)
+// FullHDFilmizlesene - Tüm Kaynaklar + Nuvio Uyumlu
 
 var BASE_URL = 'https://www.fullhdfilmizlesene.live';
 
@@ -112,7 +112,7 @@ function extractVideoUrl(url, sourceKey, referer) {
     return Promise.resolve([]);
 }
 
-// ==================== ANA MANTIK (ÇALIŞAN) ====================
+// ==================== ANA MANTIK (TÜM KAYNAKLAR) ====================
 
 function fetchDetailAndStreams(filmUrl) {
     return fetch(filmUrl, { headers: HEADERS })
@@ -125,7 +125,9 @@ function fetchDetailAndStreams(filmUrl) {
 
             var scxData = JSON.parse(scxMatch[1]);
             var allPromises = [];
-            var keys = ['atom', 'advid', 'proton', 'fast', 'tr', 'en'];
+            
+            // TÜM KAYNAKLAR - Proton önce (en güvenli)
+            var keys = ['proton', 'fast', 'tr', 'en', 'atom', 'advid', 'advidprox'];
 
             keys.forEach(function(key) {
                 var sourceData = scxData[key];
@@ -141,8 +143,8 @@ function fetchDetailAndStreams(filmUrl) {
 
                     allPromises.push(extractVideoUrl(decoded, key, filmUrl).then(function(results) {
                         return results.map(function(r) {
-                            // ÇALIŞAN STREAM OBJESİ - Yorum yok!
-                            return {
+                            // VLC Uyumlu (çalışan yapı)
+                            var stream = {
                                 name: '⌜ FullHD ⌟ | ' + item.label,
                                 title: title + (year ? ' (' + year + ')' : '') + ' · ' + r.quality,
                                 url: r.url,
@@ -151,6 +153,11 @@ function fetchDetailAndStreams(filmUrl) {
                                 type: r.type,
                                 provider: 'fullhdfilmizlesene'
                             };
+                            
+                            // Nuvio için ek alanlar (VLC'yi bozmaz)
+                            stream.streamType = r.type === 'M3U8' ? 'hls' : 'video';
+                            
+                            return stream;
                         });
                     }));
                 });
