@@ -7,7 +7,6 @@ var HEADERS = {
     'Referer': BASE_URL + '/'
 };
 
-// Oynatıcı için kritik kimlik bilgileri
 var STREAM_HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
     'Referer': BASE_URL + '/',
@@ -29,9 +28,9 @@ function rot13Fixed(str) {
 
 function decodeLinkFixed(encoded) {
     try {
-        // Site bazen atob(rot13) bazen sadece atob kullanıyor
+        // Site bazen önce ROT13 sonra BASE64 yapar, bazen sadece BASE64
         var rot = rot13Fixed(encoded);
-        var decoded = atobFixed(rot);
+        var decoded = atobFixed(rot) || atobFixed(encoded); 
         return (decoded && decoded.startsWith('http')) ? decoded : null;
     } catch (e) { return null; }
 }
@@ -54,8 +53,8 @@ function rapid2m3u8(url, referer) {
     return fetch(url, { headers: Object.assign({}, HEADERS, { 'Referer': referer }) })
         .then(function(res) { return res.text(); })
         .then(function(text) {
-            // Hex şifreli m3u8 linkini ayıkla
-            var match = text.match(/file":\s*"(.*?)"/) || text.match(/file":"(.*?)"/);
+            // "file":"...hex..." yapısını yakala
+            var match = text.match(/file["']?\s*[:=]\s*["']([^"']+)["']/) ;
             if (!match) return [];
             var decoded = hexDecodeFixed(match[1]);
             
@@ -75,7 +74,7 @@ function fetchDetailAndStreams(filmUrl) {
             var titleMatch = html.match(/<h1[^>]*>([^<]+)<\/h1>/i);
             var title = titleMatch ? titleMatch[1].trim() : 'Film';
             
-            // Güncel scx verisini yakala
+            // Linklerin olduğu scx objesini yakala
             var scxMatch = html.match(/scx\s*=\s*(\{[\s\S]*?\});/);
             if (!scxMatch) return [];
 
@@ -95,11 +94,11 @@ function fetchDetailAndStreams(filmUrl) {
                     if (!decoded) return;
 
                     var p;
-                    // Eğer link bir extractor ise (Rapidvid vb.)
+                    // Eğer link bir Rapid/Vidmoxy extractor ise
                     if (decoded.includes('rapidvid.net') || decoded.includes('vidmoxy.com')) {
                         p = rapid2m3u8(decoded, filmUrl);
                     } else {
-                        // Direkt link ise
+                        // Proton, Fast gibi direkt linkler
                         p = Promise.resolve([{ url: decoded, quality: '1080p' }]);
                     }
 
@@ -111,7 +110,7 @@ function fetchDetailAndStreams(filmUrl) {
                                 title: title,
                                 url: r.url,
                                 quality: '1080p',
-                                headers: STREAM_HEADERS,
+                                headers: STREAM_HEADERS, // Oynatma hatasını önleyen kısım
                                 is_direct: true,
                                 streamType: isHls ? 'hls' : 'video',
                                 mimeType: isHls ? 'application/x-mpegURL' : 'video/mp4'
@@ -132,14 +131,16 @@ function fetchDetailAndStreams(filmUrl) {
 
 function getStreams(tmdbId, mediaType) {
     if (mediaType !== 'movie') return Promise.resolve([]);
+    
     var tmdbUrl = 'https://api.themoviedb.org/3/movie/' + tmdbId + '?language=tr-TR&api_key=4ef0d7355d9ffb5151e987764708ce96';
     
     return fetch(tmdbUrl).then(function(res) { return res.json(); }).then(function(data) {
         var query = data.title || data.original_title;
+        // Arama sonucunu yakalamak için Regex'i güncelledik
         return fetch(BASE_URL + '/arama/' + encodeURIComponent(query), { headers: HEADERS })
             .then(function(res) { return res.text(); })
             .then(function(html) {
-                var match = html.match(/<li class="film">[\s\S]*?<a href="([^"]+)"/);
+                var match = html.match(/<li[^>]*class=["']film["'][^>]*>[\s\S]*?<a[^>]+href=["']([^"']+)["']/i);
                 if (!match) return [];
                 var filmUrl = match[1].startsWith('http') ? match[1] : BASE_URL + match[1];
                 return fetchDetailAndStreams(filmUrl);
