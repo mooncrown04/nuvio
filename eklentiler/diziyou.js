@@ -9,7 +9,15 @@ var HEADERS = {
 function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
     return new Promise(function(resolve) {
         if (mediaType !== 'tv') {
-            resolve([]);
+            resolve([{
+                name: '⌜ DiziYou ⌟ | HATA',
+                title: 'Sadece TV dizileri desteklenir',
+                url: 'http://example.com/test.m3u8',
+                quality: '720p',
+                size: 'TV_ONLY',
+                provider: 'diziyou',
+                type: 'hls'
+            }]);
             return;
         }
 
@@ -18,11 +26,24 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
         fetch(tmdbUrl)
             .then(function(res) { return res.json(); })
             .then(function(data) {
-                var title = data.name || '';
+                var title = data.name || data.original_name || '';
+                var year = (data.first_air_date || '').substring(0, 4);
                 
-                // Debug: title'ı göster
-                var debugTitle = title ? title.substring(0, 20) : 'NOTFOUND';
-                
+                if (!title) {
+                    return [{
+                        name: '⌜ DiziYou ⌟ | HATA',
+                        title: 'TMDB\'de başlık bulunamadı',
+                        url: 'http://example.com/test.m3u8',
+                        quality: '720p',
+                        size: 'NO_TMDB_TITLE',
+                        provider: 'diziyou',
+                        type: 'hls'
+                    }];
+                }
+
+                // Debug: Başlık bilgisi
+                var debugInfo = 'TMDB:' + title.substring(0, 15);
+
                 // DiziYou'da ara
                 return fetch(BASE_URL + '/?s=' + encodeURIComponent(title), { headers: HEADERS })
                     .then(function(r) { return r.text(); })
@@ -31,10 +52,9 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                         var match = html.match(/<a[^>]+href="([^"]+)"[^>]*>[\s\S]*?<div[^>]*id="categorytitle"[^>]*>([\s\S]*?)<\/div>/i);
                         
                         if (!match) {
-                            // Debug: eşleşme bulunamadı
                             return [{
-                                name: '⌜ DiziYou ⌟ | DEBUG',
-                                title: 'No match for: ' + debugTitle,
+                                name: '⌜ DiziYou ⌟ | HATA',
+                                title: debugInfo + ' | DiziYou\'da bulunamadı',
                                 url: 'http://example.com/test.m3u8',
                                 quality: '720p',
                                 size: 'NO_MATCH',
@@ -44,39 +64,114 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                         }
                         
                         var seriesUrl = match[1].startsWith('http') ? match[1] : BASE_URL + match[1];
+                        var seriesTitle = match[2].replace(/<[^>]+>/g, '').trim();
                         
                         // Dizi sayfasına git
                         return fetch(seriesUrl, { headers: HEADERS })
                             .then(function(r) { return r.text(); })
                             .then(function(seriesHtml) {
-                                // İlk bölümü bul
-                                var epMatch = seriesHtml.match(/<div[^>]*class="[^"]*bolumust[^"]*"[^>]*>[\s\S]*?<a[^>]+href="([^"]+)"[^>]*>/i);
+                                // Bölümleri bul - tüm bölümleri al
+                                var episodeRegex = /<div[^>]*class="[^"]*bolumust[^"]*"[^>]*>[\s\S]*?<\/div>\s*<\/a>/gi;
+                                var episodeMatches = seriesHtml.match(episodeRegex) || [];
                                 
-                                if (!epMatch) {
+                                if (episodeMatches.length === 0) {
                                     return [{
-                                        name: '⌜ DiziYou ⌟ | DEBUG',
-                                        title: 'No episode in: ' + debugTitle,
+                                        name: '⌜ DiziYou ⌟ | HATA',
+                                        title: debugInfo + ' | Bölüm bulunamadı',
                                         url: 'http://example.com/test.m3u8',
                                         quality: '720p',
-                                        size: 'NO_EPISODE',
+                                        size: 'NO_EPISODES',
                                         provider: 'diziyou',
                                         type: 'hls'
                                     }];
                                 }
+
+                                // İstenen sezon ve bölümü bul veya ilk bölümü al
+                                var targetEpisode = null;
                                 
-                                var epUrl = epMatch[1].startsWith('http') ? epMatch[1] : BASE_URL + epMatch[1];
+                                for (var i = 0; i < episodeMatches.length; i++) {
+                                    var epHtml = episodeMatches[i];
+                                    
+                                    // Bölüm bilgilerini çıkar
+                                    var epNameMatch = epHtml.match(/<div[^>]*class="[^"]*bolumismi[^"]*"[^>]*>([^<]*)<\/div>/i);
+                                    var epName = epNameMatch ? epNameMatch[1].trim() : '';
+                                    
+                                    var epTitleMatch = epHtml.match(/<div[^>]*class="[^"]*baslik[^"]*"[^>]*>([^<]*)<\/div>/i);
+                                    var epTitle = epTitleMatch ? epTitleMatch[1].trim() : '';
+                                    
+                                    // Sezon ve bölüm numarası
+                                    var seasonMatch = (epName + ' ' + epTitle).match(/(\d+)\.\s*Sezon/i);
+                                    var episodeMatch = (epName + ' ' + epTitle).match(/(\d+)\.\s*Bölüm/i);
+                                    
+                                    var epSeason = seasonMatch ? parseInt(seasonMatch[1]) : 1;
+                                    var epEpisode = episodeMatch ? parseInt(episodeMatch[1]) : null;
+                                    
+                                    // Eşleşme kontrolü
+                                    if (epSeason === seasonNum && epEpisode === episodeNum) {
+                                        // Parent anchor'ı bul
+                                        var beforeMatch = seriesHtml.substring(0, seriesHtml.indexOf(epHtml)).match(/<a[^>]+href="([^"]+)"[^>]*>[^<]*$/);
+                                        var afterMatch = seriesHtml.substring(seriesHtml.indexOf(epHtml) + epHtml.length).match(/^[\s\S]*?<a[^>]+href="([^"]+)"/);
+                                        
+                                        var epHref = beforeMatch ? beforeMatch[1] : (afterMatch ? afterMatch[1] : null);
+                                        
+                                        if (epHref) {
+                                            targetEpisode = {
+                                                url: epHref.startsWith('http') ? epHref : BASE_URL + epHref,
+                                                name: epName || epTitle,
+                                                season: epSeason,
+                                                episode: epEpisode
+                                            };
+                                            break;
+                                        }
+                                    }
+                                }
                                 
+                                // Eşleşme yoksa ilk bölümü al
+                                if (!targetEpisode && episodeMatches.length > 0) {
+                                    var firstEpHtml = episodeMatches[0];
+                                    var beforeMatch = seriesHtml.substring(0, seriesHtml.indexOf(firstEpHtml)).match(/<a[^>]+href="([^"]+)"[^>]*>[^<]*$/);
+                                    var afterMatch = seriesHtml.substring(seriesHtml.indexOf(firstEpHtml) + firstEpHtml.length).match(/^[\s\S]*?<a[^>]+href="([^"]+)"/);
+                                    
+                                    var epHref = beforeMatch ? beforeMatch[1] : (afterMatch ? afterMatch[1] : null);
+                                    
+                                    if (epHref) {
+                                        targetEpisode = {
+                                            url: epHref.startsWith('http') ? epHref : BASE_URL + epHref,
+                                            name: 'İlk Bölüm',
+                                            season: 1,
+                                            episode: 1
+                                        };
+                                    }
+                                }
+                                
+                                if (!targetEpisode) {
+                                    return [{
+                                        name: '⌜ DiziYou ⌟ | HATA',
+                                        title: debugInfo + ' | Hedef bölüm bulunamadı',
+                                        url: 'http://example.com/test.m3u8',
+                                        quality: '720p',
+                                        size: 'NO_TARGET_EP',
+                                        provider: 'diziyou',
+                                        type: 'hls'
+                                    }];
+                                }
+
                                 // Bölüm sayfasına git
-                                return fetch(epUrl, { headers: HEADERS })
+                                return fetch(targetEpisode.url, { headers: HEADERS })
                                     .then(function(r) { return r.text(); })
                                     .then(function(epHtml) {
                                         // iframe'den itemId çıkar
                                         var iframeMatch = epHtml.match(/<iframe[^>]+id="[^"]*diziyouPlayer[^"]*"[^>]+src="([^"]+)"/i);
                                         
                                         if (!iframeMatch) {
+                                            // Alternatif: data-src dene
+                                            iframeMatch = epHtml.match(/<iframe[^>]+data-src="([^"]+)"/i);
+                                        }
+                                        
+                                        if (!iframeMatch) {
                                             return [{
-                                                name: '⌜ DiziYou ⌟ | DEBUG',
-                                                title: 'No iframe in episode',
+                                                name: '⌜ DiziYou ⌟ | HATA',
+                                                title: debugInfo + ' | Player bulunamadı',
                                                 url: 'http://example.com/test.m3u8',
                                                 quality: '720p',
                                                 size: 'NO_IFRAME',
@@ -85,21 +180,48 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                                             }];
                                         }
                                         
-                                        var itemId = iframeMatch[1].split('/').pop().replace('.html', '');
+                                        var iframeSrc = iframeMatch[1];
+                                        var itemId = iframeSrc.split('/').pop().replace('.html', '');
                                         
-                                        // Gerçek stream'leri döndür
+                                        // Stream seçeneklerini kontrol et
+                                        var hasTurkceAltyazili = epHtml.includes('turkceAltyazili') || epHtml.includes('id="turkceAltyazili"');
+                                        var hasTurkceDublaj = epHtml.includes('turkceDublaj') || epHtml.includes('id="turkceDublaj"');
+                                        var hasIngilizceAltyazili = epHtml.includes('ingilizceAltyazili') || epHtml.includes('id="ingilizceAltyazili"');
+                                        
                                         var streams = [];
                                         var subtitles = [];
                                         
                                         // Türkçe Altyazılı
-                                        if (epHtml.includes('turkceAltyazili') || epHtml.includes('id="turkceAltyazili"')) {
-                                            subtitles.push({ label: 'türkçee', url: STORAGE_URL + '/subtitles/' + itemId + '/tr.vtt' });
+                                        if (hasTurkceAltyazili) {
+                                            subtitles.push({ 
+                                                label: 'türkçee', 
+                                                url: STORAGE_URL + '/subtitles/' + itemId + '/tr.vtt' 
+                                            });
                                             streams.push({
                                                 name: '⌜ DiziYou ⌟ | Orjinal (TR Alt)',
-                                                title: 'S' + seasonNum + 'E' + episodeNum + ' · 720p [ID:' + itemId + ']',
+                                                title: 'S' + targetEpisode.season + 'E' + targetEpisode.episode + ' · 720p',
                                                 url: STORAGE_URL + '/episodes/' + itemId + '/play.m3u8',
                                                 quality: '720p',
-                                                size: 'HLS',
+                                                size: 'HLS [ID:' + itemId + ']',
+                                                headers: HEADERS,
+                                                subtitles: subtitles,
+                                                provider: 'diziyou',
+                                                type: 'hls'
+                                            });
+                                        }
+                                        
+                                        // İngilizce Altyazılı
+                                        if (hasIngilizceAltyazili && !hasTurkceAltyazili) {
+                                            subtitles.push({ 
+                                                label: 'ingilizcee', 
+                                                url: STORAGE_URL + '/subtitles/' + itemId + '/en.vtt' 
+                                            });
+                                            streams.push({
+                                                name: '⌜ DiziYou ⌟ | Orjinal (EN Alt)',
+                                                title: 'S' + targetEpisode.season + 'E' + targetEpisode.episode + ' · 720p',
+                                                url: STORAGE_URL + '/episodes/' + itemId + '/play.m3u8',
+                                                quality: '720p',
+                                                size: 'HLS [ID:' + itemId + ']',
                                                 headers: HEADERS,
                                                 subtitles: subtitles,
                                                 provider: 'diziyou',
@@ -108,13 +230,13 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                                         }
                                         
                                         // Türkçe Dublaj
-                                        if (epHtml.includes('turkceDublaj') || epHtml.includes('id="turkceDublaj"')) {
+                                        if (hasTurkceDublaj) {
                                             streams.push({
                                                 name: '⌜ DiziYou ⌟ | Dublaj',
-                                                title: 'S' + seasonNum + 'E' + episodeNum + ' · 720p [ID:' + itemId + ']',
+                                                title: 'S' + targetEpisode.season + 'E' + targetEpisode.episode + ' · 720p',
                                                 url: STORAGE_URL + '/episodes/' + itemId + '_tr/play.m3u8',
                                                 quality: '720p',
-                                                size: 'HLS',
+                                                size: 'HLS [ID:' + itemId + '_tr]',
                                                 headers: HEADERS,
                                                 subtitles: subtitles,
                                                 provider: 'diziyou',
@@ -122,14 +244,14 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                                             });
                                         }
                                         
-                                        // Eğer hiçbir şey bulunamazsa
+                                        // Hiçbir seçenek yoksa varsayılan
                                         if (streams.length === 0) {
                                             streams.push({
                                                 name: '⌜ DiziYou ⌟ | Varsayılan',
-                                                title: 'S' + seasonNum + 'E' + episodeNum + ' · 720p [ID:' + itemId + ']',
+                                                title: 'S' + targetEpisode.season + 'E' + targetEpisode.episode + ' · 720p',
                                                 url: STORAGE_URL + '/episodes/' + itemId + '/play.m3u8',
                                                 quality: '720p',
-                                                size: 'HLS',
+                                                size: 'HLS [ID:' + itemId + ']',
                                                 headers: HEADERS,
                                                 subtitles: [],
                                                 provider: 'diziyou',
@@ -145,11 +267,11 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
             .then(function(streams) { resolve(streams); })
             .catch(function(err) {
                 resolve([{
-                    name: '⌜ DiziYou ⌟ | ERROR',
-                    title: err.message.substring(0, 30),
+                    name: '⌜ DiziYou ⌟ | HATA',
+                    title: err.message ? err.message.substring(0, 30) : 'Bilinmeyen hata',
                     url: 'http://example.com/test.m3u8',
                     quality: '720p',
-                    size: 'ERROR',
+                    size: 'ERROR: ' + (err.message ? err.message.substring(0, 20) : 'Unknown'),
                     provider: 'diziyou',
                     type: 'hls'
                 }]);
