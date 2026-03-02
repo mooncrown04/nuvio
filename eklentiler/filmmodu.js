@@ -7,18 +7,6 @@ var HEADERS = {
     'Referer': BASE_URL + '/'
 };
 
-var STREAM_HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Accept': '*/*',
-    'Accept-Language': 'tr-TR,tr;q=0.9',
-    'Accept-Encoding': 'identity',
-    'Referer': BASE_URL + '/',
-    'Origin': BASE_URL,
-    'Sec-Fetch-Dest': 'video',
-    'Sec-Fetch-Mode': 'no-cors',
-    'Sec-Fetch-Site': 'cross-site'
-};
-
 function findFirst(html, pattern) {
     var regex = new RegExp(pattern, 'i');
     var match = regex.exec(html);
@@ -27,6 +15,8 @@ function findFirst(html, pattern) {
 
 function searchFilmModu(title) {
     var searchUrl = BASE_URL + '/film-ara?term=' + encodeURIComponent(title);
+    console.log('[FilmModu] Search:', searchUrl);
+    
     return fetch(searchUrl, { headers: HEADERS })
         .then(function(res) { return res.text(); })
         .then(function(html) {
@@ -46,6 +36,8 @@ function searchFilmModu(title) {
                     });
                 }
             });
+            
+            console.log('[FilmModu] Found:', results.length);
             return results;
         });
 }
@@ -63,6 +55,8 @@ function findBestMatch(results, query) {
 }
 
 function loadMoviePage(url) {
+    console.log('[FilmModu] Loading:', url);
+    
     return fetch(url, { headers: HEADERS })
         .then(function(res) { return res.text(); })
         .then(function(html) {
@@ -88,6 +82,8 @@ function loadMoviePage(url) {
             var titleMatch = findFirst(html, '<div[^>]*class="[^"]*titles[^"]*"[^>]*>\\s*<h1[^>]*>([^<]*)<\\/h1>');
             var yearMatch = findFirst(html, '<span[^>]*itemprop="dateCreated"[^>]*>([^<]*)<\\/span>');
             
+            console.log('[FilmModu] Alternatives:', streams.length);
+            
             return {
                 title: titleMatch ? titleMatch[1].trim() : '',
                 year: yearMatch ? yearMatch[1].trim() : '',
@@ -96,66 +92,45 @@ function loadMoviePage(url) {
         });
 }
 
-function fetchM3u8(url) {
-    return fetch(url, { headers: STREAM_HEADERS, redirect: 'follow' })
-        .then(function(res) { return res.text(); })
-        .then(function(text) { return { url: url, content: text }; })
-        .catch(function() { return null; });
-}
-
-function parseMasterM3u8(masterUrl, m3u8Content) {
-    var lines = m3u8Content.split('\n');
-    var streams = [];
-    var basePath = masterUrl.substring(0, masterUrl.lastIndexOf('/') + 1);
-    
-    for (var i = 0; i < lines.length; i++) {
-        var line = lines[i].trim();
-        if (line.startsWith('#EXT-X-STREAM-INF:')) {
-            var resMatch = line.match(/RESOLUTION=(\d+x\d+)/);
-            var bwMatch = line.match(/BANDWIDTH=(\d+)/);
-            var nextLine = lines[i + 1] ? lines[i + 1].trim() : '';
-            
-            if (nextLine && !nextLine.startsWith('#')) {
-                var streamUrl = nextLine.startsWith('http') ? nextLine : basePath + nextLine;
-                var resolution = resMatch ? resMatch[1] : '';
-                var bandwidth = bwMatch ? parseInt(bwMatch[1]) : 0;
-                
-                var quality = '720p';
-                if (resolution.includes('1920')) quality = '1080p';
-                else if (resolution.includes('1280')) quality = '720p';
-                else if (resolution.includes('854')) quality = '480p';
-                else if (resolution.includes('640')) quality = '360p';
-                
-                streams.push({
-                    url: streamUrl,
-                    quality: quality,
-                    resolution: resolution,
-                    bandwidth: bandwidth
-                });
-            }
-        }
-    }
-    
-    streams.sort(function(a, b) { return b.bandwidth - a.bandwidth; });
-    return streams;
-}
-
 function extractVideoFromAlternate(altUrl, altName, mainTitle, year) {
+    console.log('[FilmModu] Alt URL:', altUrl);
+
     return fetch(altUrl, { headers: HEADERS })
-        .then(function(res) { return res.text(); })
+        .then(function(res) { 
+            console.log('[FilmModu] Alt status:', res.status);
+            return res.text(); 
+        })
         .then(function(html) {
             var vidIdMatch = findFirst(html, "var\\s+videoId\\s*=\\s*['\"]([^'\"]+)['\"]");
             var vidTypeMatch = findFirst(html, "var\\s+videoType\\s*=\\s*['\"]([^'\"]+)['\"]");
             
-            if (!vidIdMatch || !vidTypeMatch) return null;
+            if (!vidIdMatch || !vidTypeMatch) {
+                console.log('[FilmModu] No video vars found');
+                return [];
+            }
+            
+            console.log('[FilmModu] videoId:', vidIdMatch[1], 'videoType:', vidTypeMatch[1]);
             
             var sourceUrl = BASE_URL + '/get-source?movie_id=' + vidIdMatch[1] + '&type=' + vidTypeMatch[1];
-            return fetch(sourceUrl, { headers: HEADERS }).then(function(r) { return r.json(); });
+            return fetch(sourceUrl, { headers: HEADERS })
+                .then(function(r) { 
+                    console.log('[FilmModu] API status:', r.status);
+                    return r.json(); 
+                });
         })
         .then(function(data) {
-            if (!data || !data.sources) return [];
+            console.log('[FilmModu] API data:', data ? 'OK' : 'null');
             
+            if (!data || !data.sources || data.sources.length === 0) {
+                console.log('[FilmModu] No sources');
+                return [];
+            }
+            
+            console.log('[FilmModu] Sources count:', data.sources.length);
+            
+            var streams = [];
             var subtitles = [];
+            
             if (data.subtitle) {
                 subtitles.push({
                     label: 'türkçee',
@@ -163,40 +138,51 @@ function extractVideoFromAlternate(altUrl, altName, mainTitle, year) {
                 });
             }
             
-            var allStreams = [];
-            
-            return Promise.all(data.sources.map(function(source) {
+            // Direkt API'den gelen URL'leri kullan, M3U8 parse etme
+            data.sources.forEach(function(source, idx) {
                 var streamUrl = source.src.startsWith('http') ? source.src : BASE_URL + source.src;
                 
-                return fetchM3u8(streamUrl).then(function(m3u8Data) {
-                    if (!m3u8Data) return [];
-                    
-                    var parsed = parseMasterM3u8(m3u8Data.url, m3u8Data.content);
-                    
-                    parsed.forEach(function(s) {
-                        allStreams.push({
-                            name: '⌜ FilmModu ⌟ | ' + (altName || 'Kaynak') + ' | ' + s.quality,
-                            title: mainTitle + (year ? ' (' + year + ')' : '') + ' · ' + s.quality,
-                            url: s.url,
-                            quality: s.quality,
-                            size: 'HLS',
-                            headers: STREAM_HEADERS,
-                            subtitles: subtitles,
-                            provider: 'filmmodu',
-                            type: 'hls'
-                        });
-                    });
-                    
-                    return allStreams;
+                var quality = '720p';
+                if (source.label) {
+                    var label = source.label.toLowerCase();
+                    if (label.includes('1080')) quality = '1080p';
+                    else if (label.includes('720')) quality = '720p';
+                    else if (label.includes('480')) quality = '480p';
+                    else if (label.includes('360')) quality = '360p';
+                }
+                
+                console.log('[FilmModu] Source', idx, ':', streamUrl.substring(0, 50));
+                
+                streams.push({
+                    name: '⌜ FilmModu ⌟ | ' + (altName || 'Kaynak') + ' ' + (idx + 1),
+                    title: mainTitle + (year ? ' (' + year + ')' : '') + ' · ' + quality,
+                    url: streamUrl,
+                    quality: quality,
+                    size: 'HLS',
+                    headers: {
+                        'User-Agent': HEADERS['User-Agent'],
+                        'Referer': BASE_URL + '/',
+                        'Origin': BASE_URL
+                    },
+                    subtitles: subtitles,
+                    provider: 'filmmodu',
+                    type: 'hls'
                 });
-            })).then(function() { return allStreams; });
+            });
+            
+            console.log('[FilmModu] Created streams:', streams.length);
+            return streams;
         })
-        .catch(function() { return []; });
+        .catch(function(err) {
+            console.error('[FilmModu] Error:', err.message);
+            return [];
+        });
 }
 
 function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
     return new Promise(function(resolve) {
         if (mediaType !== 'movie') {
+            console.log('[FilmModu] Only movies');
             resolve([]);
             return;
         }
@@ -204,22 +190,37 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
         var tmdbUrl = 'https://api.themoviedb.org/3/movie/' + tmdbId +
             '?language=tr-TR&api_key=4ef0d7355d9ffb5151e987764708ce96';
 
+        console.log('[FilmModu] TMDB:', tmdbId);
+
         fetch(tmdbUrl)
             .then(function(res) { return res.json(); })
             .then(function(data) {
                 var title = data.title || data.original_title || '';
                 var year = (data.release_date || '').substring(0, 4);
                 
-                if (!title) return [];
+                console.log('[FilmModu] Title:', title);
+                
+                if (!title) {
+                    console.log('[FilmModu] No title');
+                    return [];
+                }
 
                 return searchFilmModu(title)
                     .then(function(results) {
                         var best = findBestMatch(results, title);
-                        if (!best) return [];
+                        if (!best) {
+                            console.log('[FilmModu] No match');
+                            return [];
+                        }
                         return loadMoviePage(best.url);
                     })
                     .then(function(movieData) {
-                        if (!movieData || !movieData.alternatives) return [];
+                        if (!movieData || !movieData.alternatives || movieData.alternatives.length === 0) {
+                            console.log('[FilmModu] No alts');
+                            return [];
+                        }
+                        
+                        console.log('[FilmModu] Processing', movieData.alternatives.length, 'alternatives');
                         
                         var promises = movieData.alternatives.map(function(alt) {
                             return extractVideoFromAlternate(alt.url, alt.name, 
@@ -230,12 +231,18 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                     })
                     .then(function(results) {
                         var streams = [];
-                        results.forEach(function(r) { if (r) streams = streams.concat(r); });
+                        results.forEach(function(r) { 
+                            if (r && r.length > 0) streams = streams.concat(r); 
+                        });
+                        console.log('[FilmModu] Total streams:', streams.length);
                         return streams;
                     });
             })
-            .then(function(streams) { resolve(streams || []); })
-            .catch(function() { resolve([]); });
+            .then(function(streams) { resolve(streams); })
+            .catch(function(err) { 
+                console.error('[FilmModu] Fatal:', err.message);
+                resolve([]); 
+            });
     });
 }
 
