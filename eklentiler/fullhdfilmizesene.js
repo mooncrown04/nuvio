@@ -1,5 +1,5 @@
 // ! Bu araç @keyiflerolsun tarafından | @KekikAkademi için yazılmıştır.
-// FullHDFilmizlesene - VLC Uyumlu (Orijinal Çalışan Yapı)
+// FullHDFilmizlesene - ÇALIŞAN VERSİYON (VLC ile test edilmiş)
 
 var BASE_URL = 'https://www.fullhdfilmizlesene.live';
 
@@ -112,7 +112,7 @@ function extractVideoUrl(url, sourceKey, referer) {
     return Promise.resolve([]);
 }
 
-// ==================== ANA MANTIK (ORİJİNAL - EKSTRA ALANLAR YOK) ====================
+// ==================== ANA MANTIK (ÇALIŞAN) ====================
 
 function fetchDetailAndStreams(filmUrl) {
     return fetch(filmUrl, { headers: HEADERS })
@@ -141,8 +141,7 @@ function fetchDetailAndStreams(filmUrl) {
 
                     allPromises.push(extractVideoUrl(decoded, key, filmUrl).then(function(results) {
                         return results.map(function(r) {
-                            // ORİJİNAL YAPI - SADECE TEMEL ALANLAR
-                            // Ekstra type, mimeType, container, codecs YOK!
+                            // ÇALIŞAN STREAM OBJESİ - Yorum yok!
                             return {
                                 name: '⌜ FullHD ⌟ | ' + item.label,
                                 title: title + (year ? ' (' + year + ')' : '') + ' · ' + r.quality,
