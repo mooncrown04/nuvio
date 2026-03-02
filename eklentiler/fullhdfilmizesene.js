@@ -7,13 +7,11 @@ var HEADERS = {
     'Referer': BASE_URL + '/'
 };
 
-// Player'ın videoyu açabilmesi için gereken headerlar
+// Oynatıcı için kritik kimlik bilgileri
 var STREAM_HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
     'Referer': BASE_URL + '/',
-    'Origin': BASE_URL,
-    'Accept': '*/*',
-    'Connection': 'keep-alive'
+    'Origin': BASE_URL
 };
 
 // ==================== YARDIMCI FONKSİYONLAR ====================
@@ -31,8 +29,10 @@ function rot13Fixed(str) {
 
 function decodeLinkFixed(encoded) {
     try {
-        var result = atobFixed(rot13Fixed(encoded));
-        return (result && result.startsWith('http')) ? result : null;
+        // Site bazen atob(rot13) bazen sadece atob kullanıyor
+        var rot = rot13Fixed(encoded);
+        var decoded = atobFixed(rot);
+        return (decoded && decoded.startsWith('http')) ? decoded : null;
     } catch (e) { return null; }
 }
 
@@ -54,25 +54,16 @@ function rapid2m3u8(url, referer) {
     return fetch(url, { headers: Object.assign({}, HEADERS, { 'Referer': referer }) })
         .then(function(res) { return res.text(); })
         .then(function(text) {
+            // Hex şifreli m3u8 linkini ayıkla
             var match = text.match(/file":\s*"(.*?)"/) || text.match(/file":"(.*?)"/);
             if (!match) return [];
             var decoded = hexDecodeFixed(match[1]);
+            
             if (decoded && decoded.includes('.m3u8')) {
                 return [{ url: decoded, quality: '1080p' }];
             }
             return [];
         }).catch(function() { return []; });
-}
-
-function extractVideoUrl(url, sourceKey, referer) {
-    if (url.includes('rapidvid.net') || url.includes('vidmoxy.com')) return rapid2m3u8(url, referer);
-    
-    // Direkt linkler
-    var isDirect = ['proton', 'fast', 'tr', 'en', 'atom'].some(function(k) { return sourceKey.toLowerCase().includes(k); });
-    if (isDirect || url.includes('.m3u8') || url.includes('.mp4')) {
-        return Promise.resolve([{ url: url, quality: '1080p' }]);
-    }
-    return Promise.resolve([]);
 }
 
 // ==================== ANA MANTIK ====================
@@ -84,6 +75,7 @@ function fetchDetailAndStreams(filmUrl) {
             var titleMatch = html.match(/<h1[^>]*>([^<]+)<\/h1>/i);
             var title = titleMatch ? titleMatch[1].trim() : 'Film';
             
+            // Güncel scx verisini yakala
             var scxMatch = html.match(/scx\s*=\s*(\{[\s\S]*?\});/);
             if (!scxMatch) return [];
 
@@ -102,26 +94,30 @@ function fetchDetailAndStreams(filmUrl) {
                     var decoded = decodeLinkFixed(item.encoded);
                     if (!decoded) return;
 
-                    var promise = extractVideoUrl(decoded, key, filmUrl).then(function(results) {
+                    var p;
+                    // Eğer link bir extractor ise (Rapidvid vb.)
+                    if (decoded.includes('rapidvid.net') || decoded.includes('vidmoxy.com')) {
+                        p = rapid2m3u8(decoded, filmUrl);
+                    } else {
+                        // Direkt link ise
+                        p = Promise.resolve([{ url: decoded, quality: '1080p' }]);
+                    }
+
+                    allPromises.push(p.then(function(results) {
                         return results.map(function(r) {
-                            // Linkin HLS olup olmadığını belirle
                             var isHls = r.url.includes('.m3u8') || ["proton", "fast", "atom"].indexOf(key) > -1;
-                            
-                            // Oynatma hatasını çözen nesne yapısı
                             return {
                                 name: '⌜ FHD ⌟ | ' + item.label,
                                 title: title,
                                 url: r.url,
                                 quality: '1080p',
-                                // Headers'ı URL'ye gömmek yerine doğrudan nesneye veriyoruz
-                                headers: STREAM_HEADERS, 
+                                headers: STREAM_HEADERS,
                                 is_direct: true,
                                 streamType: isHls ? 'hls' : 'video',
                                 mimeType: isHls ? 'application/x-mpegURL' : 'video/mp4'
                             };
                         });
-                    });
-                    allPromises.push(promise);
+                    }));
                 });
             });
 
