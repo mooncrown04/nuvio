@@ -2,7 +2,20 @@
   "name": "mooncrown35",
   "version": "1.0.0",
   "scrapers": [
-     {
+      {
+      "id": "tuktukcinema",
+      "name": "TukTuk Cinema",
+      "description": "Arabic streaming content including movies, TV series, and anime from TukTuk Cinema",
+      "version": "1.0.0",
+      "author": "Your Name",
+      "supportedTypes": ["movie", "tv"],
+      "filename": "eklentiler/tuktukcinema.js",
+      "enabled": true,
+      "formats": ["mkv", "mp4", "m3u8"],
+      "logo": "https://tuktukcenma.cam/favicon.ico",
+      "contentLanguage": ["ar", "en"]
+    },
+	  {
       "id": "kuudere",
       "name": "Kuudere",
       "description": "Watch Anime Online Free on Kuudere.ru",
