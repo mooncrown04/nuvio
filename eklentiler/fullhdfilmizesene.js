@@ -1,5 +1,5 @@
 // ! Bu araç @keyiflerolsun tarafından | @KekikAkademi için yazılmıştır.
-// FullHDFilmizlesene - Orijinal Kod + MIME Type (VLC Çalışıyor, Nuvio İçin Deneme)
+// FullHDFilmizlesene - ORİJİNAL ÇALIŞAN KOD (VLC ile çalışan hali)
 
 var BASE_URL = 'https://www.fullhdfilmizlesene.live';
 
@@ -9,8 +9,6 @@ var HEADERS = {
     'Accept-Language': 'tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7',
     'Referer': BASE_URL + '/'
 };
-
-// ==================== YARDIMCI FONKSİYONLAR (ORİJİNAL) ====================
 
 function atobFixed(str) {
     try {
@@ -61,8 +59,6 @@ function hexDecodeFixed(hexString) {
     }
 }
 
-// ==================== EXTRACTOR'LAR (ORİJİNAL) ====================
-
 function rapid2m3u8(url, referer) {
     return fetch(url, { headers: Object.assign({}, HEADERS, { 'Referer': referer }) })
         .then(function(res) { return res.text(); })
@@ -112,8 +108,6 @@ function extractVideoUrl(url, sourceKey, referer) {
     return Promise.resolve([]);
 }
 
-// ==================== ANA MANTIK (ORİJİNAL + MIME TYPE) ====================
-
 function fetchDetailAndStreams(filmUrl) {
     return fetch(filmUrl, { headers: HEADERS })
         .then(function(res) { return res.text(); })
@@ -141,7 +135,7 @@ function fetchDetailAndStreams(filmUrl) {
 
                     allPromises.push(extractVideoUrl(decoded, key, filmUrl).then(function(results) {
                         return results.map(function(r) {
-                            // ORİJİNAL YAPI + MIME TYPE EKLENDİ
+                            // ORİJİNAL - DEĞİŞTİRİLMEMİŞ
                             return {
                                 name: '⌜ FullHD ⌟ | ' + item.label,
                                 title: title + (year ? ' (' + year + ')' : '') + ' · ' + r.quality,
@@ -149,8 +143,6 @@ function fetchDetailAndStreams(filmUrl) {
                                 quality: r.quality,
                                 headers: { 'User-Agent': HEADERS['User-Agent'], 'Referer': filmUrl, 'Origin': BASE_URL },
                                 type: r.type,
-                                // YENİ: MIME Type (Nuvio için)
-                                mimeType: r.type === 'M3U8' ? 'application/x-mpegURL' : 'video/mp4',
                                 provider: 'fullhdfilmizlesene'
                             };
                         });
@@ -162,8 +154,6 @@ function fetchDetailAndStreams(filmUrl) {
         })
         .then(function(results) { return [].concat.apply([], results); });
 }
-
-// ==================== TMDB ve Arama (ORİJİNAL) ====================
 
 function searchFullHD(title) {
     return fetch(BASE_URL + '/arama/' + encodeURIComponent(title), { headers: HEADERS })
