@@ -1,25 +1,13 @@
 // ! Bu araç @keyiflerolsun tarafından | @KekikAkademi için yazılmıştır.
-// FullHDFilmizlesene - Minimal Nuvio Uyumlu
+// FullHDFilmizlesene - M3U8 Proxy Denemesi
 
 var BASE_URL = 'https://www.fullhdfilmizlesene.live';
 
-// ==================== SABİT HEADERS (DEĞİŞMEZ) ====================
 var HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
     'Accept-Language': 'tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7',
     'Referer': BASE_URL + '/'
-};
-
-// ==================== STREAM HEADERS (SABİT) ====================
-// Bu obje FONKSİYON İÇİNDE oluşturulmayacak, global kalacak!
-var STREAM_HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Accept': '*/*',
-    'Accept-Language': 'tr-TR,tr;q=0.9,en;q=0.8',
-    'Accept-Encoding': 'identity',
-    'Referer': BASE_URL + '/',
-    'Origin': BASE_URL
 };
 
 // ==================== YARDIMCI FONKSİYONLAR ====================
@@ -67,7 +55,7 @@ function hexDecodeFixed(hexString) {
     }
 }
 
-// ==================== EXTRACTOR'LAR ====================
+// ==================== EXTRACTOR'LAR (M3U8 İÇERİK KONTROLLÜ) ====================
 
 function rapid2m3u8(url, referer) {
     return fetch(url, { headers: Object.assign({}, HEADERS, { 'Referer': referer }) })
@@ -76,7 +64,33 @@ function rapid2m3u8(url, referer) {
             var match = text.match(/file":\s*"(.*?)"/) || text.match(/file":"(.*?)"/);
             if (!match) return [];
             var decoded = hexDecodeFixed(match[1].replace(/\\\\x/g, '\\x'));
-            return decoded ? [{ url: decoded, quality: '720p' }] : [];
+            
+            // M3U8 URL'sini kontrol et
+            if (!decoded || !decoded.includes('.m3u8')) return [];
+            
+            // M3U8 içeriğini kontrol et (geçerli mi?)
+            return fetch(decoded, {
+                headers: {
+                    'User-Agent': HEADERS['User-Agent'],
+                    'Referer': referer
+                }
+            }).then(function(res) {
+                if (!res.ok) throw new Error('M3U8 not accessible');
+                return res.text();
+            }).then(function(m3u8Content) {
+                // Geçerli M3U8 mi?
+                if (!m3u8Content.includes('#EXTM3U')) {
+                    console.log('[FullHD] Invalid M3U8 content');
+                    return [];
+                }
+                
+                return [{
+                    url: decoded,
+                    quality: '720p',
+                    // M3U8 içeriğini de döndür (debug için)
+                    m3u8Content: m3u8Content.substring(0, 100) // İlk 100 karakter
+                }];
+            }).catch(function() { return []; });
         }).catch(function() { return []; });
 }
 
@@ -96,67 +110,70 @@ function trstx2m3u8(url, referer) {
         .then(function(res) { return res.json(); })
         .then(function(postData) {
             var promises = postData.slice(1).map(function(item) {
-                return fetch(baseUrl + '/playlist/' + item.file.substring(1) + '.txt', {
+                var playlistUrl = baseUrl + '/playlist/' + item.file.substring(1) + '.txt';
+                
+                return fetch(playlistUrl, {
                     method: 'POST',
                     headers: Object.assign({}, HEADERS, { 'Referer': referer }),
                     body: ''
                 }).then(function(r) { return r.text(); })
-                  .then(function(url) { return { url: url.trim(), quality: item.title || '720p' }; });
+                  .then(function(videoUrl) {
+                    videoUrl = videoUrl.trim();
+                    if (!videoUrl.startsWith('http')) return null;
+                    
+                    // M3U8 kontrolü
+                    return fetch(videoUrl, {
+                        headers: {
+                            'User-Agent': HEADERS['User-Agent'],
+                            'Referer': referer
+                        }
+                    }).then(function(res) {
+                        if (!res.ok) return null;
+                        return res.text();
+                    }).then(function(content) {
+                        if (!content || !content.includes('#EXTM3U')) return null;
+                        
+                        return {
+                            url: videoUrl,
+                            quality: item.title || '720p'
+                        };
+                    });
+                }).catch(function() { return null; });
             });
-            return Promise.all(promises);
-        }).catch(function() { return []; });
-}
-
-function sobreatsesuyp2m3u8(url, referer) {
-    var baseUrl = 'https://sobreatsesuyp.com';
-    return fetch(url, { headers: Object.assign({}, HEADERS, { 'Referer': referer }) })
-        .then(function(res) { return res.text(); })
-        .then(function(text) {
-            var match = text.match(/file":"([^"]+)/);
-            if (!match) return [];
-            return fetch(baseUrl + '/' + match[1].replace(/\\/g, ''), {
-                method: 'POST',
-                headers: Object.assign({}, HEADERS, { 'Referer': referer, 'Content-Type': 'application/x-www-form-urlencoded' }),
-                body: ''
+            
+            return Promise.all(promises).then(function(results) {
+                return results.filter(function(r) { return r !== null; });
             });
-        })
-        .then(function(res) { return res.json(); })
-        .then(function(postData) {
-            var promises = postData.slice(1).map(function(item) {
-                return fetch(baseUrl + '/playlist/' + item.file.substring(1) + '.txt', {
-                    method: 'POST',
-                    headers: Object.assign({}, HEADERS, { 'Referer': referer }),
-                    body: ''
-                }).then(function(r) { return r.text(); })
-                  .then(function(url) { return { url: url.trim(), quality: item.title || '720p' }; });
-            });
-            return Promise.all(promises);
-        }).catch(function() { return []; });
-}
-
-function turboimgz2m3u8(url, referer) {
-    return fetch(url, { headers: Object.assign({}, HEADERS, { 'Referer': referer }) })
-        .then(function(res) { return res.text(); })
-        .then(function(text) {
-            var match = text.match(/file:\s*"(.*?)"/);
-            return match ? [{ url: match[1], quality: '720p' }] : [];
         }).catch(function() { return []; });
 }
 
 function extractVideoUrl(url, sourceKey, referer) {
     if (url.includes('rapidvid.net') || url.includes('vidmoxy.com')) return rapid2m3u8(url, referer);
     if (url.includes('trstx.org')) return trstx2m3u8(url, referer);
-    if (url.includes('sobreatsesuyp.com')) return sobreatsesuyp2m3u8(url, referer);
-    if (url.includes('turbo.imgz.me')) return turboimgz2m3u8(url, referer);
     
     var isDirect = ['proton', 'fast', 'tr', 'en'].some(function(k) { return sourceKey.toLowerCase().includes(k); });
     if (isDirect || url.match(/\.(m3u8|mp4)/i)) {
+        // Direkt linkleri de kontrol et
+        if (url.includes('.m3u8')) {
+            return fetch(url, {
+                headers: {
+                    'User-Agent': HEADERS['User-Agent'],
+                    'Referer': referer
+                }
+            }).then(function(res) {
+                if (!res.ok) return [];
+                return res.text();
+            }).then(function(content) {
+                if (!content.includes('#EXTM3U')) return [];
+                return [{ url: url, quality: '720p' }];
+            }).catch(function() { return []; });
+        }
         return Promise.resolve([{ url: url, quality: '720p' }]);
     }
     return Promise.resolve([]);
 }
 
-// ==================== ANA MANTIK (SADELEŞTİRİLMİŞ) ====================
+// ==================== ANA MANTIK (HEADER'SIZ DENEY) ====================
 
 function fetchDetailAndStreams(filmUrl) {
     return fetch(filmUrl, { headers: HEADERS })
@@ -184,22 +201,48 @@ function fetchDetailAndStreams(filmUrl) {
                     if (!decoded) return;
 
                     var promise = extractVideoUrl(decoded, key, filmUrl).then(function(results) {
-                        // ==================== SADE STREAM OBJESİ ====================
-                        // Sadece gerekli alanlar, ekstra type/container YOK!
-                        
                         return results.map(function(r) {
-                            // KRİTİK: STREAM_HEADERS'ı doğrudan kullan, kopyalama!
+                            // ==================== DENEY 1: Headers YOK ====================
+                            // Sadece temel alanlar
+                            /*
                             return {
                                 name: '⌜ FullHD ⌟ | ' + item.label,
                                 title: title + (year ? ' (' + year + ')' : '') + ' · ' + r.quality,
                                 url: r.url,
                                 quality: r.quality,
-                                headers: STREAM_HEADERS,  // SABİT GLOBAL!
                                 provider: 'fullhdfilmizlesene'
-                                // type YOK!
-                                // container YOK!
-                                // source YOK!
                             };
+                            */
+                            
+                            // ==================== DENEY 2: URL'de headers encoded ====================
+                            // Headers'ı URL'ye göm
+                            var urlWithHeaders = r.url + '#headers=' + encodeURIComponent(JSON.stringify({
+                                'User-Agent': HEADERS['User-Agent'],
+                                'Referer': filmUrl
+                            }));
+                            
+                            return {
+                                name: '⌜ FullHD ⌟ | ' + item.label,
+                                title: title + (year ? ' (' + year + ')' : '') + ' · ' + r.quality,
+                                url: urlWithHeaders,
+                                quality: r.quality,
+                                provider: 'fullhdfilmizlesene'
+                            };
+                            
+                            // ==================== DENEY 3: Proxy URL kullan ====================
+                            // Kendi proxy endpoint'iniz varsa:
+                            /*
+                            var proxyUrl = 'https://your-proxy.com/m3u8?url=' + encodeURIComponent(r.url) + 
+                                          '&referer=' + encodeURIComponent(filmUrl);
+                            
+                            return {
+                                name: '⌜ FullHD ⌟ | ' + item.label,
+                                title: title + (year ? ' (' + year + ')' : '') + ' · ' + r.quality,
+                                url: proxyUrl,
+                                quality: r.quality,
+                                provider: 'fullhdfilmizlesene'
+                            };
+                            */
                         });
                     });
 
