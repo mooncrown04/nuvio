@@ -1,74 +1,54 @@
-// Cihazda olmayan fonksiyonlar için koruma
-if (typeof setTimeout === 'undefined') {
-    var setTimeout = function(fn, ms) { /* Boş fonksiyon */ };
-}
+// Global korumalar
+if (typeof setTimeout === 'undefined') { var setTimeout = function(f, m) {}; }
 
-var BASE_URL = 'https://www.fullhdfilmizlesene.live';
-var HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36',
-    'Referer': BASE_URL + '/'
-};
+var BASE = 'https://www.fullhdfilmizlesene.live';
 
-// Basitleştirilmiş Base64 Çözücü (atob yoksa çalışır)
-function simpleDecode(str) {
+// Temel Base64 Çözücü
+function d(s) {
     try {
-        // ROT13 işlemi
-        var r = str.replace(/[a-zA-Z]/g, function(c) {
+        var r = s.replace(/[a-zA-Z]/g, function(c) {
             return String.fromCharCode((c <= "Z" ? 90 : 122) >= (c = c.charCodeAt(0) + 13) ? c : c - 26);
         });
-        // Base64 temizleme ve çözme (Cihazın atob desteği varsa kullanılır)
-        var cleaned = r.replace(/\s/g, '');
-        return atob(cleaned);
+        return atob(r.replace(/\s/g, ''));
     } catch (e) { return null; }
 }
 
-function getStreams(tmdbId, mediaType) {
+function getStreams(tmdbId, type) {
     return new Promise(function(resolve) {
-        if (mediaType !== 'movie') return resolve([]);
+        if (type !== 'movie') return resolve([]);
 
-        var tmdbUrl = 'https://api.themoviedb.org/3/movie/' + tmdbId + '?language=tr-TR&api_key=4ef0d7355d9ffb5151e987764708ce96';
+        // TMDB yerine doğrudan arama veya daha hızlı bir yöntem simülasyonu
+        var api = 'https://api.themoviedb.org/3/movie/' + tmdbId + '?api_key=4ef0d7355d9ffb5151e987764708ce96';
 
-        fetch(tmdbUrl)
-            .then(function(res) { return res.json(); })
-            .then(function(movie) {
-                var title = movie.title || movie.original_title;
-                return fetch(BASE_URL + '/arama/' + encodeURIComponent(title), { headers: HEADERS });
+        fetch(api)
+            .then(function(r) { return r.json(); })
+            .then(function(m) {
+                return fetch(BASE + '/arama/' + encodeURIComponent(m.title));
             })
-            .then(function(res) { return res.text(); })
-            .then(function(html) {
-                var filmMatch = html.match(/class=["']film["'][^>]*>[\s\S]*?<a[^>]+href=["']([^"']+)["']/i);
-                if (!filmMatch) return resolve([]);
+            .then(function(r) { return r.text(); })
+            .then(function(h) {
+                // Sadece ilk film linkini al
+                var m = h.match(/href=["'](\/film\/[^"']+)["']/);
+                if (!m) return resolve([]);
+                return fetch(BASE + m[1]);
+            })
+            .then(function(r) { return r.text(); })
+            .then(function(f) {
+                var s = f.match(/scx\s*=\s*(\{.*?\});/);
+                if (!s) return resolve([]);
                 
-                var filmUrl = filmMatch[1].indexOf('http') === 0 ? filmMatch[1] : BASE_URL + filmMatch[1];
-                return fetch(filmUrl, { headers: HEADERS });
-            })
-            .then(function(res) { return res.text(); })
-            .then(function(filmHtml) {
-                var scxMatch = filmHtml.match(/scx\s*=\s*(\{[\s\S]*?\});/);
-                if (!scxMatch) return resolve([]);
-
-                var scxData = JSON.parse(scxMatch[1]);
-                var results = [];
-                var keys = ['tr', 'en', 'atom']; // Sadece en önemli 3 kaynağı al (RAM için)
-
-                for (var i = 0; i < keys.length; i++) {
-                    var k = keys[i];
-                    if (scxData[k] && scxData[k].sx && scxData[k].sx.t) {
-                        var raw = scxData[k].sx.t;
-                        var link = Array.isArray(raw) ? raw[0] : raw; // Sadece ilk linki al
-                        
-                        var decoded = simpleDecode(link);
-                        if (decoded && decoded.indexOf('http') === 0) {
-                            results.push({
-                                name: "FHD | " + k.toUpperCase(),
-                                url: decoded,
-                                quality: "1080p",
-                                headers: HEADERS
-                            });
+                var data = JSON.parse(s[1]);
+                var out = [];
+                // Sadece TR ve EN kaynaklarını kontrol et (RAM tasarrufu)
+                ['tr', 'en'].forEach(function(k) {
+                    if (data[k] && data[k].sx && data[k].sx.t) {
+                        var link = d(Array.isArray(data[k].sx.t) ? data[k].sx.t[0] : data[k].sx.t);
+                        if (link) {
+                            out.push({ name: "FHD " + k.toUpperCase(), url: link });
                         }
                     }
-                }
-                resolve(results);
+                });
+                resolve(out);
             })
             .catch(function() { resolve([]); });
     });
