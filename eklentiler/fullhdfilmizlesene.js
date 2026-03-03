@@ -1,82 +1,110 @@
-/**
- * FullHD Scraper - Nuvio v2.0
- * Kısıtlamalar: async/await YASAK, Promise/then() ZORUNLU.
- */
+const cheerio = require("cheerio-without-node-native");
 
-var cheerio = require("cheerio-without-node-native");
+// ROT13 + Base64 Çözücü
+function decodeSecret(s) {
+    try {
+        if (!s) return null;
+        let rotated = s.replace(/[a-zA-Z]/g, function(c) {
+            return String.fromCharCode((c <= "Z" ? 90 : 122) >= (c = c.charCodeAt(0) + 13) ? c : c - 26);
+        });
+        return Buffer.from(rotated, 'base64').toString('utf-8');
+    } catch (e) { return null; }
+}
 
-const WORKING_HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-    'Accept': 'video/webm,video/ogg,video/*;q=0.9,application/ogg;q=0.7,audio/*;q=0.6,*/*;q=0.5',
-    'Accept-Language': 'en-US,en;q=0.9',
-    'Accept-Encoding': 'identity',
-    'Origin': 'https://www.fullhdfilmizlesene.live',
-    'Referer': 'https://www.fullhdfilmizlesene.live/',
-    'Sec-Fetch-Dest': 'video',
-    'Sec-Fetch-Mode': 'no-cors',
-    'Sec-Fetch-Site': 'cross-site',
-    'DNT': '1'
-};
-
-function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
-    return new Promise(function(resolve, reject) {
-        
+function getStreams(tmdbId, mediaType) {
+    return new Promise(async (resolve) => {
         if (mediaType !== 'movie') return resolve([]);
 
-        // 1. TMDB Sorgusu
-        var tmdbUrl = 'https://api.themoviedb.org/3/movie/' + tmdbId + '?language=tr-TR&api_key=4ef0d7355d9ffb5151e987764708ce96';
+        const headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+            'Referer': 'https://www.fullhdfilmizlesene.live/',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8'
+        };
 
-        fetch(tmdbUrl)
-            .then(function(res) { return res.json(); })
-            .then(function(data) {
-                var query = data.title;
-                if (!query) throw new Error('Film adi bulunamadi');
+        try {
+            // 1. TMDB üzerinden film adını al
+            const tmdbRes = await fetch(`https://api.themoviedb.org/3/movie/${tmdbId}?api_key=4ef0d7355d9ffb5151e987764708ce96&language=tr-TR`);
+            const movieData = await tmdbRes.json();
+            console.log(`-> Film: ${movieData.title}`);
 
-                // 2. Sitede Arama
-                var searchUrl = 'https://www.fullhdfilmizlesene.live/arama/' + encodeURIComponent(query);
-                return fetch(searchUrl, { headers: { 'User-Agent': WORKING_HEADERS['User-Agent'] } });
-            })
-            .then(function(res) { return res.text(); })
-            .then(function(html) {
-                var $ = cheerio.load(html);
-                var filmPageLink = $('li.film a').first().attr('href');
+            // 2. Sitede Ara
+            const searchUrl = `https://www.fullhdfilmizlesene.live/arama/${encodeURIComponent(movieData.title)}`;
+            const searchRes = await fetch(searchUrl, { headers });
+            const searchHtml = await searchRes.text();
+            
+            const $search = cheerio.load(searchHtml);
+            const filmLink = $search("li.film a").first().attr("href");
 
-                if (!filmPageLink) return resolve([]);
+            if (!filmLink) {
+                console.log("! Film bulunamadı.");
+                return resolve([]);
+            }
 
-                // 3. Film Sayfasına Gir ve Kaynağı Bul (3003 hatasını önleyen kısım)
-                return fetch(filmPageLink, { headers: WORKING_HEADERS });
-            })
-            .then(function(res) { return res.text(); })
-            .then(function(pageHtml) {
-                var $ = cheerio.load(pageHtml);
-                
-                // Sitenin video oynatıcısını barındıran iframe'i yakala
-                var iframeSrc = $('#player iframe').attr('src') || $('iframe').attr('src'); 
+            // 3. Film Sayfasını Çek
+            console.log(`-> Sayfa: ${filmLink}`);
+            const pageRes = await fetch(filmLink, { headers });
+            const pageHtml = await pageRes.text();
+            const streams = [];
 
-                if (!iframeSrc) return resolve([]);
+            // --- YÖNTEM 1: SCX / PlayerData Objesini Yakala ---
+            // Regex'i daha esnek hale getirdik (boşluklar ve farklı değişken isimleri için)
+            const scxRegex = /(?:var\s+scx|scx)\s*=\s*({[\s\S]*?});/i;
+            const match = scxRegex.exec(pageHtml);
 
-                // Nuvio'nun beklediği zorunlu format
-                var streams = [{
-                    name: "FullHD - Otomatik",
-                    title: "Movie Source Found",
-                    url: iframeSrc,           // Artık sadece sayfa linki değil, video kaynağı
-                    quality: "1080p",
-                    headers: WORKING_HEADERS,  // Playback için zorunlu headerlar
-                    provider: "fullhd_scraper" // manifest.json'daki id ile aynı olmalı
-                }];
+            if (match) {
+                try {
+                    // JSON formatına zorla dönüştürme (keyleri tırnak içine al)
+                    let rawJson = match[1]
+                        .replace(/'/g, '"')
+                        .replace(/(\s*?{\s*?|\s*?,\s*?)(['"])?([a-zA-Z0-9_]+)(['"])?:/g, '$1"$3":');
+                    
+                    const data = JSON.parse(rawJson);
+                    const labels = ["atom", "proton", "fast", "tr", "en", "dublaj", "alt-yazi"];
 
-                resolve(streams);
-            })
-            .catch(function(err) {
-                console.error('Scraper Hata:', err.message);
-                resolve([]);
-            });
+                    labels.forEach(label => {
+                        if (data[label] && data[label].sx && data[label].sx.t) {
+                            let tokens = Array.isArray(data[label].sx.t) ? data[label].sx.t : [data[label].sx.t];
+                            tokens.forEach(t => {
+                                const dec = decodeSecret(t);
+                                if (dec && dec.startsWith("http")) {
+                                    streams.push({
+                                        name: `FHD - ${label.toUpperCase()}`,
+                                        url: dec,
+                                        quality: "1080p",
+                                        headers: headers
+                                    });
+                                }
+                            });
+                        }
+                    });
+                } catch (e) { console.log("! Şifre çözme hatası:", e.message); }
+            }
+
+            // --- YÖNTEM 2: DOM Üzerinden Player ve Iframe Tara ---
+            if (streams.length === 0) {
+                const $page = cheerio.load(pageHtml);
+                $page("iframe, [data-src], .player-container iframe").each((i, el) => {
+                    let src = $page(el).attr("src") || $page(el).attr("data-src");
+                    if (src && !src.includes("googleads")) {
+                        if (src.startsWith("//")) src = "https:" + src;
+                        streams.push({
+                            name: "Yedek Kaynak",
+                            url: src,
+                            quality: "Auto",
+                            headers: headers
+                        });
+                    }
+                });
+            }
+
+            console.log(`-> Sonuç: ${streams.length} link bulundu.`);
+            resolve(streams);
+
+        } catch (err) {
+            console.log("! Hata:", err.message);
+            resolve([]);
+        }
     });
 }
 
-// React Native ve Sandbox uyumluluğu
-if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { getStreams: getStreams };
-} else {
-    global.getStreams = getStreams;
-}
+module.exports = { getStreams };
