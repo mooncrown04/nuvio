@@ -1,73 +1,78 @@
-// Yardımcı Fonksiyonlar (Bundler bağımlılığını ortadan kaldırmak için)
-var __cheerio = require("cheerio-without-node-native");
+var cheerio = require("cheerio-without-node-native");
 
-const BASE_URL = 'https://www.diziyou.one';
-const STORAGE_URL = 'https://storage.diziyou.one';
+var BASE_URL = 'https://www.diziyou.one';
+var STORAGE_URL = 'https://storage.diziyou.one';
 
-const HEADERS = {
+var HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     'Referer': BASE_URL + '/',
     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8'
 };
 
-function getStreams(tmdbId, mediaType, season, episode) {
+/**
+ * Kotlin kodundaki storage ve itemId mantığını kullanarak linkleri çözer
+ */
+function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
     return new Promise(function(resolve, reject) {
+        // DiziYou sadece TV dizilerini destekler
         if (mediaType !== 'tv') {
-            console.log('[DiziYou] Sadece dizi destekleniyor.');
             return resolve([]);
         }
 
-        console.log('[DiziYou] İstek Başladı:', tmdbId, 'S:', season, 'E:', episode);
+        console.log('[DiziYou] İşlem Başladı:', tmdbId, 'S:', seasonNum, 'E:', episodeNum);
 
-        // 1. TMDB'den isim al
+        // 1. TMDB'den Türkçe isim al (Arama yapmak için)
         var tmdbUrl = 'https://api.themoviedb.org/3/tv/' + tmdbId + '?language=tr-TR&api_key=4ef0d7355d9ffb5151e987764708ce96';
 
         fetch(tmdbUrl)
             .then(function(res) { return res.json(); })
-            .then(function(tmdbData) {
-                var query = tmdbData.name;
-                if (!query) throw new Error('TMDB ismi bulunamadı');
+            .then(function(data) {
+                var query = data.name || '';
+                if (!query) throw new Error('TMDB ismi alınamadı');
                 
-                console.log('[DiziYou] TMDB İsmi:', query);
-                // 2. Arama Yap
+                // 2. Sitede Arama Yap (Dizipal'deki gibi)
                 var searchUrl = BASE_URL + '/?s=' + encodeURIComponent(query);
                 return fetch(searchUrl, { headers: HEADERS });
             })
             .then(function(res) { return res.text(); })
-            .then(function(searchHtml) {
-                var $ = __cheerio.load(searchHtml);
-                var firstResult = $('div.incontent div#list-series div#categorytitle a').first().attr('href');
+            .then(function(html) {
+                var $ = cheerio.load(html);
+                // Kotlin seçicisi: div.incontent div#list-series
+                var firstLink = $('div.incontent div#list-series div#categorytitle a').first().attr('href');
                 
-                if (!firstResult) {
-                    console.log('[DiziYou] Arama sonucu bulunamadı.');
+                if (!firstLink) {
+                    console.log('[DiziYou] Dizi bulunamadı.');
                     return resolve([]);
                 }
 
-                // 3. Bölüm Sayfasına Git
-                var slug = firstResult.replace(BASE_URL + '/', '').replace(/\/$/, '');
-                var episodeUrl = BASE_URL + '/' + slug + '-' + season + '-sezon-' + episode + '-bolum/';
-                console.log('[DiziYou] Bölüm URL:', episodeUrl);
+                // 3. Bölüm URL'sini oluştur (Kotlin'deki slug mantığı)
+                var slug = firstLink.replace(BASE_URL + '/', '').replace(/\/$/, '');
+                var epUrl = BASE_URL + '/' + slug + '-' + seasonNum + '-sezon-' + episodeNum + '-bolum/';
+                console.log('[DiziYou] Bölüm URL:', epUrl);
                 
-                return fetch(episodeUrl, { headers: HEADERS });
+                return fetch(epUrl, { headers: HEADERS });
             })
             .then(function(res) { return res.text(); })
             .then(function(epHtml) {
-                var $ = __cheerio.load(epHtml);
-                var playerSrc = $('#diziyouPlayer').attr('src') || $('iframe[src*="diziyou"]').attr('src');
+                var $ = cheerio.load(epHtml);
+                // Kotlin: iframe#diziyouPlayer
+                var playerSrc = $('#diziyouPlayer').attr('src');
                 
                 if (!playerSrc) {
-                    console.log('[DiziYou] Player iframe bulunamadı.');
+                    console.log('[DiziYou] Iframe bulunamadı.');
                     return resolve([]);
                 }
 
-                // 4. itemId Ayıkla (Kotlin mantığı)
+                // 4. itemId ayıkla (Örn: /abc/123.html -> 123)
                 var itemId = playerSrc.split('/').pop().replace('.html', '');
-                console.log('[DiziYou] Yakalanan ID:', itemId);
+                console.log('[DiziYou] itemId Yakalandı:', itemId);
 
                 var streams = [];
                 var subtitles = [];
 
-                // 5. Seçenekleri Kontrol Et (Altyazı / Dublaj)
+                // 5. Kaynak ve Altyazı Kontrolleri (Kotlin forEach mantığı)
+                
+                // Türkçe Altyazı seçeneği var mı?
                 if (epHtml.indexOf('id="turkceAltyazili"') !== -1) {
                     subtitles.push({
                         label: 'Turkish',
@@ -79,6 +84,7 @@ function getStreams(tmdbId, mediaType, season, episode) {
                     });
                 }
 
+                // Dublaj seçeneği var mı?
                 if (epHtml.indexOf('id="turkceDublaj"') !== -1) {
                     streams.push({
                         name: '⌜ DiziYou ⌟ | Dublaj',
@@ -86,7 +92,7 @@ function getStreams(tmdbId, mediaType, season, episode) {
                     });
                 }
 
-                // Fallback (Hiçbiri yoksa)
+                // Hiçbir buton yoksa bile varsayılanı ekle
                 if (streams.length === 0) {
                     streams.push({
                         name: '⌜ DiziYou ⌟ | Video',
@@ -94,18 +100,17 @@ function getStreams(tmdbId, mediaType, season, episode) {
                     });
                 }
 
-                // 6. Sonuçları Formatla (Sinewix/Dizipal örneğindeki gibi)
+                // 6. SineWix formatında sonuçları döndür
                 var results = streams.map(function(s) {
                     return {
                         name: s.name,
                         url: s.url,
-                        quality: '720p',
+                        quality: 'Auto',
                         headers: { 'Referer': BASE_URL + '/' },
                         subtitles: subtitles
                     };
                 });
 
-                console.log('[DiziYou] Başarılı, bulunan stream:', results.length);
                 resolve(results);
             })
             .catch(function(err) {
@@ -115,6 +120,9 @@ function getStreams(tmdbId, mediaType, season, episode) {
     });
 }
 
+// Export yapısı SineWix/Dizipal ile aynı
 if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { getStreams };
+    module.exports = { getStreams: getStreams };
+} else {
+    global.getStreams = getStreams;
 }
