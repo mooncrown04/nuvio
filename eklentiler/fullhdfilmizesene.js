@@ -1,91 +1,88 @@
-#!/usr/bin/env node
-const cheerio = require('cheerio');
+// ! Geliştirilmiş Kaynak Ayıklayıcı
+var BASE_URL = 'https://www.fullhdfilmizlesene.live';
 
-const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
+var HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Referer': BASE_URL + '/',
+    'X-Requested-With': 'XMLHttpRequest'
+};
 
-async function getSource(url, referer = "") {
+// Çift Katmanlı Şifre Çözücü (ROT13 + Base64)
+function universalDecode(encoded) {
+    if (!encoded) return null;
     try {
-        const response = await fetch(url, {
-            headers: {
-                'User-Agent': USER_AGENT,
-                'Referer': referer || url,
-                'Accept': '*/*'
+        var rot13 = s => s.replace(/[a-zA-Z]/g, c => 
+            String.fromCharCode((c <= "Z" ? 90 : 122) >= (c = c.charCodeAt(0) + 13) ? c : c - 26));
+        
+        var cleaned = rot13(encoded).replace(/\s/g, '');
+        var decoded = Buffer.from(cleaned, 'base64').toString('utf-8');
+        return decoded.startsWith('http') ? decoded : null;
+    } catch (e) { return null; }
+}
+
+async function getStreams(tmdbId, mediaType) {
+    if (mediaType !== 'movie') return [];
+
+    try {
+        // 1. Film Bilgisini Çek (TMDB)
+        const tmdbRes = await fetch(`https://api.themoviedb.org/3/movie/${tmdbId}?language=tr-TR&api_key=4ef0d7355d9ffb5151e987764708ce96`);
+        const movie = await tmdbRes.json();
+        const searchTitle = movie.title || movie.original_title;
+        console.log(`[ARAMA] Film: ${searchTitle}`);
+
+        // 2. Sitede Film URL'sini Bul
+        const searchRes = await fetch(`${BASE_URL}/arama/${encodeURIComponent(searchTitle)}`, { headers: HEADERS });
+        const searchHtml = await searchRes.text();
+        const filmMatch = searchHtml.match(/<li[^>]*class=["']film["'][^>]*>[\s\S]*?<a[^>]+href=["']([^"']+)["']/i);
+        
+        if (!filmMatch) {
+            console.log("[HATA] Film sayfada bulunamadı.");
+            return [];
+        }
+
+        const filmUrl = filmMatch[1].startsWith('http') ? filmMatch[1] : BASE_URL + filmMatch[1];
+
+        // 3. scx Objesini Yakala
+        const filmRes = await fetch(filmUrl, { headers: HEADERS });
+        const filmHtml = await filmRes.text();
+        const scxMatch = filmHtml.match(/scx\s*=\s*(\{[\s\S]*?\});/);
+        
+        if (!scxMatch) {
+            console.log("[HATA] Şifreli veri (scx) bulunamadı.");
+            return [];
+        }
+
+        const scxData = JSON.parse(scxMatch[1]);
+        const keys = ['atom', 'advid', 'proton', 'fast', 'tr', 'en'];
+        let results = [];
+
+        for (const key of keys) {
+            if (!scxData[key]?.sx?.t) continue;
+            
+            const sourceArray = Array.isArray(scxData[key].sx.t) ? scxData[key].sx.t : Object.values(scxData[key].sx.t);
+
+            for (let i = 0; i < sourceArray.length; i++) {
+                let decodedUrl = universalDecode(sourceArray[i]);
+                if (!decodedUrl) continue;
+
+                // Stream bilgilerini yapılandır
+                results.push({
+                    name: `FHD | ${key.toUpperCase()} - Kaynak ${i + 1}`,
+                    url: decodedUrl,
+                    quality: "1080p",
+                    is_direct: false, 
+                    headers: HEADERS
+                });
             }
-        });
-        return await response.text();
-    } catch (e) {
-        console.log(`[HATA] Bağlantı kurulamadı: ${url}`);
-        return null;
+        }
+
+        console.log(`[BAŞARI] ${results.length} kaynak bulundu.`);
+        return results;
+
+    } catch (error) {
+        console.error("[KRİTİK HATA]:", error.message);
+        return [];
     }
 }
 
-/**
- * Sayfa içinde gizlenmiş M3U8 veya MP4 linklerini bulur
- */
-function findLinksInScript(html) {
-    // 1. Standart M3U8 linklerini ara
-    // 2. Base64 ile şifrelenmiş olabilecek yapıları veya karmaşık tırnakları tara
-    const regexList = [
-        /["'](https?:\/\/[^"']+\.m3u8[^"']*)["']/gi,
-        /["'](https?:\/\/[^"']+\.mp4[^"']*)["']/gi,
-        /file\s*:\s*["']([^"']+)["']/gi
-    ];
-
-    let foundLinks = new Set();
-    regexList.forEach(reg => {
-        let match;
-        while ((match = reg.exec(html)) !== null) {
-            if (match[1] && !match[1].includes('analytics')) {
-                foundLinks.add(match[1].replace(/\\/g, '')); // Kaçış karakterlerini temizle
-            }
-        }
-    });
-    return Array.from(foundLinks);
-}
-
-async function startExtraction(targetUrl) {
-    console.log(`[BAŞLADI] Kaynak taranıyor...`);
-    
-    const mainHtml = await getSource(targetUrl);
-    if (!mainHtml) return;
-
-    const $ = cheerio.load(mainHtml);
-    
-    // Sunucu listesini (iframe veya rcp butonları) bulalım
-    let frames = [];
-    $('iframe').each((i, el) => {
-        let src = $(el).attr('src');
-        if (src) frames.push(src.startsWith('//') ? 'https:' + src : src);
-    });
-
-    // Eğer iframe yoksa, data-hash veya butonları tara
-    $('[data-hash], [data-url], .server-item').each((i, el) => {
-        let val = $(el).attr('data-hash') || $(el).attr('data-url');
-        if (val) frames.push(val);
-    });
-
-    console.log(`[BİLGİ] Bulunan olası kaynak sayısı: ${frames.length}`);
-
-    for (let frameUrl of frames) {
-        // Eğer URL tam değilse (sadece hash ise) site sonuna ekle
-        let fullFrameUrl = frameUrl.includes('http') ? frameUrl : `${new URL(targetUrl).origin}/rcp/${frameUrl}`;
-        
-        console.log(`[DEBUG] İnceleniyor: ${fullFrameUrl}`);
-        const frameHtml = await getSource(fullFrameUrl, targetUrl);
-        
-        if (frameHtml) {
-            const videoLinks = findLinksInScript(frameHtml);
-            if (videoLinks.length > 0) {
-                console.log(`\n✅ BAŞARILI! Linkler bulundu:`);
-                videoLinks.forEach(link => console.log(`🔗 Link: ${link}`));
-            }
-        }
-    }
-}
-
-const url = process.argv[2];
-if (url) {
-    startExtraction(url);
-} else {
-    console.log("Kullanım: node dosya.js <film-url>");
-}
+module.exports = { getStreams };
