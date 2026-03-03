@@ -8,7 +8,7 @@
       "description": "En yeni dizileri güvenli ve hızlı şekilde sunar.",
       "version": "1.0.4",
       "author": "mooncrown",
-      "supportedTypes": ["movie", "tv"],
+      "supportedTypes": ["tv"],
       "filename": "eklentiler/diziyou.js",
       "enabled": true,
       "formats": ["m3u8"],
