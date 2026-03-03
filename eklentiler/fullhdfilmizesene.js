@@ -1,110 +1,122 @@
-// ! Bu araç @keyiflerolsun tarafından | @KekikAkademi için yazılmıştır.
-var BASE_URL = 'https://www.fullhdfilmizlesene.live';
+#!/usr/bin/env node
+const cheerio = require('cheerio');
 
-// Sunucuların bot korumasını geçmek için standart header seti
-var COMMON_HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Accept': '*/*',
-    'Origin': BASE_URL,
-    'Referer': BASE_URL + '/',
-    'X-Requested-With': 'XMLHttpRequest'
-};
-
-// ==================== DECODE SİSTEMİ ====================
-
-function universalDecode(encoded) {
-    if (!encoded) return null;
-    try {
-        var rot13 = function(s) {
-            return s.replace(/[a-zA-Z]/g, function(c) {
-                return String.fromCharCode((c <= "Z" ? 90 : 122) >= (c = c.charCodeAt(0) + 13) ? c : c - 26);
-            });
-        };
-        var cleaned = rot13(encoded).replace(/\s/g, '');
-        var decoded = (typeof Buffer !== 'undefined') 
-            ? Buffer.from(cleaned, 'base64').toString('utf-8') 
-            : atob(cleaned);
-        return decoded.startsWith('http') ? decoded : null;
-    } catch (e) { return null; }
-}
-
-// ==================== SUNUCU AYIKLAYICILAR ====================
+// --- Ayarlar ---
+const BASE_URL = 'https://www.fullhdfilmizlesene.live';
+const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36';
 
 /**
- * Atom ve Fast gibi sunucular için özel header yönetimi yapar.
- * Proton için standart bağlantı yeterlidir.
+ * Gelişmiş Fetch Sarmalayıcı
+ * Proton VPN veya benzeri korumalı ağlarda '403 Forbidden' almamak için 
+ * doğru header ve referer bilgilerini ekler.
  */
-function resolveServerStream(key, url, index) {
-    var streamInfo = {
-        name: `FHD | ${key.toUpperCase()} - Kaynak ${index + 1}`,
-        url: url,
-        quality: "1080p",
-        headers: COMMON_HEADERS,
-        behaviorHints: {
-            notDirect: true,
-            proxyHeaders: { "common": COMMON_HEADERS }
+async function smartFetch(url, referer = BASE_URL) {
+    try {
+        const response = await fetch(url, {
+            headers: {
+                'User-Agent': USER_AGENT,
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+                'Accept-Language': 'tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7',
+                'Referer': referer,
+                'Cache-Control': 'no-cache',
+                'Connection': 'keep-alive'
+            }
+        });
+
+        if (!response.ok) {
+            console.error(`[Hata] İstek başarısız: ${url} | Durum: ${response.status}`);
+            return null;
         }
-    };
 
-    // Atom ve Fast genellikle .m3u8 (HLS) kullanır
-    if (key === 'atom' || key === 'fast') {
-        streamInfo.streamType = "hls";
+        return await response.text();
+    } catch (error) {
+        console.error(`[Network Hatası] ${url}:`, error.message);
+        return null;
     }
-
-    return streamInfo;
 }
 
-// ==================== ANA MOTOR ====================
-
-async function getStreams(tmdbId, mediaType) {
-    if (mediaType !== 'movie') return [];
-
-    try {
-        // 1. TMDB Bilgisi
-        const tmdbRes = await fetch(`https://api.themoviedb.org/3/movie/${tmdbId}?language=tr-TR&api_key=4ef0d7355d9ffb5151e987764708ce96`);
-        const movie = await tmdbRes.json();
-        const searchTitle = movie.title || movie.original_title;
-
-        // 2. Sitede Arama (XDmovies örneğindeki gibi path bulma mantığı)
-        const searchRes = await fetch(`${BASE_URL}/arama/${encodeURIComponent(searchTitle)}`, { headers: COMMON_HEADERS });
-        const searchHtml = await searchRes.text();
-        const filmMatch = searchHtml.match(/<li[^>]*class=["']film["'][^>]*>[\s\S]*?<a[^>]+href=["']([^"']+)["']/i);
-        if (!filmMatch) return [];
-
-        const filmUrl = filmMatch[1].startsWith('http') ? filmMatch[1] : BASE_URL + filmMatch[1];
-
-        // 3. Film Sayfası ve scx Verisi
-        const filmRes = await fetch(filmUrl, { headers: COMMON_HEADERS });
-        const filmHtml = await filmRes.text();
-        const scxMatch = filmHtml.match(/scx\s*=\s*(\{[\s\S]*?\});/);
-        if (!scxMatch) return [];
-
-        const scxData = JSON.parse(scxMatch[1]);
-        const targetKeys = ['atom', 'fast', 'proton', 'tr', 'en']; // Öncelik sırası
-        let results = [];
-
-        for (const key of targetKeys) {
-            if (!scxData[key] || !scxData[key].sx || !scxData[key].sx.t) continue;
+/**
+ * M3U8 Linklerini ve Kalitelerini Ayıklar
+ */
+function parseM3U8(content, baseUrl) {
+    const lines = content.split('\n');
+    const streams = [];
+    
+    for (let i = 0; i < lines.length; i++) {
+        if (lines[i].includes('RESOLUTION=')) {
+            const qualityMatch = lines[i].match(/RESOLUTION=\d+x(\d+)/);
+            const quality = qualityMatch ? qualityMatch[1] + 'p' : 'Auto';
+            const streamUrl = lines[i + 1].trim();
             
-            const rawSources = scxData[key].sx.t;
-            const sourceArray = Array.isArray(rawSources) ? rawSources : Object.values(rawSources);
+            // Eğer URL bağıl (relative) ise tam URL'ye çevir
+            const fullUrl = streamUrl.startsWith('http') ? streamUrl : new URL(streamUrl, baseUrl).href;
+            
+            streams.push({ quality, url: fullUrl });
+        }
+    }
+    return streams.sort((a, b) => parseInt(b.quality) - parseInt(a.quality));
+}
 
-            for (let i = 0; i < sourceArray.length; i++) {
-                let decodedUrl = universalDecode(sourceArray[i]);
-                if (!decodedUrl) continue;
+/**
+ * Ana Sunucu Fonksiyonu (FullHDFilmizlesene Örneği İçin)
+ */
+async function extractVideoData(filmUrl) {
+    console.log(`[İşlem] Film taranıyor: ${filmUrl}`);
+    
+    const html = await smartFetch(filmUrl);
+    if (!html) return null;
 
-                // XDmovies mantığı: Her kaynağı sunucu tipine göre işle
-                const stream = resolveServerStream(key, decodedUrl, i);
-                results.push(stream);
+    const $ = cheerio.load(html);
+    const servers = [];
+
+    // Sayfadaki iframe veya player kaynaklarını bulma (Örn: rcp/data-hash mantığı)
+    // Paylaştığın kodun çalışma mantığını buraya entegre ediyoruz:
+    $('.server-list .server').each((i, el) => {
+        const hash = $(el).attr('data-hash');
+        if (hash) {
+            servers.push({
+                name: $(el).text().trim(),
+                url: `${BASE_URL}/rcp/${hash}`
+            });
+        }
+    });
+
+    const results = [];
+
+    // Sunucuları paralel olarak tara
+    const tasks = servers.map(async (server) => {
+        const rcpHtml = await smartFetch(server.url, filmUrl);
+        if (!rcpHtml) return;
+
+        // Regex ile M3U8 veya kaynak dosyasını bul
+        const fileRegex = /file:\s*['"]([^'"]+\.m3u8[^'"]*)['"]/i;
+        const match = rcpHtml.match(fileRegex);
+
+        if (match && match[1]) {
+            const m3u8Url = match[1];
+            const m3u8Content = await smartFetch(m3u8Url, server.url);
+            
+            if (m3u8Content) {
+                const qualityStreams = parseM3U8(m3u8Content, m3u8Url);
+                results.push({
+                    server: server.name,
+                    streams: qualityStreams
+                });
             }
         }
+    });
 
-        return results;
-
-    } catch (error) {
-        console.error("Stream hatası:", error);
-        return [];
-    }
+    await Promise.all(tasks);
+    return results;
 }
 
-module.exports = { getStreams };
+// --- Test Kullanımı ---
+const targetUrl = process.argv[2]; // terminalden URL al: node script.js https://...
+if (targetUrl) {
+    extractVideoData(targetUrl).then(data => {
+        console.log("=== BULUNAN KAYNAKLAR ===");
+        console.log(JSON.stringify(data, null, 2));
+    });
+} else {
+    console.log("Lütfen bir film URL'si belirtin: node dosyaadi.js <url>");
+}
