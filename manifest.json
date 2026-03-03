@@ -24,7 +24,7 @@
       "version": "1.0.0",
       "author": "kerimmkirac",
       "supportedTypes": ["movie", "tv"],
-      "filename": "eklentiler/fullhdfilmizesene.js",
+      "filename": "eklentiler/fullhdfilmizlesene.js",
       "enabled": true,
       "formats": ["mp4", "mkv", "hls", "m3u8"],
       "logo": "https://play-lh.googleusercontent.com/brwGNmr7IjA_MKk_TTPs0va10hdKE_bD_a1lnKoiMuCayW98EHpRv55edA6aEoJlmwfX=w240-h480",
