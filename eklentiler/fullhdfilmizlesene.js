@@ -1,99 +1,73 @@
-// eklentiler/fullhdfilmizlesene.js
-// @keyiflerolsun & @KekikAkademi temel alınarak optimize edilmiştir.
-
 var BASE_URL = 'https://www.fullhdfilmizlesene.live';
+// Eğer site izin veriyorsa HTTP üzerinden gitmek sertifika hatalarını (SSL Trust) çözer
+var ALT_URL = 'http://www.fullhdfilmizlesene.live'; 
 
 var HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'X-Requested-With': 'XMLHttpRequest',
-    'Referer': BASE_URL + '/'
+    'User-Agent': 'Mozilla/5.0 (Linux; Android 10; TV) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Mobile Safari/537.36',
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,webp,*/*;q=0.8',
+    'Upgrade-Insecure-Requests': '1'
 };
 
-// ==================== YARDIMCI FONKSİYONLAR ====================
-
-function universalDecode(encoded) {
-    if (!encoded) return null;
-    try {
-        var rot13 = function(s) {
-            return s.replace(/[a-zA-Z]/g, function(c) {
-                return String.fromCharCode((c <= "Z" ? 90 : 122) >= (c = c.charCodeAt(0) + 13) ? c : c - 26);
-            });
-        };
-        var cleaned = rot13(encoded).replace(/\s/g, '');
-        var decoded = (typeof Buffer !== 'undefined') 
-            ? Buffer.from(cleaned, 'base64').toString('utf-8') 
-            : atob(cleaned);
-        return decoded;
-    } catch (e) { return null; }
-}
-
-// ==================== ANA MOTOR ====================
-
 async function getStreams(tmdbId, mediaType) {
-    console.log("[FHD-PRO] Islem Basladi. ID: " + tmdbId);
-    if (mediaType !== 'movie') return [];
+    const ctrl = new AbortController();
+    const timeout = setTimeout(() => ctrl.abort(), 6000); // Süreyi 6 saniyeye indirdik (Hız öncelikli)
 
     try {
-        // 1. TMDB'den Film Bilgisi Al (Hızlı cevap için 5sn timeout)
-        const tmdbRes = await fetch(`https://api.themoviedb.org/3/movie/${tmdbId}?language=tr-TR&api_key=4ef0d7355d9ffb5151e987764708ce96`);
-        if (!tmdbRes) return [];
+        // 1. TMDB Verisi (Burası genelde sorun çıkarmaz ama timeout ekledik)
+        const tmdbRes = await fetch(`https://api.themoviedb.org/3/movie/${tmdbId}?api_key=4ef0d7355d9ffb5151e987764708ce96`, { signal: ctrl.signal });
         const movie = await tmdbRes.json();
-        const searchTitle = movie.title || movie.original_title;
-        console.log("[FHD-PRO] Aranan: " + searchTitle);
-
-        // 2. Sitede Arama Yap
-        const searchRes = await fetch(`${BASE_URL}/arama/${encodeURIComponent(searchTitle)}`, { headers: HEADERS });
-        if (!searchRes) return [];
-        const searchHtml = await searchRes.text();
         
-        const filmMatch = searchHtml.match(/<li[^>]*class=["']film["'][^>]*>[\s\S]*?<a[^>]+href=["']([^"']+)["']/i);
-        if (!filmMatch) {
-            console.log("[FHD-PRO] Film bulunamadi.");
-            return [];
+        // 2. Arama (Sertifika hatası varsa HTTP dene)
+        let searchUrl = `${BASE_URL}/arama/${encodeURIComponent(movie.title)}`;
+        let response;
+        try {
+            response = await fetch(searchUrl, { headers: HEADERS, signal: ctrl.signal });
+        } catch (e) {
+            // HTTPS başarısız olursa HTTP dene
+            response = await fetch(searchUrl.replace('https', 'http'), { headers: HEADERS, signal: ctrl.signal });
         }
 
-        const filmUrl = filmMatch[1].startsWith('http') ? filmMatch[1] : BASE_URL + filmMatch[1];
+        const html = await response.text();
+        const filmMatch = html.match(/<li[^>]*class=["']film["'][^>]*>[\s\S]*?<a[^>]+href=["']([^"']+)["']/i);
+        if (!filmMatch) return [];
 
-        // 3. Film Sayfasını Çek ve Kaynakları Ayıkla
-        const filmRes = await fetch(filmUrl, { headers: HEADERS });
+        // 3. İçerik Sayfası
+        const filmUrl = filmMatch[1].startsWith('http') ? filmMatch[1] : BASE_URL + filmMatch[1];
+        const filmRes = await fetch(filmUrl, { headers: HEADERS, signal: ctrl.signal });
         const filmHtml = await filmRes.text();
+
         const scxMatch = filmHtml.match(/scx\s*=\s*(\{[\s\S]*?\});/);
         if (!scxMatch) return [];
 
         const scxData = JSON.parse(scxMatch[1]);
-        const keys = ['tr', 'en', 'fast', 'proton', 'atom'];
-        let results = [];
+        const results = [];
 
-        for (const key of keys) {
-            if (!scxData[key]?.sx?.t) continue;
-            
-            const rawSources = scxData[key].sx.t;
-            const sourceArray = Array.isArray(rawSources) ? rawSources : Object.values(rawSources);
+        // Hızlıca TR ve EN kaynakları tara
+        ['tr', 'en'].forEach(lang => {
+            if (scxData[lang]?.sx?.t) {
+                const raw = Array.isArray(scxData[lang].sx.t) ? scxData[lang].sx.t[0] : Object.values(scxData[lang].sx.t)[0];
+                const decoded = universalDecode(raw);
 
-            for (let i = 0; i < sourceArray.length; i++) {
-                let decodedUrl = universalDecode(sourceArray[i]);
-                
-                // --- KRİTİK FİLTRE: Altyazı ve Hatalı Linkleri Ele ---
-                if (!decodedUrl || !decodedUrl.startsWith('http')) continue;
-                if (decodedUrl.includes('.vtt') || decodedUrl.includes('.srt')) continue; 
-                // ---------------------------------------------------
-
-                results.push({
-                    name: `FHD | ${key.toUpperCase()} - Kaynak ${i + 1}`,
-                    url: decodedUrl + `|User-Agent=${encodeURIComponent(HEADERS['User-Agent'])}&Referer=${encodeURIComponent(BASE_URL + '/')}`,
-                    quality: "1080p",
-                    is_direct: true // Player'a doğrudan video olduğunu söyle
-                });
+                if (decoded && !decoded.includes('.vtt')) {
+                    // ExoPlayer'a header'ları "pipe" (|) ile gönderiyoruz
+                    results.push({
+                        name: `FHD - ${lang.toUpperCase()}`,
+                        url: decoded + `|User-Agent=${encodeURIComponent(HEADERS['User-Agent'])}&Referer=${encodeURIComponent(BASE_URL + '/')}`,
+                        quality: "1080p"
+                    });
+                }
             }
-        }
+        });
 
-        console.log("[FHD-PRO] Bitti. Kaynak Sayisi: " + results.length);
         return results;
 
-    } catch (error) {
-        console.log("[FHD-PRO] Hata: " + error.message);
+    } catch (err) {
         return [];
+    } finally {
+        clearTimeout(timeout);
     }
 }
+
+function universalDecode(s){try{var r=function(t){return t.replace(/[a-zA-Z]/g,function(e){return String.fromCharCode((e<="Z"?90:122)>=(e=e.charCodeAt(0)+13)?e:e-26)})};return atob(r(s).replace(/\s/g,""))}catch(e){return null}}
 
 module.exports = { getStreams };
