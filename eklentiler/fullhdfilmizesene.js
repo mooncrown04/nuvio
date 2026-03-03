@@ -1,11 +1,12 @@
 // ! Bu araç @keyiflerolsun tarafından | @KekikAkademi için yazılmıştır.
 var BASE_URL = 'https://www.fullhdfilmizlesene.live';
 
-// Atom ve Fast için hayati öneme sahip başlıklar
-var HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-    'Referer': BASE_URL + '/',
+// Sunucuların bot korumasını geçmek için standart header seti
+var COMMON_HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Accept': '*/*',
     'Origin': BASE_URL,
+    'Referer': BASE_URL + '/',
     'X-Requested-With': 'XMLHttpRequest'
 };
 
@@ -27,60 +28,81 @@ function universalDecode(encoded) {
     } catch (e) { return null; }
 }
 
+// ==================== SUNUCU AYIKLAYICILAR ====================
+
+/**
+ * Atom ve Fast gibi sunucular için özel header yönetimi yapar.
+ * Proton için standart bağlantı yeterlidir.
+ */
+function resolveServerStream(key, url, index) {
+    var streamInfo = {
+        name: `FHD | ${key.toUpperCase()} - Kaynak ${index + 1}`,
+        url: url,
+        quality: "1080p",
+        headers: COMMON_HEADERS,
+        behaviorHints: {
+            notDirect: true,
+            proxyHeaders: { "common": COMMON_HEADERS }
+        }
+    };
+
+    // Atom ve Fast genellikle .m3u8 (HLS) kullanır
+    if (key === 'atom' || key === 'fast') {
+        streamInfo.streamType = "hls";
+    }
+
+    return streamInfo;
+}
+
 // ==================== ANA MOTOR ====================
 
 async function getStreams(tmdbId, mediaType) {
     if (mediaType !== 'movie') return [];
 
     try {
+        // 1. TMDB Bilgisi
         const tmdbRes = await fetch(`https://api.themoviedb.org/3/movie/${tmdbId}?language=tr-TR&api_key=4ef0d7355d9ffb5151e987764708ce96`);
         const movie = await tmdbRes.json();
         const searchTitle = movie.title || movie.original_title;
 
-        const searchRes = await fetch(`${BASE_URL}/arama/${encodeURIComponent(searchTitle)}`, { headers: HEADERS });
+        // 2. Sitede Arama (XDmovies örneğindeki gibi path bulma mantığı)
+        const searchRes = await fetch(`${BASE_URL}/arama/${encodeURIComponent(searchTitle)}`, { headers: COMMON_HEADERS });
         const searchHtml = await searchRes.text();
         const filmMatch = searchHtml.match(/<li[^>]*class=["']film["'][^>]*>[\s\S]*?<a[^>]+href=["']([^"']+)["']/i);
         if (!filmMatch) return [];
 
         const filmUrl = filmMatch[1].startsWith('http') ? filmMatch[1] : BASE_URL + filmMatch[1];
 
-        const filmRes = await fetch(filmUrl, { headers: HEADERS });
+        // 3. Film Sayfası ve scx Verisi
+        const filmRes = await fetch(filmUrl, { headers: COMMON_HEADERS });
         const filmHtml = await filmRes.text();
         const scxMatch = filmHtml.match(/scx\s*=\s*(\{[\s\S]*?\});/);
         if (!scxMatch) return [];
 
         const scxData = JSON.parse(scxMatch[1]);
-        const keys = ['atom', 'fast', 'proton', 'tr', 'en'];
+        const targetKeys = ['atom', 'fast', 'proton', 'tr', 'en']; // Öncelik sırası
         let results = [];
 
-        for (const key of keys) {
+        for (const key of targetKeys) {
             if (!scxData[key] || !scxData[key].sx || !scxData[key].sx.t) continue;
-            const sourceArray = Array.isArray(scxData[key].sx.t) ? scxData[key].sx.t : Object.values(scxData[key].sx.t);
+            
+            const rawSources = scxData[key].sx.t;
+            const sourceArray = Array.isArray(rawSources) ? rawSources : Object.values(rawSources);
 
             for (let i = 0; i < sourceArray.length; i++) {
                 let decodedUrl = universalDecode(sourceArray[i]);
                 if (!decodedUrl) continue;
 
-                // --- ATOM & FAST İÇİN KRİTİK AYARLAR ---
-                results.push({
-                    name: `FHD | ${key.toUpperCase()} #${i + 1}`,
-                    url: decodedUrl,
-                    quality: "1080p",
-                    headers: HEADERS, // VLC'nin isteği atarken kullanacağı headers
-                    is_direct: false, // 3003 hatasını önlemek için mutlaka false olmalı
-                    streamType: "hls", // VLC'ye m3u8 olduğunu önceden söyle
-                    behaviorHints: {
-                        notDirect: true, // Proxy katmanını aktif eder
-                        proxyHeaders: {
-                            "common": HEADERS
-                        }
-                    }
-                });
+                // XDmovies mantığı: Her kaynağı sunucu tipine göre işle
+                const stream = resolveServerStream(key, decodedUrl, i);
+                results.push(stream);
             }
         }
+
         return results;
 
     } catch (error) {
+        console.error("Stream hatası:", error);
         return [];
     }
 }
