@@ -1,70 +1,116 @@
 var BASE_URL = 'https://www.fullhdfilmizlesene.live';
-var HEADERS = {
+
+var STREAM_HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Referer': BASE_URL + '/'
+    'Referer': BASE_URL + '/',
+    'Origin': BASE_URL
 };
 
-async function getStreams(tmdbId, mediaType) {
-    if (mediaType !== 'movie') return [];
-
-    try {
-        // 1. Film Adını Al (Zamanlayıcıyı kaldırdık, direkt fetch)
-        var tmdbRes = await fetch('https://api.themoviedb.org/3/movie/' + tmdbId + '?api_key=4ef0d7355d9ffb5151e987764708ce96');
-        var movie = await tmdbRes.json();
-        
-        // 2. Arama Yap
-        var searchUrl = BASE_URL + '/arama/' + encodeURIComponent(movie.title);
-        var searchRes = await fetch(searchUrl, { headers: HEADERS });
-        var searchHtml = await searchRes.text();
-        
-        // 3. Film Sayfası Linkini Bul
-        var filmPathMatch = searchHtml.match(/<a[^>]+href=["'](\/film\/[^"']+)["']/i);
-        if (!filmPathMatch) return [];
-
-        var filmRes = await fetch(BASE_URL + filmPathMatch[1], { headers: HEADERS });
-        var filmHtml = await filmRes.text();
-
-        // 4. Video Verisini Ayıkla
-        var scxMatch = filmHtml.match(/scx\s*=\s*(\{[\s\S]*?\});/);
-        if (!scxMatch) return [];
-
-        var scxData = JSON.parse(scxMatch[1]);
-        var streams = [];
-
-        // Sadece çalışan kaynakları ekle
-        if (scxData.tr && scxData.tr.sx && scxData.tr.sx.t) {
-            var rawTr = Array.isArray(scxData.tr.sx.t) ? scxData.tr.sx.t[0] : Object.values(scxData.tr.sx.t)[0];
-            var decodedTr = universalDecode(rawTr);
-            if (decodedTr) {
-                streams.push({
-                    name: "FHD - TÜRKÇE",
-                    url: decodedTr + '|User-Agent=' + encodeURIComponent(HEADERS['User-Agent']),
-                    quality: "1080p"
-                });
-            }
-        }
-
-        return streams;
-
-    } catch (err) {
-        // Hata durumunda sessizce boş dön
-        return [];
-    }
+// Base64 Çözücü (atob yoksa çalışması için manuel fonksiyon)
+function manualAtob(s) {
+    var b64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=";
+    var o1, o2, o3, h1, h2, h3, h4, bits, i = 0, ac = 0, dec = "", tmp_arr = [];
+    if (!s) return s;
+    s += '';
+    do {
+        h1 = b64.indexOf(s.charAt(i++));
+        h2 = b64.indexOf(s.charAt(i++));
+        h3 = b64.indexOf(s.charAt(i++));
+        h4 = b64.indexOf(s.charAt(i++));
+        bits = h1 << 18 | h2 << 12 | h3 << 6 | h4;
+        o1 = bits >> 16 & 0xff;
+        o2 = bits >> 8 & 0xff;
+        o3 = bits & 0xff;
+        if (h3 == 64) tmp_arr[ac++] = String.fromCharCode(o1);
+        else if (h4 == 64) tmp_arr[ac++] = String.fromCharCode(o1, o2);
+        else tmp_arr[ac++] = String.fromCharCode(o1, o2, o3);
+    } while (i < s.length);
+    dec = tmp_arr.join('');
+    return dec;
 }
 
 function universalDecode(s) {
     try {
-        var r = function(t) {
+        var rot13 = function(t) {
             return t.replace(/[a-zA-Z]/g, function(e) {
                 return String.fromCharCode((e <= "Z" ? 90 : 122) >= (e = e.charCodeAt(0) + 13) ? e : e - 26);
             });
         };
-        var cleaned = r(s).replace(/\s/g, "");
-        // atob desteği yoksa bu da çöker, o yüzden kontrol ekledik
-        return typeof atob !== 'undefined' ? atob(cleaned) : null;
-    } catch (e) {
-        return null;
-    }
+        var cleaned = rot13(s).replace(/\s/g, "");
+        return manualAtob(cleaned);
+    } catch (e) { return null; }
 }
 
-module.exports = { getStreams };
+function fetchFilmPage(filmPath, title) {
+    return fetch(BASE_URL + filmPath, { headers: STREAM_HEADERS })
+        .then(function(res) { return res.text(); })
+        .then(function(html) {
+            var scxMatch = html.match(/scx\s*=\s*(\{[\s\S]*?\});/);
+            if (!scxMatch) return [];
+
+            var scxData = JSON.parse(scxMatch[1]);
+            var streams = [];
+
+            // Türkçe ve İngilizce kaynakları kontrol et
+            ['tr', 'en'].forEach(function(lang) {
+                if (scxData[lang] && scxData[lang].sx && scxData[lang].sx.t) {
+                    var raw = Array.isArray(scxData[lang].sx.t) ? scxData[lang].sx.t[0] : Object.values(scxData[lang].sx.t)[0];
+                    var decodedUrl = universalDecode(raw);
+                    
+                    if (decodedUrl && decodedUrl.indexOf('http') === 0 && decodedUrl.indexOf('.vtt') === -1) {
+                        streams.push({
+                            name: 'FHD - ' + (lang === 'tr' ? 'Türkçe' : 'İngilizce'),
+                            title: title,
+                            url: decodedUrl,
+                            quality: '1080p',
+                            headers: STREAM_HEADERS
+                        });
+                    }
+                }
+            });
+            return streams;
+        });
+}
+
+function getStreams(tmdbId, mediaType) {
+    return new Promise(function(resolve, reject) {
+        if (mediaType !== 'movie') {
+            resolve([]);
+            return;
+        }
+
+        var tmdbUrl = 'https://api.themoviedb.org/3/movie/' + tmdbId + '?api_key=4ef0d7355d9ffb5151e987764708ce96';
+
+        fetch(tmdbUrl)
+            .then(function(res) { return res.json(); })
+            .then(function(data) {
+                var title = data.title || data.original_title;
+                if (!title) throw new Error('Title not found');
+                
+                var searchUrl = BASE_URL + '/arama/' + encodeURIComponent(title);
+                return fetch(searchUrl, { headers: STREAM_HEADERS }).then(function(res) {
+                    return res.text().then(function(html) {
+                        return { html: html, title: title };
+                    });
+                });
+            })
+            .then(function(obj) {
+                var filmMatch = obj.html.match(/<a[^>]+href=["'](\/film\/[^"']+)["']/i);
+                if (!filmMatch) return [];
+                return fetchFilmPage(filmMatch[1], obj.title);
+            })
+            .then(function(streams) {
+                resolve(streams || []);
+            })
+            .catch(function(err) {
+                console.error('[FHD] Error:', err.message);
+                resolve([]);
+            });
+    });
+}
+
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = { getStreams };
+} else {
+    global.getStreams = getStreams;
+}
