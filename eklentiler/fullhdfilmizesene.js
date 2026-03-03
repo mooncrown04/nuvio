@@ -1,4 +1,4 @@
-// ! Geliştirilmiş Kaynak Ayıklayıcı
+// ! Geliştirilmiş Kaynak Ayıklayıcı - NuvioTV Uyumlu Sürüm
 var BASE_URL = 'https://www.fullhdfilmizlesene.live';
 
 var HEADERS = {
@@ -28,17 +28,13 @@ async function getStreams(tmdbId, mediaType) {
         const tmdbRes = await fetch(`https://api.themoviedb.org/3/movie/${tmdbId}?language=tr-TR&api_key=4ef0d7355d9ffb5151e987764708ce96`);
         const movie = await tmdbRes.json();
         const searchTitle = movie.title || movie.original_title;
-        console.log(`[ARAMA] Film: ${searchTitle}`);
 
         // 2. Sitede Film URL'sini Bul
         const searchRes = await fetch(`${BASE_URL}/arama/${encodeURIComponent(searchTitle)}`, { headers: HEADERS });
         const searchHtml = await searchRes.text();
         const filmMatch = searchHtml.match(/<li[^>]*class=["']film["'][^>]*>[\s\S]*?<a[^>]+href=["']([^"']+)["']/i);
         
-        if (!filmMatch) {
-            console.log("[HATA] Film sayfada bulunamadı.");
-            return [];
-        }
+        if (!filmMatch) return [];
 
         const filmUrl = filmMatch[1].startsWith('http') ? filmMatch[1] : BASE_URL + filmMatch[1];
 
@@ -47,10 +43,7 @@ async function getStreams(tmdbId, mediaType) {
         const filmHtml = await filmRes.text();
         const scxMatch = filmHtml.match(/scx\s*=\s*(\{[\s\S]*?\});/);
         
-        if (!scxMatch) {
-            console.log("[HATA] Şifreli veri (scx) bulunamadı.");
-            return [];
-        }
+        if (!scxMatch) return [];
 
         const scxData = JSON.parse(scxMatch[1]);
         const keys = ['atom', 'advid', 'proton', 'fast', 'tr', 'en'];
@@ -65,22 +58,34 @@ async function getStreams(tmdbId, mediaType) {
                 let decodedUrl = universalDecode(sourceArray[i]);
                 if (!decodedUrl) continue;
 
-                // Stream bilgilerini yapılandır
+                // --- NUVIO TV İÇİN YAPILANDIRMA BAŞLANGICI ---
+                
+                // 1. Header'ları URL'ye gömüyoruz (VLC/MX Player için zorunlu)
+                let finalUrl = decodedUrl;
+                if (finalUrl.includes('.m3u8') || finalUrl.includes('.mp4')) {
+                    finalUrl += `|User-Agent=${encodeURIComponent(HEADERS['User-Agent'])}&Referer=${encodeURIComponent(HEADERS['Referer'])}`;
+                }
+
                 results.push({
-                    name: `FHD | ${key.toUpperCase()} - Kaynak ${i + 1}`,
-                    url: decodedUrl,
+                    name: `Nuvio | ${key.toUpperCase()} - ${i + 1}`,
+                    url: finalUrl,
                     quality: "1080p",
-                    is_direct: false, 
-                    headers: HEADERS
+                    is_direct: true, // TV'nin linki analiz etmeden doğrudan Player'a atmasını sağlar
+                    headers: HEADERS,
+                    behaviorHints: {
+                        notWebReady: false,
+                        proxyHeaders: {
+                            "read": ["User-Agent", "Referer"]
+                        }
+                    }
                 });
+                // --- NUVIO TV İÇİN YAPILANDIRMA BİTİŞİ ---
             }
         }
 
-        console.log(`[BAŞARI] ${results.length} kaynak bulundu.`);
         return results;
 
     } catch (error) {
-        console.error("[KRİTİK HATA]:", error.message);
         return [];
     }
 }
