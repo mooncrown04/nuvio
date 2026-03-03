@@ -2,20 +2,7 @@
   "name": "mooncrown04",
   "version": "1.0.0",
   "scrapers": [
-           {
-      "id": "filmmodu",
-      "name": "FilmModu",
-      "description": "Türkçe film, dizi ve anime - 5000+ HD içerik, Türkçe altyazılı, anime arşivi",
-      "version": "1.0.0",
-      "author": "mooncrown",
-      "supportedTypes": ["movie", "tv"],
-      "filename": "eklentiler/filmmodu.js",
-      "enabled": true,
-      "formats": ["mp4", "mkv"],
-      "logo": "https://play-lh.googleusercontent.com/brwGNmr7IjA_MKk_TTPs0va10hdKE_bD_a1lnKoiMuCayW98EHpRv55edA6aEoJlmwfX=w240-h480",
-      "contentLanguage": ["tr"]
-    },
-
+     
 	  
 	  {
       "id": "fullhdfilmizlesene",
@@ -30,19 +17,7 @@
       "logo": "https://play-lh.googleusercontent.com/brwGNmr7IjA_MKk_TTPs0va10hdKE_bD_a1lnKoiMuCayW98EHpRv55edA6aEoJlmwfX=w240-h480",
       "contentLanguage": ["tr"]
     },
-	      {
-      "id": "inattv",
-      "name": "InatTv",
-      "description": "Türkçe film, dizi ve anime - 5000+ HD içerik, Türkçe altyazılı, anime arşivi",
-      "version": "1.0.0",
-      "author": "kerimmkirac",
-      "supportedTypes": ["movie", "tv"],
-      "filename": "eklentiler/inattv.js",
-      "enabled": true,
-      "formats": ["mp4", "mkv"],
-      "logo": "https://play-lh.googleusercontent.com/brwGNmr7IjA_MKk_TTPs0va10hdKE_bD_a1lnKoiMuCayW98EHpRv55edA6aEoJlmwfX=w240-h480",
-      "contentLanguage": ["tr"]
-    },
+   
 	  {
       "id": "sinewix",
       "name": "SineWix",
@@ -69,18 +44,6 @@
       "logo": "https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://dizipal1206.com&size=128",
       "contentLanguage": ["tr"]
     }
-	 ,{
-      "id": "diziyou",
-      "name": "DiziYou",
-      "description": "En yeni dizileri güvenli ve hızlı şekilde sunar.",
-      "version": "1.0.4",
-      "author": "mooncrown",
-      "supportedTypes": ["movie", "tv"],
-      "filename": "eklentiler/diziyou.js",
-      "enabled": true,
-      "formats": ["m3u8"],
-      "logo": "https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://dizipal1206.com&size=128",
-      "contentLanguage": ["tr"]
-    }
+
   ]
 }
