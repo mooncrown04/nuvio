@@ -1,19 +1,33 @@
 const cheerio = require("cheerio-without-node-native");
 
-// Şifre Çözücü (ROT13 + Base64)
+// ROT13 + Base64 Çözücü
 function decodeSecret(s) {
     try {
         if (!s) return null;
         let rotated = s.replace(/[a-zA-Z]/g, function(c) {
             return String.fromCharCode((c <= "Z" ? 90 : 122) >= (c = c.charCodeAt(0) + 13) ? c : c - 26);
         });
-        // APK ortamında Buffer yoksa atob kullanır
-        if (typeof Buffer !== 'undefined') {
-            return Buffer.from(rotated, 'base64').toString('utf-8');
-        } else {
-            return atob(rotated);
-        }
+        return Buffer.from(rotated, 'base64').toString('utf-8');
     } catch (e) { return null; }
+}
+
+// 1004 Hatasını Çözen Proton/Atom Extractor
+async function extractM3U8(embedUrl, headers) {
+    try {
+        const res = await fetch(embedUrl, { headers });
+        const html = await res.text();
+        
+        // Proton ve Atom sunucularında video linki genellikle "file": "..." içinde saklanır
+        // Buradaki ters eğik çizgileri (\/) temizlemek kritik!
+        const match = /["']?file["']?\s*[:=]\s*["'](http[^"']+\.m3u8[^"']*)["']/.exec(html);
+        
+        if (match && match[1]) {
+            // Kaçış karakterlerini temizle (VLC'nin 1004 hatası vermesini engeller)
+            let rawUrl = match[1].replace(/\\/g, '');
+            return rawUrl;
+        }
+        return embedUrl; 
+    } catch (e) { return embedUrl; }
 }
 
 async function getStreams(tmdbId, mediaType) {
@@ -25,11 +39,11 @@ async function getStreams(tmdbId, mediaType) {
     };
 
     try {
-        // 1. TMDB'den film ismini al
+        // 1. Film Adını Al
         const tmdbRes = await fetch(`https://api.themoviedb.org/3/movie/${tmdbId}?api_key=4ef0d7355d9ffb5151e987764708ce96&language=tr-TR`);
         const movieData = await tmdbRes.json();
-        
-        // 2. Sitede arama yap
+
+        // 2. Sitede Ara
         const searchUrl = `https://www.fullhdfilmizlesene.live/arama/${encodeURIComponent(movieData.title)}`;
         const searchRes = await fetch(searchUrl, { headers });
         const searchHtml = await searchRes.text();
@@ -38,61 +52,45 @@ async function getStreams(tmdbId, mediaType) {
 
         if (!filmLink) return [];
 
-        // 3. Film sayfasını çek
+        // 3. Film Sayfasını Çek
         const pageRes = await fetch(filmLink, { headers });
         const pageHtml = await pageRes.text();
         const streams = [];
 
-        // 4. Şifreli 'scx' objesini bul
+        // 4. Şifreli SCX Verisini Çöz
         const scxRegex = /scx\s*=\s*({[\s\S]*?});/i;
         const match = scxRegex.exec(pageHtml);
 
         if (match) {
-            // JS objesini temizle ve JSON'a çevir
-            let rawJson = match[1]
-                .replace(/'/g, '"')
-                .replace(/(\w+):/g, '"$1":')
-                .replace(/,\s*}/g, '}');
-            
+            let rawJson = match[1].replace(/'/g, '"').replace(/(\w+):/g, '"$1" :').replace(/,\s*}/g, '}');
             const data = JSON.parse(rawJson);
-            // Sitenin kullandığı yaygın etiketler
-            const labels = ["atom", "proton", "fast", "tr", "en", "dublaj", "alt-yazi"];
+            const labels = ["proton", "atom", "fast", "tr", "en"]; // Proton en üstte
 
-            labels.forEach(label => {
+            for (const label of labels) {
                 if (data[label] && data[label].sx && data[label].sx.t) {
                     let tokens = Array.isArray(data[label].sx.t) ? data[label].sx.t : [data[label].sx.t];
-                    tokens.forEach(t => {
-                        const dec = decodeSecret(t);
-                        if (dec && dec.startsWith("http")) {
-                            // EXTRACTION YAPMADAN DİREKT EMBED LİNKİNİ VER
+                    
+                    for (const t of tokens) {
+                        const embedUrl = decodeSecret(t);
+                        if (embedUrl && embedUrl.startsWith("http")) {
+                            
+                            // --- EXTRATOR KULLANIMI ---
+                            const finalLink = await extractM3U8(embedUrl, headers);
+                            
                             streams.push({
                                 name: `FHD - ${label.toUpperCase()}`,
-                                url: dec, // Örn: https://rapidvid.net/vod/v1x690030ec
+                                url: finalLink,
                                 quality: "1080p",
-                                headers: headers
+                                headers: {
+                                    "Referer": embedUrl,
+                                    "User-Agent": headers['User-Agent']
+                                }
                             });
                         }
-                    });
+                    }
                 }
-            });
+            }
         }
-
-        // Eğer scx'den bir şey çıkmadıysa sayfadaki iframe'leri topla
-        if (streams.length === 0) {
-            const $page = cheerio.load(pageHtml);
-            $page("iframe").each((i, el) => {
-                let src = $(el).attr("src") || $(el).attr("data-src");
-                if (src && src.includes("http")) {
-                    streams.push({
-                        name: "Alternatif Kaynak",
-                        url: src.startsWith("//") ? "https:" + src : src,
-                        quality: "Auto",
-                        headers: headers
-                    });
-                }
-            });
-        }
-
         return streams;
     } catch (err) {
         return [];
