@@ -1,6 +1,8 @@
 const cheerio = require("cheerio-without-node-native");
 
-// ROT13 + Base64 Çözücü
+/**
+ * Şifreli veriyi çözen fonksiyon (ROT13 + Base64)
+ */
 function decodeSecret(s) {
     try {
         if (!s) return null;
@@ -11,100 +13,108 @@ function decodeSecret(s) {
     } catch (e) { return null; }
 }
 
-function getStreams(tmdbId, mediaType) {
-    return new Promise(async (resolve) => {
-        if (mediaType !== 'movie') return resolve([]);
+/**
+ * Embed sayfasının (Rapidvid vb.) içine girip gerçek video linkini bulan extractor
+ */
+async function extractVideoSource(embedUrl, headers) {
+    try {
+        const res = await fetch(embedUrl, { headers });
+        const html = await res.text();
+        
+        // 1. Regex: "file":"http..." veya file: 'http...' formatlarını yakala
+        const videoMatch = /["']?file["']?\s*[:=]\s*["'](http[^"']+\.(?:m3u8|mp4|mkv)[^"']*)["']/.exec(html);
+        
+        if (videoMatch && videoMatch[1]) {
+            return videoMatch[1].replace(/\\/g, ''); // Ters eğik çizgileri temizle
+        }
+        
+        // 2. Alternatif: JSON içindeki kaynakları tara
+        const sourceMatch = /sources\s*:\s*(\[[^\]]+\])/.exec(html);
+        if (sourceMatch) {
+            const sources = JSON.parse(sourceMatch[1].replace(/'/g, '"'));
+            return sources[0].file || sources[0].src;
+        }
 
-        const headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-            'Referer': 'https://www.fullhdfilmizlesene.live/',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8'
-        };
+        return embedUrl; // Bulamazsa mecburen eski linki dön
+    } catch (e) { 
+        return embedUrl; 
+    }
+}
 
-        try {
-            // 1. TMDB üzerinden film adını al
-            const tmdbRes = await fetch(`https://api.themoviedb.org/3/movie/${tmdbId}?api_key=4ef0d7355d9ffb5151e987764708ce96&language=tr-TR`);
-            const movieData = await tmdbRes.json();
-            console.log(`-> Film: ${movieData.title}`);
+/**
+ * Ana fonksiyon
+ */
+async function getStreams(tmdbId, mediaType) {
+    if (mediaType !== 'movie') return [];
 
-            // 2. Sitede Ara
-            const searchUrl = `https://www.fullhdfilmizlesene.live/arama/${encodeURIComponent(movieData.title)}`;
-            const searchRes = await fetch(searchUrl, { headers });
-            const searchHtml = await searchRes.text();
-            
-            const $search = cheerio.load(searchHtml);
-            const filmLink = $search("li.film a").first().attr("href");
+    const headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+        'Referer': 'https://www.fullhdfilmizlesene.live/',
+        'Accept-Language': 'tr-TR,tr;q=0.9'
+    };
 
-            if (!filmLink) {
-                console.log("! Film bulunamadı.");
-                return resolve([]);
-            }
+    try {
+        // 1. TMDB Film Bilgisi
+        const tmdbRes = await fetch(`https://api.themoviedb.org/3/movie/${tmdbId}?api_key=4ef0d7355d9ffb5151e987764708ce96&language=tr-TR`);
+        const movieData = await tmdbRes.json();
+        console.log(`-> Film: ${movieData.title}`);
 
-            // 3. Film Sayfasını Çek
-            console.log(`-> Sayfa: ${filmLink}`);
-            const pageRes = await fetch(filmLink, { headers });
-            const pageHtml = await pageRes.text();
-            const streams = [];
+        // 2. Sitede Arama
+        const searchUrl = `https://www.fullhdfilmizlesene.live/arama/${encodeURIComponent(movieData.title)}`;
+        const searchRes = await fetch(searchUrl, { headers });
+        const searchHtml = await searchRes.text();
+        const $search = cheerio.load(searchHtml);
+        const filmLink = $search("li.film a").first().attr("href");
 
-            // --- YÖNTEM 1: SCX / PlayerData Objesini Yakala ---
-            // Regex'i daha esnek hale getirdik (boşluklar ve farklı değişken isimleri için)
-            const scxRegex = /(?:var\s+scx|scx)\s*=\s*({[\s\S]*?});/i;
-            const match = scxRegex.exec(pageHtml);
+        if (!filmLink) return [];
 
-            if (match) {
-                try {
-                    // JSON formatına zorla dönüştürme (keyleri tırnak içine al)
-                    let rawJson = match[1]
-                        .replace(/'/g, '"')
-                        .replace(/(\s*?{\s*?|\s*?,\s*?)(['"])?([a-zA-Z0-9_]+)(['"])?:/g, '$1"$3":');
+        // 3. Film Sayfası Analizi
+        console.log(`-> Sayfa: ${filmLink}`);
+        const pageRes = await fetch(filmLink, { headers });
+        const pageHtml = await pageRes.text();
+        const streams = [];
+
+        // SCX Objesini Yakala
+        const scxRegex = /scx\s*=\s*({[\s\S]*?});/i;
+        const match = scxRegex.exec(pageHtml);
+
+        if (match) {
+            // JS objesini JSON'a uygun hale getir (keyleri tırnakla)
+            let rawJson = match[1].replace(/'/g, '"').replace(/(\w+):/g, '"$1":');
+            const data = JSON.parse(rawJson);
+            const labels = ["atom", "proton", "fast", "tr", "en", "dublaj"];
+
+            for (const label of labels) {
+                if (data[label] && data[label].sx && data[label].sx.t) {
+                    let tokens = Array.isArray(data[label].sx.t) ? data[label].sx.t : [data[label].sx.t];
                     
-                    const data = JSON.parse(rawJson);
-                    const labels = ["atom", "proton", "fast", "tr", "en", "dublaj", "alt-yazi"];
-
-                    labels.forEach(label => {
-                        if (data[label] && data[label].sx && data[label].sx.t) {
-                            let tokens = Array.isArray(data[label].sx.t) ? data[label].sx.t : [data[label].sx.t];
-                            tokens.forEach(t => {
-                                const dec = decodeSecret(t);
-                                if (dec && dec.startsWith("http")) {
-                                    streams.push({
-                                        name: `FHD - ${label.toUpperCase()}`,
-                                        url: dec,
-                                        quality: "1080p",
-                                        headers: headers
-                                    });
-                                }
+                    for (const t of tokens) {
+                        const embedUrl = decodeSecret(t);
+                        if (embedUrl && embedUrl.startsWith("http")) {
+                            console.log(`-> ${label.toUpperCase()} kaynağı işleniyor...`);
+                            
+                            // 1004 HATASINI ÇÖZEN KISIM: İçerideki gerçek dosyayı bul
+                            const videoFile = await extractVideoSource(embedUrl, headers);
+                            
+                            streams.push({
+                                name: `FHD - ${label.toUpperCase()}`,
+                                url: videoFile,
+                                quality: "1080p",
+                                headers: headers // Oynatıcı için gerekli
                             });
                         }
-                    });
-                } catch (e) { console.log("! Şifre çözme hatası:", e.message); }
-            }
-
-            // --- YÖNTEM 2: DOM Üzerinden Player ve Iframe Tara ---
-            if (streams.length === 0) {
-                const $page = cheerio.load(pageHtml);
-                $page("iframe, [data-src], .player-container iframe").each((i, el) => {
-                    let src = $page(el).attr("src") || $page(el).attr("data-src");
-                    if (src && !src.includes("googleads")) {
-                        if (src.startsWith("//")) src = "https:" + src;
-                        streams.push({
-                            name: "Yedek Kaynak",
-                            url: src,
-                            quality: "Auto",
-                            headers: headers
-                        });
                     }
-                });
+                }
             }
-
-            console.log(`-> Sonuç: ${streams.length} link bulundu.`);
-            resolve(streams);
-
-        } catch (err) {
-            console.log("! Hata:", err.message);
-            resolve([]);
         }
-    });
+
+        console.log(`-> Toplam ${streams.length} link ayıklandı.`);
+        return streams;
+
+    } catch (err) {
+        console.error("! Hata:", err.message);
+        return [];
+    }
 }
 
 module.exports = { getStreams };
