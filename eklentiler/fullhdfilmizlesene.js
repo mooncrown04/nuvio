@@ -1,14 +1,15 @@
 var BASE_URL = 'https://www.fullhdfilmizlesene.live';
 
-var STREAM_HEADERS = {
+var HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Referer': BASE_URL + '/',
-    'Accept': 'text/html,application/json'
+    'Accept': '*/*',
+    'Referer': BASE_URL + '/'
 };
 
+// Cihazın atob desteği yoksa diye yedek decoder
 function manualAtob(s) {
     var b64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=";
-    var o1, o2, o3, h1, h2, h3, h4, bits, i = 0, ac = 0, dec = "", tmp_arr = [];
+    var o1, o2, o3, h1, h2, h3, h4, bits, i = 0, ac = 0, tmp_arr = [];
     if (!s) return s;
     s += '';
     do {
@@ -27,65 +28,71 @@ function manualAtob(s) {
     return tmp_arr.join('');
 }
 
-function universalDecode(s) {
+function universalDecode(encoded) {
+    if (!encoded) return null;
     try {
-        var rot13 = function(t) {
-            return t.replace(/[a-zA-Z]/g, function(e) {
-                return String.fromCharCode((e <= "Z" ? 90 : 122) >= (e = e.charCodeAt(0) + 13) ? e : e - 26);
+        var rot13 = function(s) {
+            return s.replace(/[a-zA-Z]/g, function(c) {
+                return String.fromCharCode((c <= "Z" ? 90 : 122) >= (c = c.charCodeAt(0) + 13) ? c : c - 26);
             });
         };
-        var cleaned = rot13(s).replace(/\s/g, "");
-        // Cihazda atob yoksa manualAtob kullan
-        return (typeof atob !== 'undefined') ? atob(cleaned) : manualAtob(cleaned);
+        var cleaned = rot13(encoded).replace(/\s/g, '');
+        var decoded = (typeof atob !== 'undefined') ? atob(cleaned) : manualAtob(cleaned);
+        return (decoded.indexOf('http') === 0) ? decoded : null;
     } catch (e) { return null; }
 }
 
 function getStreams(tmdbId, mediaType) {
     return new Promise(function(resolve) {
-        // TV kanallarını veya dizileri şimdilik pas geç (Film odaklı)
         if (mediaType !== 'movie') return resolve([]);
 
-        var tmdbUrl = 'https://api.themoviedb.org/3/movie/' + tmdbId + '?api_key=4ef0d7355d9ffb5151e987764708ce96&language=tr-TR';
+        var tmdbUrl = 'https://api.themoviedb.org/3/movie/' + tmdbId + '?language=tr-TR&api_key=4ef0d7355d9ffb5151e987764708ce96';
 
         fetch(tmdbUrl)
             .then(function(r) { return r.json(); })
             .then(function(movie) {
                 var searchTitle = movie.title || movie.original_title;
-                return fetch(BASE_URL + '/arama/' + encodeURIComponent(searchTitle), { headers: STREAM_HEADERS });
+                return fetch(BASE_URL + '/arama/' + encodeURIComponent(searchTitle), { headers: HEADERS });
             })
             .then(function(res) { return res.text(); })
             .then(function(html) {
-                var match = html.match(/<a[^>]+href=["'](\/film\/[^"']+)["']/i);
-                if (!match) throw new Error('Film bulunamadi');
-                return fetch(BASE_URL + match[1], { headers: STREAM_HEADERS });
+                var filmMatch = html.match(/<li[^>]*class=["']film["'][^>]*>[\s\S]*?<a[^>]+href=["']([^"']+)["']/i);
+                if (!filmMatch) throw new Error('Film bulunamadı');
+                var filmUrl = filmMatch[1].indexOf('http') === 0 ? filmMatch[1] : BASE_URL + filmMatch[1];
+                return fetch(filmUrl, { headers: HEADERS });
             })
             .then(function(res) { return res.text(); })
             .then(function(filmHtml) {
                 var scxMatch = filmHtml.match(/scx\s*=\s*(\{[\s\S]*?\});/);
-                if (!scxMatch) return [];
+                if (!scxMatch) return resolve([]);
 
-                var scx = JSON.parse(scxMatch[1]);
+                var scxData = JSON.parse(scxMatch[1]);
+                var keys = ['tr', 'en', 'atom', 'fast', 'proton'];
                 var results = [];
 
-                ['tr', 'en'].forEach(function(lang) {
-                    if (scx[lang] && scx[lang].sx && scx[lang].sx.t) {
-                        var rawArr = scx[lang].sx.t;
-                        var raw = Array.isArray(rawArr) ? rawArr[0] : Object.values(rawArr)[0];
-                        var videoUrl = universalDecode(raw);
-                        
-                        if (videoUrl && videoUrl.indexOf('http') === 0) {
-                            results.push({
-                                name: 'FHD - ' + (lang === 'tr' ? 'TURKCE' : 'ALTYAZI'),
-                                url: videoUrl,
-                                quality: '1080p',
-                                headers: STREAM_HEADERS
-                            });
+                for (var k = 0; k < keys.length; k++) {
+                    var key = keys[k];
+                    if (scxData[key] && scxData[key].sx && scxData[key].sx.t) {
+                        var rawSources = scxData[key].sx.t;
+                        var sourceArray = Array.isArray(rawSources) ? rawSources : Object.values(rawSources);
+
+                        for (var i = 0; i < sourceArray.length; i++) {
+                            var decodedUrl = universalDecode(sourceArray[i]);
+                            if (decodedUrl) {
+                                results.push({
+                                    name: "FHD | " + key.toUpperCase() + " - " + (i + 1),
+                                    url: decodedUrl,
+                                    quality: "1080p",
+                                    headers: HEADERS
+                                });
+                            }
                         }
                     }
-                });
+                }
                 resolve(results);
             })
-            .catch(function() {
+            .catch(function(err) {
+                console.log("Hata: " + err);
                 resolve([]);
             });
     });
@@ -93,6 +100,4 @@ function getStreams(tmdbId, mediaType) {
 
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = { getStreams };
-} else {
-    global.getStreams = getStreams;
 }
