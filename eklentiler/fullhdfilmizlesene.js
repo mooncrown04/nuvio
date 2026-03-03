@@ -1,100 +1,96 @@
 var cheerio = require("cheerio-without-node-native");
 
 var BASE_URL = 'https://www.fullhdfilmizlesene.live';
-var HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Referer': BASE_URL + '/',
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8'
-};
 
-// Şifreli linkleri çözen fonksiyon (atob + rot13)
-function decodeFullHDLink(encoded) {
-    try {
-        var rot13 = encoded.replace(/[a-zA-Z]/g, function(c) {
-            return String.fromCharCode((c <= "Z" ? 90 : 122) >= (c = c.charCodeAt(0) + 13) ? c : c - 26);
-        });
-        // QuickJS'de atob yoksa diye kontrol
-        if (typeof atob === 'undefined') {
-            console.log('[FullHD] Hata: Sistemde atob fonksiyonu bulunamadı!');
-            return null;
-        }
-        return atob(rot13);
-    } catch (e) {
-        return null;
+// Kendi atob fonksiyonumuzu yazıyoruz (Cihazda atob yoksa çökmesin diye)
+function manualAtob(str) {
+    var chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=';
+    var output = '';
+    str = String(str).replace(/[=]+$/, '');
+    for (var bc = 0, bs, buffer, idx = 0; buffer = str.charAt(idx++); ~buffer && (bs = bc % 4 ? bs * 64 + buffer : buffer, bc++ % 4) ? output += String.fromCharCode(255 & bs >> (-2 * bc & 6)) : 0) {
+        buffer = chars.indexOf(buffer);
     }
+    return output;
+}
+
+function rot13(str) {
+    return str.replace(/[a-zA-Z]/g, function(c) {
+        return String.fromCharCode((c <= "Z" ? 90 : 122) >= (c = c.charCodeAt(0) + 13) ? c : c - 26);
+    });
 }
 
 function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
     return new Promise(function(resolve, reject) {
-        
+        // BAŞLANGIÇ LOGU
+        console.log('FullHD: [START] Fonksiyon tetiklendi. ID:', tmdbId, 'Type:', mediaType);
+
         if (mediaType !== 'movie') {
-            console.log('[FullHD] Sadece filmler destekleniyor.');
+            console.log('FullHD: [INFO] Sadece film destekleniyor, iptal edildi.');
             return resolve([]);
         }
 
-        console.log('[FullHD] 1. TMDB Sorgusu Başlatıldı. ID:', tmdbId);
-
         var tmdbUrl = 'https://api.themoviedb.org/3/movie/' + tmdbId + '?language=tr-TR&api_key=4ef0d7355d9ffb5151e987764708ce96';
 
+        console.log('FullHD: [STEP 1] TMDB verisi çekiliyor...');
+        
         fetch(tmdbUrl)
             .then(function(res) { return res.json(); })
             .then(function(data) {
                 var query = data.title || '';
-                console.log('[FullHD] 2. Film İsmi Alındı:', query);
+                console.log('FullHD: [STEP 2] Film adı bulundu:', query);
                 
-                if (!query) throw new Error('Film ismi bulunamadı');
+                if (!query) throw new Error('Film ismi bos');
 
                 var searchUrl = BASE_URL + '/arama/' + encodeURIComponent(query);
-                console.log('[FullHD] 3. Arama Yapılıyor:', searchUrl);
-                return fetch(searchUrl, { headers: HEADERS });
+                console.log('FullHD: [STEP 3] Site aranıyor:', searchUrl);
+                
+                return fetch(searchUrl, {
+                    headers: { 'User-Agent': 'Mozilla/5.0', 'Referer': BASE_URL }
+                });
             })
             .then(function(res) { return res.text(); })
-            .then(function(searchHtml) {
-                var $ = cheerio.load(searchHtml);
+            .then(function(html) {
+                var $ = cheerio.load(html);
                 var firstFilm = $('li.film a').first().attr('href');
                 
                 if (!firstFilm) {
-                    console.log('[FullHD] 4. Hata: Arama sonucunda film bulunamadı!');
+                    console.log('FullHD: [ERROR] Sitede film bulunamadı!');
                     return resolve([]);
                 }
 
                 var finalUrl = firstFilm.startsWith('http') ? firstFilm : BASE_URL + firstFilm;
-                console.log('[FullHD] 5. Film Sayfasına Gidiliyor:', finalUrl);
+                console.log('FullHD: [STEP 4] Film detay sayfasına gidiliyor:', finalUrl);
                 
-                return fetch(finalUrl, { headers: HEADERS });
+                return fetch(finalUrl, {
+                    headers: { 'User-Agent': 'Mozilla/5.0', 'Referer': BASE_URL }
+                });
             })
             .then(function(res) { return res.text(); })
             .then(function(filmHtml) {
-                console.log('[FullHD] 6. Film Sayfası Yüklendi. scx verisi aranıyor...');
+                console.log('FullHD: [STEP 5] Sayfa icerigi alindi, scx araniyor...');
                 
                 var streams = [];
-                // Sitenin içindeki gizli video objesini (scx) yakala
                 var scxMatch = filmHtml.match(/scx\s*=\s*(\{[\s\S]*?\});/);
                 
                 if (!scxMatch) {
-                    console.log('[FullHD] 7. Hata: Sayfada scx (video verisi) bulunamadı!');
+                    console.log('FullHD: [ERROR] scx objesi bulunamadi! (Site yapisi degismis olabilir)');
                     return resolve([]);
                 }
 
                 try {
                     var scxData = JSON.parse(scxMatch[1]);
-                    console.log('[FullHD] 8. scx Başarıyla Ayrıştırıldı. Kaynaklar:', Object.keys(scxData));
+                    console.log('FullHD: [STEP 6] scx parse edildi. Kaynaklar kontrol ediliyor...');
                     
-                    var sources = ['proton', 'fast', 'tr', 'en', 'atom'];
-                    
-                    sources.forEach(function(key) {
-                        var source = scxData[key];
-                        if (source && source.sx && source.sx.t) {
-                            var linkList = source.sx.t;
-                            console.log('[FullHD] - ' + key + ' kaynağında ' + linkList.length + ' link bulundu.');
-                            
-                            linkList.forEach(function(encLink, index) {
-                                var decoded = decodeFullHDLink(encLink);
-                                if (decoded && decoded.includes('.m3u8')) {
+                    var keys = ['proton', 'fast', 'tr', 'en'];
+                    keys.forEach(function(k) {
+                        if (scxData[k] && scxData[k].sx && scxData[k].sx.t) {
+                            scxData[k].sx.t.forEach(function(enc) {
+                                var decoded = manualAtob(rot13(enc));
+                                if (decoded && decoded.indexOf('m3u8') !== -1) {
                                     streams.push({
-                                        name: '⌜ FullHD ⌟ | ' + key.toUpperCase() + ' #' + (index + 1),
+                                        name: 'FullHD - ' + k.toUpperCase(),
                                         url: decoded,
-                                        quality: 'Auto',
+                                        quality: 'HD',
                                         headers: { 'Referer': BASE_URL + '/' }
                                     });
                                 }
@@ -102,19 +98,14 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                         }
                     });
                 } catch (e) {
-                    console.log('[FullHD] 9. Hata: JSON ayrıştırma veya Link çözme hatası:', e.message);
+                    console.log('FullHD: [ERROR] JSON/Decode hatasi:', e.message);
                 }
 
-                if (streams.length === 0) {
-                    console.log('[FullHD] 10. Sonuç: Hiç geçerli stream linki üretilemedi.');
-                } else {
-                    console.log('[FullHD] 10. Başarılı: ' + streams.length + ' adet link gönderiliyor.');
-                }
-                
+                console.log('FullHD: [FINISH] Toplam link sayisi:', streams.length);
                 resolve(streams);
             })
             .catch(function(err) {
-                console.error('[FullHD] Kritik Hata:', err.message);
+                console.log('FullHD: [CRITICAL] Hata olustu:', err.message);
                 resolve([]);
             });
     });
