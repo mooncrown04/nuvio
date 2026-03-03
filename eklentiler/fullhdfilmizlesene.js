@@ -14,43 +14,77 @@ function universalDecode(encoded) {
         const rot13 = s => s.replace(/[a-zA-Z]/g, c => 
             String.fromCharCode((c <= "Z" ? 90 : 122) >= (c = c.charCodeAt(0) + 13) ? c : c - 26));
         const cleaned = rot13(encoded).replace(/\s/g, '');
-        return Buffer.from(cleaned, 'base64').toString('utf-8');
-    } catch (e) { return null; }
+        // QuickJS'de Buffer yoksa atob kullanır
+        const base64Decoded = typeof Buffer !== 'undefined' 
+            ? Buffer.from(cleaned, 'base64').toString('utf-8')
+            : atob(cleaned);
+        return base64Decoded;
+    } catch (e) { 
+        console.log("[FHD-LOG] Decode Hatası: " + e.message);
+        return null; 
+    }
 }
 
 async function getStreams(id, mediaType) {
+    console.log(`[FHD-LOG] İşlem Başladı. ID: ${id}, Tip: ${mediaType}`);
     if (mediaType !== 'movie') return [];
 
     try {
-        // 1. TMDB'den detayları al (ID 550 için Fight Club gelecek)
-        const tmdbRes = await fetch(`https://api.themoviedb.org/3/movie/${id}?language=tr-TR&api_key=${TMDB_API_KEY}`);
+        // 1. TMDB Verisi
+        const tmdbUrl = `https://api.themoviedb.org/3/movie/${id}?language=tr-TR&api_key=${TMDB_API_KEY}`;
+        const tmdbRes = await fetch(tmdbUrl);
+        
+        if (!tmdbRes) throw new Error("TMDB Response Undefined");
         const movie = await tmdbRes.json();
         
-        // Arama için hem Türkçe hem Orijinal ismi hazırla
+        if (!movie || (!movie.title && !movie.original_title)) {
+            console.log("[FHD-LOG] Film bilgisi TMDB'den alınamadı.");
+            return [];
+        }
+
         const queries = [movie.title, movie.original_title].filter(Boolean);
+        console.log("[FHD-LOG] Aranacak kelimeler: " + queries.join(", "));
+
         let filmUrl = null;
 
-        // 2. Sitede sırayla isimleri dene
+        // 2. Arama Döngüsü
         for (const query of queries) {
+            console.log(`[FHD-LOG] Aranıyor: ${query}`);
             const searchRes = await fetch(`${BASE_URL}/arama/${encodeURIComponent(query)}`, { headers: HEADERS });
+            
+            if (!searchRes) {
+                console.log(`[FHD-LOG] ${query} için searchRes undefined döndü.`);
+                continue;
+            }
+
             const searchHtml = await searchRes.text();
             const match = searchHtml.match(/<li[^>]*class=["']film["'][^>]*>[\s\S]*?<a[^>]+href=["']([^"']+)["']/i);
+            
             if (match) {
                 filmUrl = match[1].startsWith('http') ? match[1] : BASE_URL + match[1];
+                console.log("[FHD-LOG] Film URL bulundu: " + filmUrl);
                 break;
             }
         }
 
-        if (!filmUrl) return [];
+        if (!filmUrl) {
+            console.log("[FHD-LOG] Sitede uygun film linki bulunamadı.");
+            return [];
+        }
 
-        // 3. scx verisini çek
-        const filmRes = await fetch(filmUrl, { headers: { ...HEADERS, 'Referer': filmUrl } });
-        const filmHtml = await filmRes.text();
+        // 3. Film Sayfası ve scx Verisi
+        const filmPageRes = await fetch(filmUrl, { headers: { ...HEADERS, 'Referer': filmUrl } });
+        if (!filmPageRes) throw new Error("Film sayfası yanıt vermedi.");
+        
+        const filmHtml = await filmPageRes.text();
         const scxMatch = filmHtml.match(/scx\s*=\s*(\{[\s\S]*?\});/);
         
-        if (!scxMatch) return [];
+        if (!scxMatch) {
+            console.log("[FHD-LOG] Sayfada şifreli veri (scx) bulunamadı.");
+            return [];
+        }
+
         const scxData = JSON.parse(scxMatch[1]);
-        
         const results = [];
         const keys = ['atom', 'advid', 'proton', 'fast', 'tr', 'en'];
 
@@ -62,7 +96,7 @@ async function getStreams(id, mediaType) {
                 const decodedUrl = universalDecode(sources[i]);
                 if (decodedUrl && decodedUrl.startsWith('http')) {
                     results.push({
-                        name: `FHD | ${key.toUpperCase()} - Kaynak ${i + 1}`,
+                        name: `Nuvio | ${key.toUpperCase()} - ${i + 1}`,
                         url: decodedUrl + `|User-Agent=${encodeURIComponent(HEADERS['User-Agent'])}&Referer=${encodeURIComponent(BASE_URL + '/')}`,
                         quality: "1080p",
                         is_direct: true
@@ -70,9 +104,12 @@ async function getStreams(id, mediaType) {
                 }
             }
         }
+
+        console.log(`[FHD-LOG] Toplam ${results.length} kaynak başarıyla eklendi.`);
         return results;
 
     } catch (e) {
+        console.log("[FHD-LOG] Kritik Hata: " + e.message);
         return [];
     }
 }
