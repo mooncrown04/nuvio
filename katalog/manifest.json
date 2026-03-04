@@ -1,17 +1,22 @@
 {
   "id": "pw.ers.netflix-catalog",
   "version": "1.1.1",
-  "name": "Streaming Catalogs",
-  "description": "Your favourite streaming services!",
+  "name": "Streaming & Live TV",
+  "description": "Favori platformların ve Canlı TV kanalları!",
   "logo": "https://www.stremio.com/static/images/stremio-logo.png",
   "resources": ["catalog", "meta"],
-  "types": ["movie", "series"],
-  "idPrefixes": ["tt"],
+  "types": ["movie", "series", "tv"],
+  "idPrefixes": ["tt", "tv"],
   "catalogs": [
     {
       "id": "nfx_movies",
       "type": "movie",
       "name": "Netflix Movies"
+    },
+    {
+      "id": "canli_tv",
+      "type": "tv",
+      "name": "Canlı TV Kanalları"
     },
     {
       "id": "dnp_movies",
