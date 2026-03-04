@@ -13,7 +13,13 @@
   "background": "https://image.tmdb.org/t/p/original/m8SRE7uL8rIe1n9yXU2s4u06F.jpg",
   "logo": "https://upload.wikimedia.org/wikipedia/commons/b/b1/TRT_1_logo_2021.png",
   "description": "Türkiye'nin ilk ulusal televizyon kanalı. Canlı yayınlar, diziler ve haberler.",
-  "genres": ["Genel", "Haber", "Dizi"]
+  "genres": ["Genel", "Haber", "Dizi"],
+   "trailers": [
+        {
+          "source": "5vithf-y0lg", 
+          "type": "Trailer"
+        }
+      ]
 },
  {
       "id": "tmdb_atv",
@@ -23,7 +29,13 @@
       "background": "https://image.tmdb.org/t/p/original/m638K19969vNIdvL5l6vUsh6pID.jpg",
       "logo": "https://upload.wikimedia.org/wikipedia/commons/2/2f/Atv_logo.png",
       "description": "Türkiye'nin en çok izlenen kanallarından biri. Popüler diziler ve sevilen programların adresi.",
-      "genres": ["Genel", "Dizi", "Eğlence"]
+      "genres": ["Genel", "Dizi", "Eğlence"],
+   "trailers": [
+        {
+          "source": "YouTube_Video_ID_Buraya", 
+          "type": "Trailer"
+        }
+      ]
     },
     {
       "id": "tmdb_kanald",
@@ -47,5 +59,6 @@
     }
   ]
 }
+
 
 
