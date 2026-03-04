@@ -1,9 +1,9 @@
 {
   "metas": [
     {
-      "id": "ch_trt1",
+       "id": "tmdb_62070",
       "type": "tv",
-      "name": "TRT 1 HD",
+      "name": "Star Plus"
       "poster": "https://img.logo.com/trt1.png",
       "description": "Canlı TV Yayını",
       "streams": [
@@ -26,4 +26,5 @@
       ]
     }
   ]
+
 }
