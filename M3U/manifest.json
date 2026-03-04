@@ -1,6 +1,6 @@
 {
-  "id": "nuvio-test-v5",
-  "version": "1.0.0",
+  "id": "nuvio4",
+  "version": "007",
   "name": "M3U",
   "logo": "https://st5.depositphotos.com/1041725/67731/v/380/depositphotos_677319750-stock-illustration-ararat-mountain-illustration-vector-white.jpg",
   "resources": ["catalog", "meta", "stream"],
@@ -22,6 +22,7 @@
     }
   ]
 }
+
 
 
 
