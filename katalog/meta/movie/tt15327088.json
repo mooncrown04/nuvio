@@ -1,14 +1,14 @@
 {
-  "meta": [{
-      "id": "tt15327088",
-      "type": "movie",
-      "name": "Society of the Snow",
-      "poster": "https://image.tmdb.org/t/p/w500/279y9Yp91Xvwiq9vL77I9BLpNNt.jpg",
-      "description": "Netflix Orijinal Yapımı"
-    }
-  ]
+  "meta": {
+    "id": "tt15327088",
+    "type": "movie",
+    "name": "Society of the Snow",
+    "poster": "https://image.tmdb.org/t/p/w500/d5N0BbxSznzdI0W9Y6ewh7YhdvM.jpg",
+    "description": "Çöl gezegeni Dune'a hoş geldiniz."
+  }
 
 }
+
 
 
 
