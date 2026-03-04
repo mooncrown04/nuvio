@@ -3,10 +3,16 @@
     {
       "name": "NUVIO - 1",
       "title": "STAR TV HD \n1080p | Ana Sunucu",      
-      "externalUrl": "https://live.artidijitalmedya.com/artidijital_ciftcitv/ciftcitv/playlist.m3u8",
+      "externalUrl": "https://live.artidijitalmedya.com/artidijital_ciftcitv/ciftcitv/playlist.m3u8",      
       "behaviorHints": {
         "notClickable": false,
-        "bingeGroup": "star-hd"
+        "bingeGroup": "star-hd",
+            "proxyHeaders": {
+      "request": {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Referer": "https://canlitv.com/"
+      }
+    }
       }
     },
     {
@@ -20,5 +26,6 @@
     }
   ]
 }
+
 
 
