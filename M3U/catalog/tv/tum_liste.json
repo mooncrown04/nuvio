@@ -4,6 +4,26 @@
       "id": "tmdb_62070",
       "type": "tv",
       "name": "Star Plus"
+    },
+    {
+      "id": "tmdb_trt1",
+      "type": "tv",
+      "name": "TRT 1 HD"
+    },
+    {
+      "id": "tmdb_atv",
+      "type": "tv",
+      "name": "ATV"
+    },
+    {
+      "id": "tmdb_kanald",
+      "type": "tv",
+      "name": "Kanal D"
+    },
+    {
+      "id": "tmdb_star",
+      "type": "tv",
+      "name": "Star TV"
     }
   ]
 }
