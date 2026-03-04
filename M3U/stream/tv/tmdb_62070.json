@@ -1,0 +1,9 @@
+{
+  "streams": [
+    {
+      "name": "CANLI",
+      "title": "HD Yayın",
+      "url": "http://senin-yayin-linkin.m3u8"
+    }
+  ]
+}
