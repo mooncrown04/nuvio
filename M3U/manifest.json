@@ -1,0 +1,15 @@
+{
+  "id": "benim.m3u.eklentim",
+  "version": "1.0.0",
+  "name": "M3U TV & Film",
+  "resources": ["catalog"],
+  "types": ["movie", "tv"],
+  "idPrefixes": ["ch", "tt"],
+  "catalogs": [
+    {
+      "id": "tum_liste",
+      "type": "tv",
+      "name": "Canlı Yayınlar"
+    }
+  ]
+}
