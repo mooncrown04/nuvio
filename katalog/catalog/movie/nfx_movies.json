@@ -3,13 +3,8 @@
     {
       "id": "tmdb_438631",
       "type": "movie",
-      "name": "Dune"
-    },
-    {
-      "id": "tmdb_824522",
-      "type": "movie",
-      "name": "Society of the Snow"
+      "name": "Dune",
+      "poster": "https://image.tmdb.org/t/p/w500/d5N0BbxSznzdI0W9Y6ewh7YhdvM.jpg"
     }
   ]
 }
-
