@@ -5,12 +5,18 @@
   "resources": ["catalog", "stream"],
   "types": ["movie", "tv"],
   "idPrefixes": ["tmdb", "tt"],
+  
   "catalogs": [
     {
       "id": "tum_liste",
       "type": "tv",
-      "name": "Favori Kanallarım"
+      "name": "Favori Kanallarım",
+      "extra": [
+      { "name": "search", "isRequired": false },
+      { "name": "genre", "isRequired": false }
+    ]
     }
   ]
 }
+
 
