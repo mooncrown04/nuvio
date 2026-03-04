@@ -1,0 +1,10 @@
+{
+  "meta": {
+    "id": "tv_trt1",
+    "type": "tv",
+    "name": "TRT 1",
+    "poster": "https://picon.pics/TR/Ulusal/Trt1.png",
+    "background": "https://picon.pics/TR/Ulusal/Trt1.png",
+    "description": "TRT 1 Canlı Yayın Akışı"
+  }
+}
