@@ -3,13 +3,18 @@
     "id": "tmdb_trt1",
     "type": "tv",
     "name": "TRT 1 HD",
-    "poster": "https://upload.wikimedia.org/wikipedia/commons/b/b1/TRT_1_logo_2021.png",
-    "background": "https://image.tmdb.org/t/p/original/m8SRE7uL8rIe1n9yXU2s4u06F.jpg",
-    "logo": "https://upload.wikimedia.org/wikipedia/commons/b/b1/TRT_1_logo_2021.png",
+    "poster": "https://i.ibb.co/hf2mSz5/kanal-d.png",
     "trailers": [
       {
         "source": "Mzw2ttJD2qQ",
         "type": "Trailer"
+      }
+    ],
+    "videos": [
+      {
+        "id": "tmdb_trt1",
+        "title": "TRT 1 Canlı",
+        "released": "2024-01-01T00:00:00.000Z"
       }
     ]
   }
