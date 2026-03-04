@@ -1,14 +1,15 @@
 {
   "metas": [
     {
-      "id": "tmdb:438631",
+      "id": "tmdb_438631",
       "type": "movie",
       "name": "Dune"
     },
     {
-      "id": "tmdb:824522",
+      "id": "tmdb_824522",
       "type": "movie",
       "name": "Society of the Snow"
     }
   ]
 }
+
