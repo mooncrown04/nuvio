@@ -1,17 +1,16 @@
 {
   "metas": [
     {
-      "id": "tt15327088",
+      "id": "tt6718170",
       "type": "movie",
-      "name": "Society of the Snow",
-      "poster": "https://image.tmdb.org/t/p/w500/279y9Yp91Xvwiq9vL77I9BLpNNt.jpg",
-      "description": "Netflix Orijinal Yapımı"
-    },
-    {
-      "id": "tt1160419",
-      "type": "movie",
-      "name": "Dune",
-      "poster": "https://image.tmdb.org/t/p/w500/d5N0BbxSznzdI0W9Y6ewh7YhdvM.jpg"
+      "name": "Infinity War",
+      "poster": "https://image.tmdb.org/t/p/w500/7WsyChQZ3ZBU02pXBs9Ue0aLZHG.jpg",
+      "streams": [
+        {
+          "title": "1080p İzle",
+          "url": "http://139.162.182.79/live/test/index.m3u8"
+        }
+      ]
     }
   ]
 }
