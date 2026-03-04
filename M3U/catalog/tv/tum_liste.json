@@ -15,21 +15,37 @@
   "description": "Türkiye'nin ilk ulusal televizyon kanalı. Canlı yayınlar, diziler ve haberler.",
   "genres": ["Genel", "Haber", "Dizi"]
 },
-    {
+ {
       "id": "tmdb_atv",
       "type": "tv",
-      "name": "ATV"
+      "name": "ATV",
+      "poster": "https://upload.wikimedia.org/wikipedia/commons/2/2f/Atv_logo.png",
+      "background": "https://image.tmdb.org/t/p/original/m638K19969vNIdvL5l6vUsh6pID.jpg",
+      "logo": "https://upload.wikimedia.org/wikipedia/commons/2/2f/Atv_logo.png",
+      "description": "Türkiye'nin en çok izlenen kanallarından biri. Popüler diziler ve sevilen programların adresi.",
+      "genres": ["Genel", "Dizi", "Eğlence"]
     },
     {
       "id": "tmdb_kanald",
       "type": "tv",
-      "name": "Kanal D"
+      "name": "Kanal D",
+      "poster": "https://upload.wikimedia.org/wikipedia/commons/thumb/4/40/Kanal_D_logo.svg/1200px-Kanal_D_logo.svg.png",
+      "background": "https://image.tmdb.org/t/p/original/7Xy9T7mE9x7P087Xp7N2eC6z08R.jpg",
+      "logo": "https://upload.wikimedia.org/wikipedia/commons/thumb/4/40/Kanal_D_logo.svg/1200px-Kanal_D_logo.svg.png",
+      "description": "Efsane dizilerin ve kaliteli yapımların buluşma noktası.",
+      "genres": ["Genel", "Dizi", "Haber"]
     },
     {
       "id": "tmdb_star",
       "type": "tv",
-      "name": "Star TV"
+      "name": "Star TV",
+      "poster": "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c2/Star_TV_logo.svg/1024px-Star_TV_logo.svg.png",
+      "background": "https://image.tmdb.org/t/p/original/nS0M3n2yX06z3v3P087Xp7N2eC6z.jpg",
+      "logo": "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c2/Star_TV_logo.svg/1024px-Star_TV_logo.svg.png",
+      "description": "Renkli içeriği ve iddialı dizileriyle Türkiye'nin ilk özel televizyonu.",
+      "genres": ["Genel", "Dizi", "Eğlence"]
     }
   ]
 }
+
 
