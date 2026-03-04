@@ -2,9 +2,9 @@
   "id": "MoOnCrOwN m3u",
   "version": "35",
   "name": "M3U TV & Film",
-  "resources": ["catalog"],
+  "resources": ["catalog", "stream"],
   "types": ["movie", "tv"],
-  "idPrefixes": ["ch", "tt"],
+  "idPrefixes": ["tt", "tv", "ch"],
   "catalogs": [
     {
       "id": "tum_liste",
@@ -14,3 +14,4 @@
   ]
 
 }
+
