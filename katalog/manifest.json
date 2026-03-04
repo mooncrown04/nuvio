@@ -4,7 +4,7 @@
   "name": "Streaming & Live TV",
   "description": "Favori platformların ve Canlı TV kanalları!",
   "logo": "https://www.stremio.com/static/images/stremio-logo.png",
-  "resources": ["catalog", "meta", "stream"],
+  "resources": ["catalog"],
   "types": ["movie", "series", "tv"],
   "idPrefixes": ["tt", "tv"],
   "catalogs": [
