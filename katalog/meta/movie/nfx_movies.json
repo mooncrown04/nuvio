@@ -11,7 +11,9 @@
       "id": "tt1160419",
       "type": "movie",
       "name": "Dune",
-      "poster": "https://image.tmdb.org/t/p/w500/d5N0BbxSznzdI0W9Y6ewh7YhdvM.jpg"
+      "poster": "https://image.tmdb.org/t/p/w500/d5N0BbxSznzdI0W9Y6ewh7YhdvM.jpg",
+      "description": "Netflix Orijinal Yapımı"
     }
   ]
+
 }
