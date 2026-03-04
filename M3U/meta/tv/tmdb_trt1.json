@@ -3,6 +3,18 @@
     "id": "tmdb_trt1",
     "type": "tv",
     "name": "TRT 1 HD",
-    "trailers": [{ "source": "Z1jcPlGXnMo", "type": "Trailer" }]
+    "poster": "https://feo.kablowebtv.com/resize/168A635D265A4328C2883FB4CD8FF/0/0/Vod/HLS/7d58e86c-d38e-4ef5-8ee0-fda0a7e65914.png",
+    "background": "https://picon.pics/TR/Ulusal/Startv.png",
+    "logo": "https://i.imgur.com/Dlsm9XP.png",
+    "description": "Türkiye'nin ilk ulusal televizyon kanalı. Canlı yayınlar, diziler ve haberler.",
+    "genres": ["Genel", "Haber", "Dizi"],
+    "releaseInfo": "LIVE",
+    "runtime": "Canlı Yayın",
+    "trailers": [
+      {
+        "source": "Z1jcPlGXnMo",
+        "type": "Trailer"
+      }
+    ]
   }
 }
