@@ -16,17 +16,31 @@
     }
       }
     },
+    
     {
       "name": "NUVIO - 2",
       "title": "STAR TV HD \n720p | Yedek Sunucu",
       "url": "https://live.artidijitalmedya.com/artidijital_ciftcitv/ciftcitv/playlist.m3u8",
       "behaviorHints": {
         "notClickable": false,
-        "bingeGroup": "star-hd"
+        "bingeGroup": "star-hd",
+        "proxyHeaders": {
+          "request": {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Referer": "https://www.atv.com.tr/"
+          }
+        }
       }
+    },
+    {
+      "name": "VLC / MX PLAYER",
+      "title": "Dış Oynatıcıda Aç \n(Eğer yayın açılmazsa tıkla)",
+      "externalUrl": "https://live.artidijitalmedya.com/artidijital_ciftcitv/ciftcitv/playlist.m3u8"
+    }
     }
   ]
 }
+
 
 
 
