@@ -4,7 +4,7 @@
       "id": "tv_trt1",
       "type": "tv",
       "name": "TRT 1",
-      "poster": "https://upload.wikimedia.org/wikipedia/commons/thumb/1/13/TRT_1_logo.svg/512px-TRT_1_logo.svg.png",
+      "poster": "https://picon.pics/TR/Ulusal/Trt1.png",
       "description": "TRT 1 Canlı Yayın"
     },
     {
@@ -15,4 +15,5 @@
       "description": "ATV Canlı Yayın"
     }
   ]
+
 }
