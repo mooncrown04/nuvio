@@ -7,9 +7,10 @@
   "idPrefixes": ["tmdb", "tt"],
   "catalogs": [
     {
-      "id": "benim_listem",
+      "id": "tum_liste",
       "type": "tv",
       "name": "Favori Kanallarım"
     }
   ]
 }
+
