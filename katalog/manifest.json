@@ -1,9 +1,9 @@
 {
   "id": "pw.ers.netflix-catalog",
-  "version": "1.1.1",
-  "name": "Streaming & Live TV",
-  "description": "Favori platformların ve Canlı TV kanalları!",
-  "logo": "https://www.stremio.com/static/images/stremio-logo.png",
+  "version": "04",
+  "name": "MoOnCrOwN",
+  "description": "MoOnCrOwN Canlı TV-Film-Dizi kanalları!",
+  "logo": "https://st5.depositphotos.com/1041725/67731/v/380/depositphotos_677319750-stock-illustration-ararat-mountain-illustration-vector-white.jpg",
   "resources": ["catalog", "meta", "stream"],
   "types": ["movie", "series", "tv"],
   "idPrefixes": ["tt", "tv"],
