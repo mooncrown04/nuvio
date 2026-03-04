@@ -10,7 +10,7 @@
     {
       "id": "tum_liste",
       "type": "tv",
-      "name": "Favori Kanallarım",
+      "name": "Favori",
       "extra": [
       { "name": "search", "isRequired": false },
       { "name": "genre", "isRequired": false }
@@ -18,5 +18,6 @@
     }
   ]
 }
+
 
 
