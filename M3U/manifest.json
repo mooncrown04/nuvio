@@ -1,15 +1,15 @@
 {
-  "id": "senin.ozel.yayin.eklentim",
+  "id": "yeni",
   "version": "1.0.0",
-  "name": "Benim Stream Kanalım",
-  "resources": ["catalog", "stream"], 
-  "types": ["tv"],
-  "idPrefixes": ["InIPTV___"],
+  "name": "Benim Yayınlarım",
+  "resources": ["catalog", "stream"],
+  "types": ["movie", "tv"],
+  "idPrefixes": ["tmdb", "tt"],
   "catalogs": [
     {
-      "id": "hint_listesi",
+      "id": "benim_listem",
       "type": "tv",
-      "name": "Hintli Eklentiden Gelenler"
+      "name": "Favori Kanallarım"
     }
   ]
 }
