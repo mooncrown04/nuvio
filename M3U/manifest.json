@@ -11,13 +11,18 @@
       "id": "tum_liste",
       "type": "tv",
       "name": "Favori",
-      "extra": [
-      { "name": "search", "isRequired": false },
-      { "name": "genre", "isRequired": false }
-    ]
+  "extra": [
+        { "name": "search", "isRequired": false },
+        { 
+          "name": "genre", 
+          "isRequired": false, 
+          "options": ["Haber", "Spor", "Sinema", "Genel"] 
+        }
+      ]
     }
   ]
 }
+
 
 
 
