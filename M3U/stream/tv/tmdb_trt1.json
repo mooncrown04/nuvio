@@ -1,0 +1,13 @@
+{
+  "streams": [
+    {
+      "name": "NUVIO",
+      "title": "TRT 1 HD \n1080p | Kesintisiz",
+      "url": "http://139.162.182.79/live/test/index.m3u8",
+      "behaviorHints": {
+        "notClickable": false,
+        "bingeGroup": "trt-hd"
+      }
+    }
+  ]
+}
