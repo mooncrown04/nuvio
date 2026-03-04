@@ -1,9 +1,16 @@
 {
   "metas": [
-    {
+{
       "id": "tmdb_62070",
       "type": "tv",
-      "name": "Star Plus"
+      "name": "Star Plus",
+      "poster": "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c2/Star_TV_logo.svg/1024px-Star_TV_logo.svg.png",
+      "background": "https://image.tmdb.org/t/p/original/nS0M3n2yX06z3v3P087Xp7N2eC6z.jpg",
+      "logo": "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c2/Star_TV_logo.svg/1024px-Star_TV_logo.svg.png",
+      "description": "Star Plus canlı yayın ve özel içerikler.",
+      "genres": ["Eğlence", "Dizi"],
+      "releaseInfo": "LIVE",
+      "runtime": "Canlı Yayın"
     },
  {
   "id": "tmdb_trt1",
@@ -61,6 +68,7 @@
     }
   ]
 }
+
 
 
 
