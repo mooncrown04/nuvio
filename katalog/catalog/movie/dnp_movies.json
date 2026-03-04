@@ -1,0 +1,16 @@
+{
+  "metas": [
+    {
+      "id": "tt6723592",
+      "type": "movie",
+      "name": "Tenet",
+      "poster": "https://image.tmdb.org/t/p/w500/k68nPLpS71tXoB33m9MeyMNt5Z7.jpg"
+    },
+    {
+      "id": "tt0080684",
+      "type": "movie",
+      "name": "Star Wars: Episode V",
+      "poster": "https://image.tmdb.org/t/p/w500/7WsyChQZ3ZBU02pXBs9Ue0aLZHG.jpg"
+    }
+  ]
+}
