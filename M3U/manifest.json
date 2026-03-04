@@ -1,6 +1,6 @@
 {
-  "id": "benim.m3u.eklentim",
-  "version": "1.0.0",
+  "id": "MoOnCrOwN m3u",
+  "version": "35",
   "name": "M3U TV & Film",
   "resources": ["catalog"],
   "types": ["movie", "tv"],
@@ -12,4 +12,5 @@
       "name": "Canlı Yayınlar"
     }
   ]
+
 }
