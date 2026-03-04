@@ -1,21 +1,15 @@
 {
-  "id": "MoOnCrOwN m3u",
-  "version": "35",
-  "name": "Benim TV Listem",
-  "description": "Otomatik Bilgi Çeken TV Addon",
-  "resources": [
-    "catalog",
-    { "name": "meta", "types": ["tv"] },
-    { "name": "stream", "types": ["tv"] }
-  ],
+  "id": "senin.ozel.yayin.eklentim",
+  "version": "1.0.0",
+  "name": "Benim Stream Kanalım",
+  "resources": ["catalog", "stream"], 
   "types": ["tv"],
-  "idPrefixes": ["ch_"],
+  "idPrefixes": ["InIPTV___"],
   "catalogs": [
     {
-      "id": "canli_yayinlar",
+      "id": "hint_listesi",
       "type": "tv",
-      "name": "Canlı TV"
+      "name": "Hintli Eklentiden Gelenler"
     }
   ]
 }
-
