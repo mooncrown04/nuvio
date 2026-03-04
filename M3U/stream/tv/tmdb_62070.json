@@ -2,8 +2,7 @@
   "streams": [
     {
       "name": "NUVIO - 1",
-      "title": "STAR TV HD \n1080p | Ana Sunucu",
-      "url": "http://birinci-yayin-linki.m3u8",
+      "title": "STAR TV HD \n1080p | Ana Sunucu",      
       "externalUrl": "https://live.artidijitalmedya.com/artidijital_ciftcitv/ciftcitv/playlist.m3u8",
       "behaviorHints": {
         "notClickable": false,
@@ -21,4 +20,5 @@
     }
   ]
 }
+
 
