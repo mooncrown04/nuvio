@@ -1,5 +1,5 @@
 {
-  "id": "yeni",
+  "id": "yeni1",
   "version": "1.0.0",
   "name": "Benim Yayınlarım",
   "resources": ["catalog", "stream","meta"],
@@ -22,6 +22,7 @@
     }
   ]
 }
+
 
 
 
