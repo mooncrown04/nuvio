@@ -1,0 +1,10 @@
+{
+  "meta": {
+    "id": "tmdb_62070",
+    "name": "Star Plus",
+    "type": "tv",
+    "logo": "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c2/Star_TV_logo.svg/1024px-Star_TV_logo.svg.png",
+    "poster": "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c2/Star_TV_logo.svg/1024px-Star_TV_logo.svg.png",
+    "trailers": [{ "source": "Mzw2ttJD2qQ", "type": "Trailer" }]
+  }
+}
