@@ -1,0 +1,18 @@
+{
+  "metas": [
+    {
+      "id": "tv_trt1",
+      "type": "tv",
+      "name": "TRT 1",
+      "poster": "https://upload.wikimedia.org/wikipedia/commons/thumb/1/13/TRT_1_logo.svg/512px-TRT_1_logo.svg.png",
+      "description": "TRT 1 Canlı Yayın"
+    },
+    {
+      "id": "tv_atv",
+      "type": "tv",
+      "name": "ATV",
+      "poster": "https://upload.wikimedia.org/wikipedia/commons/2/2a/Atv_logo.png",
+      "description": "ATV Canlı Yayın"
+    }
+  ]
+}
