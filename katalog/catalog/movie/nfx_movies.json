@@ -1,14 +1,17 @@
 {
   "metas": [
     {
-      "id": "tmdb:438631",
+      "id": "tt15327088",
       "type": "movie",
-      "name": "Dune"
+      "name": "Society of the Snow",
+      "poster": "https://image.tmdb.org/t/p/w500/279y9Yp91Xvwiq9vL77I9BLpNNt.jpg",
+      "description": "Netflix Orijinal Yapımı"
     },
     {
-      "id": "tmdb:824522",
+      "id": "tt1160419",
       "type": "movie",
-      "name": "Society of the Snow"
+      "name": "Dune",
+      "poster": "https://image.tmdb.org/t/p/w500/d5N0BbxSznzdI0W9Y6ewh7YhdvM.jpg"
     }
   ]
 }
