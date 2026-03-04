@@ -1,8 +1,14 @@
 {
   "streams": [
     {
-      "title": "1080p Türkçe",
-      "url": "https://ornek-video-siten.com/film.mp4"
+      "name": "SERVER 1",
+      "title": "1080p - Türkçe Dublaj",
+      "url": "https://site.com/dublaj.mp4"
+    },
+    {
+      "name": "SERVER 2",
+      "title": "1080p - Türkçe Altyazılı",
+      "url": "https://site.com/altyazi.mp4"
     }
   ]
 }
