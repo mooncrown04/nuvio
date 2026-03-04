@@ -1,17 +1,21 @@
 {
   "id": "MoOnCrOwN m3u",
   "version": "35",
-  "name": "M3U TV & Film",
-  "resources": ["catalog", "stream"],
-  "types": ["movie", "tv"],
-  "idPrefixes": ["tt", "tv", "ch"],
+  "name": "Benim TV Listem",
+  "description": "Otomatik Bilgi Çeken TV Addon",
+  "resources": [
+    "catalog",
+    { "name": "meta", "types": ["tv"] },
+    { "name": "stream", "types": ["tv"] }
+  ],
+  "types": ["tv"],
+  "idPrefixes": ["ch_"],
   "catalogs": [
     {
-      "id": "tum_liste",
+      "id": "canli_yayinlar",
       "type": "tv",
-      "name": "Canlı Yayınlar"
+      "name": "Canlı TV"
     }
   ]
-
 }
 
