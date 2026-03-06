@@ -39,7 +39,7 @@
 	  {
       "id": "sinemacx",
       "name": "SinemaCx",
-      "description": "Türkçe film, dizi ve anime - 5000+ HD içerik, Türkçe altyazılı, anime arşivi",
+      "description": "SineWix - Ücretsiz Film, Dizi ve Anime İzleme Uygulaması 5000+ HD İçerik, Türkçe Altyazılı, Otaku Dostu Anime Arşivi, Premium Kalite Yabancı Yapımlar",
       "version": "1.0.0",
       "author": "mooncrown",
       "supportedTypes": ["movie", "tv"],
@@ -53,14 +53,14 @@
 	  {
       "id": "diziyou",
       "name": "DiziYou",
-      "description": "En yeni dizileri güvenli ve hızlı şekilde sunar.",
+      "description": "Diziyou en kaliteli Türkçe dublaj ve altyazılı yabancı dizi izleme sitesidir.",
       "version": "1.0.4",
       "author": "mooncrown",
       "supportedTypes": ["tv"],
       "filename": "eklentiler/diziyou.js",
       "enabled": true,
       "formats": ["m3u8"],
-      "logo": "https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://dizipal1206.com&size=128",
+      "logo": "https://www.google.com/s2/favicons?domain=www.diziyou.co&sz=%size%",
       "contentLanguage": ["tr"]
     }
 	 , 
