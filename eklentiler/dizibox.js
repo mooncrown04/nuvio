@@ -26,15 +26,10 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
             .then(function(res) { return res.text(); })
             .then(function(html) {
                 var $ = cheerio.load(html);
-                
-                // 1. ADIM: Arama sonucundan ana dizi sayfasını bul
-                var firstLink = $('article.detailed-article a').first().attr('href') || 
-                               $('.post-title a').first().attr('href');
+                var firstLink = $('article.detailed-article a').first().attr('href') || $('.post-title a').first().attr('href');
 
                 if (!firstLink) throw new Error("Dizi bulunamadı");
-
-                // 2. ADIM: Bölüm sayfasını bul (DiziBox bazen URL'ye '-izle-2' ekler)
-                // Bu yüzden doğrudan URL tahmin etmek yerine dizi sayfasına gidip bölümü oradan seçiyoruz
+                
                 console.log('[DiziBox] Dizi Sayfası:', firstLink);
                 return fetch(firstLink, { headers: HEADERS });
             })
@@ -42,65 +37,63 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
             .then(function(diziHtml) {
                 var $ = cheerio.load(diziHtml);
                 var targetEpUrl = '';
+                
+                // Dizi slug'ını al (Örn: breaking-bad-izle-2)
+                var diziSlug = diziHtml.match(/postid-(\d+)/) ? diziHtml.match(/postid-(\d+)/)[1] : ""; 
 
-                // Sayfa içindeki tüm linklerde Sezon ve Bölüm numarasını ara
+                // Hatalı eşleşmeyi önlemek için linkleri daha sıkı kontrol et
                 $('a').each(function() {
                     var href = $(this).attr('href') || '';
-                    var text = $(this).text().toLowerCase();
-                    if (href.includes(seasonNum + '-sezon') && href.includes(episodeNum + '-bolum')) {
+                    // Link hem sezonu, hem bölümü, hem de dizinin kendi adını içermeli
+                    if (href.includes(seasonNum + '-sezon') && 
+                        href.includes(episodeNum + '-bolum') && 
+                        href.indexOf('/diziler/') !== -1) {
+                        
                         targetEpUrl = href;
-                        return false; // Döngüden çık
+                        return false; 
                     }
                 });
 
-                if (!targetEpUrl) throw new Error("Bölüm linki sayfa içinde bulunamadı");
+                if (!targetEpUrl) throw new Error("Bölüm linki bulunamadı");
                 
-                console.log('[DiziBox] Gerçek Bölüm Sayfası:', targetEpUrl);
+                console.log('[DiziBox] Bölüm Sayfası:', targetEpUrl);
                 return fetch(targetEpUrl, { headers: HEADERS });
             })
             .then(function(res) { return res.text(); })
             .then(function(epHtml) {
                 var $ = cheerio.load(epHtml);
-                
-                // 3. ADIM: Iframe Seçicilerini Genişletiyoruz
-                var iframeUrl = $('#video-area iframe').attr('src') || 
-                                $('iframe[src*="king"]').attr('src') || 
-                                $('iframe[src*="moly"]').attr('src') ||
-                                $('.video-content iframe').attr('src');
-
-                if (!iframeUrl) throw new Error("Video oynatıcı bulunamadı");
-                if (iframeUrl.startsWith('//')) iframeUrl = 'https:' + iframeUrl;
-
-                console.log('[DiziBox] Iframe Çözülüyor:', iframeUrl);
-                return fetch(iframeUrl, { headers: { 'Referer': BASE_URL + '/' } });
-            })
-            .then(function(res) { return res.text(); })
-            .then(function(playerHtml) {
                 var streams = [];
                 
-                // M3U8 Regex (Dizipal'deki çalışan mantık)
-                var m3u8Match = playerHtml.match(/file\s*:\s*["']([^"']+\.m3u8[^"']*)["']/i);
-                
-                if (!m3u8Match) {
-                    // Alternatif: unescape edilmiş m3u8 ara
-                    var decoded = decodeURIComponent(playerHtml);
-                    m3u8Match = decoded.match(/file\s*:\s*["']([^"']+\.m3u8[^"']*)["']/i);
-                }
+                // Iframe bulma mantığını genişlet (Data-src desteği dahil)
+                var iframeUrl = $('#video-area iframe').attr('src') || 
+                                $('#video-area iframe').attr('data-src') ||
+                                $('iframe[src*="king"]').attr('src') || 
+                                $('iframe[src*="moly"]').attr('src');
 
-                if (m3u8Match) {
-                    streams.push({
-                        name: "⌜ DiziBox ⌟ | King Sunucu",
-                        url: m3u8Match[1],
-                        quality: "1080p",
-                        headers: { 
-                            'Referer': BASE_URL + '/',
-                            'User-Agent': HEADERS['User-Agent']
-                        },
-                        provider: "dizibox"
+                if (!iframeUrl) throw new Error("Oynatıcı bulunamadı");
+                if (iframeUrl.startsWith('//')) iframeUrl = 'https:' + iframeUrl;
+
+                console.log('[DiziBox] Iframe:', iframeUrl);
+                return fetch(iframeUrl, { headers: { 'Referer': BASE_URL + '/' } })
+                    .then(function(r) { return r.text(); })
+                    .then(function(playerHtml) {
+                        // m3u8 linkini ayıkla
+                        var m3u8Match = playerHtml.match(/file\s*:\s*["']([^"']+\.m3u8[^"']*)["']/i);
+                        
+                        if (m3u8Match) {
+                            streams.push({
+                                name: "⌜ DiziBox ⌟ | HD Sunucu",
+                                url: m3u8Match[1],
+                                quality: "1080p",
+                                headers: { 
+                                    'Referer': iframeUrl,
+                                    'User-Agent': HEADERS['User-Agent']
+                                },
+                                provider: "dizibox"
+                            });
+                        }
+                        resolve(streams);
                     });
-                }
-
-                resolve(streams);
             })
             .catch(function(err) {
                 console.log('[DiziBox] Hata:', err.message);
