@@ -2,92 +2,91 @@ var cheerio = require("cheerio-without-node-native");
 
 const BASE_URL = 'https://www.dizibox.live';
 
+// En güncel ve çalışan header seti
 const HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
     'Referer': BASE_URL + '/',
-    'Accept-Language': 'tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7'
+    'Accept-Language': 'tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7',
+    'Cookie': 'LockUser=true; isTrustedUser=true; dbxu=1743289650198' // DiziBox için zorunlu çerez
 };
 
 function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
     return new Promise(function(resolve, reject) {
         
-        // DiziBox genellikle filmleri barındırmaz, ancak hata almamak için kontrolü esnetiyoruz
-        var tmdbType = mediaType === 'movie' ? 'movie' : 'tv';
-        var tmdbUrl = 'https://api.themoviedb.org/3/' + tmdbType + '/' + tmdbId + 
-            '?language=tr-TR&api_key=4ef0d7355d9ffb5151e987764708ce96';
+        // ÖNEMLİ: DiziBox'ta film yoktur. Eğer film istenirse direkt boş dön.
+        if (mediaType === 'movie') {
+            console.log('[DiziBox] Sadece diziler desteklenmektedir. Film sorgusu iptal edildi.');
+            return resolve([]);
+        }
+
+        // 1. TMDB Bilgilerini Al (Sadece TV için)
+        var tmdbUrl = 'https://api.themoviedb.org/3/tv/' + tmdbId + '?language=tr-TR&api_key=4ef0d7355d9ffb5151e987764708ce96';
 
         fetch(tmdbUrl)
             .then(function(res) { return res.json(); })
             .then(function(data) {
-                // Sitede daha iyi sonuç bulmak için hem Türkçe hem Orijinal ismi deneyeceğiz
-                var title = data.name || data.title || '';
-                var originalTitle = data.original_name || data.original_title || '';
-                
-                // Arama sorgusu (DiziBox orijinal isimleri daha iyi anlar)
-                var query = originalTitle || title;
-                console.log('[DiziBox] Aranıyor:', query);
+                var query = data.original_name || data.name || '';
+                console.log('[DiziBox] Dizi Aranıyor:', query);
 
+                // Arama sayfasına git
                 return fetch(BASE_URL + '/?s=' + encodeURIComponent(query), { headers: HEADERS });
             })
             .then(function(res) { 
-                if (!res.ok) throw new Error('Arama isteği başarısız');
+                if (!res.ok) throw new Error('DiziBox arama motoruna erişilemedi (Status: ' + res.status + ')');
                 return res.text(); 
             })
             .then(function(html) {
                 var $ = cheerio.load(html);
                 
-                // Seçiciyi genişletiyoruz: Hem makale içindeki hem başlıktaki linkler
+                // Dizi ana sayfasının linkini bul
                 var firstLink = $('article.detailed-article a').first().attr('href') || 
                                $('.post-title a').first().attr('href');
 
                 if (!firstLink) {
-                    console.log('[DiziBox] Sitede sonuç bulunamadı.');
+                    console.log('[DiziBox] Bu isimde bir dizi bulunamadı.');
                     return resolve([]);
                 }
 
-                var targetUrl = firstLink;
-
-                // Sadece TV/Dizi ise bölüm yolunu ekle
-                if (mediaType === 'tv' && seasonNum && episodeNum) {
-                    targetUrl = firstLink.replace(/\/$/, "") + '-' + seasonNum + '-sezon-' + episodeNum + '-bolum-izle/';
-                }
-
-                console.log('[DiziBox] Hedef Sayfa:', targetUrl);
-                return fetch(targetUrl, { headers: HEADERS });
+                // 2. Bölüm URL'sini oluştur
+                // Örnek: https://www.dizibox.live/dizi/breaking-bad/ -> .../breaking-bad-1-sezon-1-bolum-izle/
+                var cleanPath = firstLink.replace(/\/$/, "");
+                var epUrl = cleanPath + '-' + seasonNum + '-sezon-' + episodeNum + '-bolum-izle/';
+                
+                console.log('[DiziBox] Bölüm Sayfasına Gidiliyor:', epUrl);
+                return fetch(epUrl, { headers: HEADERS });
             })
             .then(function(res) { 
-                if (!res.ok) throw new Error('İçerik sayfası yüklenemedi');
+                if (!res.ok) throw new Error('Bölüm sayfası bulunamadı.');
                 return res.text(); 
             })
             .then(function(pageHtml) {
                 var $ = cheerio.load(pageHtml);
                 var streams = [];
 
-                // Player iframe'ini bulma (Dizipal'deki gibi çoklu kontrol)
-                var playerIframe = $('#video-area iframe').attr('src') || 
-                                  $('.video-toolbar option').first().val();
+                // Video iframe'ini ayıkla
+                var playerIframe = $('#video-area iframe').attr('src');
 
                 if (!playerIframe) {
-                    console.log('[DiziBox] Player bulunamadı.');
+                    console.log('[DiziBox] Video oynatıcı (iframe) bulunamadı.');
                     return resolve([]);
                 }
 
                 if (playerIframe.startsWith('//')) playerIframe = 'https:' + playerIframe;
 
-                // Iframe'in içine girip gerçek m3u8/mp4 linkini ayıkla
+                // 3. Gerçek stream linkini bulmak için iframe'e git
                 return fetch(playerIframe, { headers: { 'Referer': BASE_URL + '/' } })
                     .then(function(r) { return r.text(); })
                     .then(function(playerSource) {
-                        // Regex ile link ayıklama
+                        
+                        // m3u8 veya mp4 regex araması (Dizipal tarzı)
                         var fileMatch = playerSource.match(/file\s*:\s*["']([^"']+\.m3u8[^"']*)["']/i) || 
-                                        playerSource.match(/["']?file["']?\s*[:=]\s*["']([^"']+)["']/i);
+                                        playerSource.match(/file\s*:\s*["']([^"']+\.mp4[^"']*)["']/i);
 
                         if (fileMatch) {
-                            var streamUrl = fileMatch[1];
                             streams.push({
-                                name: "DiziBox - " + (streamUrl.includes('m3u8') ? "HLS" : "MP4"),
-                                url: streamUrl,
+                                name: "DiziBox - " + (fileMatch[1].includes('m3u8') ? "HLS" : "MP4"),
+                                url: fileMatch[1],
                                 quality: "1080p",
                                 headers: { 
                                     'Referer': playerIframe,
@@ -100,7 +99,7 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                     });
             })
             .catch(function(err) {
-                console.log('[DiziBox] İşlem Sırasında Hata:', err.message);
+                console.log('[DiziBox] Hata:', err.message);
                 resolve([]);
             });
     });
