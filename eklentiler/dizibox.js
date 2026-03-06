@@ -1,55 +1,59 @@
 const cheerio = require("cheerio-without-node-native");
+const CryptoJS = require("crypto-js");
 
 const HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
 };
 
 async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
     try {
-        // 1. TMDB'den dizi adını al ve DiziBox URL'ini oluştur
         const tmdbRes = await fetch(`https://api.themoviedb.org/3/tv/${tmdbId}?api_key=4ef0d7355d9ffb5151e987764708ce96`);
         const tmdbData = await tmdbRes.json();
-        
-        // Slug temizleme: "Breaking Bad" -> "breaking-bad"
-        const slug = (tmdbData.original_name || tmdbData.name)
-            .toLowerCase().trim()
-            .replace(/\s+/g, '-')
-            .replace(/[^\w-]+/g, '');
-
+        const slug = (tmdbData.original_name || tmdbData.name).toLowerCase().trim().replace(/\s+/g, '-').replace(/[^\w-]+/g, '');
         const epUrl = `https://www.dizibox.live/${slug}-${seasonNum}-sezon-${episodeNum}-bolum-hd-1-izle/`;
 
-        // 2. Ana sayfayı çek ve Player Iframe'ini bul
-        const mainRes = await fetch(epUrl, { headers: HEADERS });
-        const mainHtml = await mainRes.text();
-        const $ = cheerio.load(mainHtml);
-        
-        let playerIframe = $('div#video-area iframe').attr('src') || $('iframe[src*="player"]').attr('src');
-        
-        if (!playerIframe) return [];
-        playerIframe = playerIframe.startsWith('//') ? 'https:' + playerIframe : playerIframe;
+        const mainHtml = await (await fetch(epUrl, { headers: HEADERS })).text();
+        let playerUrl = cheerio.load(mainHtml)('div#video-area iframe').attr('src');
+        if (!playerUrl) return [];
+        playerUrl = playerUrl.startsWith('//') ? 'https:' + playerUrl : playerUrl;
 
-        // 3. Sheila ID'sini Yakala
-        // Dizibox artık King player üzerinden doğrudan Moly ID'sini (v parametresi) paslıyor.
-        const urlObj = new URL(playerIframe);
-        const vParam = urlObj.searchParams.get('v');
+        // --- KRİTİK ADIM: King sayfasının içine girmeye zorla ---
+        const kingRes = await fetch(playerUrl, { headers: { ...HEADERS, 'Referer': epUrl } });
+        const kingHtml = await kingRes.text();
 
-        // Eğer King player içindeysek, Moly embed linkini oluştur
-        // Not: King ID'si ile Sheila ID'si genellikle farklıdır ancak 
-        // King katmanı geçilemediğinde en son çalışan Sheila ID'sini (21703...) kullanmak
-        // veya King URL'ini doğrudan dönmek en sağlıklısıdır.
-        
-        let finalStreamUrl = playerIframe;
-        
-        // Eğer elinde çalışan bir Sheila ID'si varsa buraya maplenebilir.
-        // Ancak en garantisi, player'ın kendisini "MolyStream" adı altında dönmektir.
-        
+        // 1. İhtimal: Sayfada gizli bir m3u8 var mı? (Bazı King sürümlerinde açık gelir)
+        let m3u8 = kingHtml.match(/["'](https?:\/\/[^"']+\.m3u8[^"']*)["']/i)?.[1];
+
+        // 2. İhtimal: Sheila yönlendirmesini yakala ve onun içine gir
+        if (!m3u8) {
+            const sheilaMatch = kingHtml.match(/https?:\/\/dbx\.molystream\.org\/embed\/sheila\/[a-zA-Z0-9-]+/i);
+            if (sheilaMatch) {
+                const sheilaHtml = await (await fetch(sheilaMatch[0], { headers: { ...HEADERS, 'Referer': 'https://dbx.molystream.org/' } })).text();
+                
+                // Sheila'nın içinde atob() ile gizlenmiş linki ara
+                const b64Matches = sheilaHtml.match(/[a-zA-Z0-9+/=]{50,}/g) || [];
+                for (let b64 of b64Matches) {
+                    try {
+                        const decoded = Buffer.from(b64, 'base64').toString('utf-8');
+                        if (decoded.includes('.m3u8')) {
+                            m3u8 = decoded.match(/https?:\/\/[^"']+\.m3u8[^"']*/i)?.[0];
+                            if (m3u8) break;
+                        }
+                    } catch (e) {}
+                }
+            }
+        }
+
+        // 3. İhtimal: Arayüz her halükarda bir link görsün diye player'ı temizle
+        const finalLink = m3u8 || playerUrl;
+
         return [{
-            name: "DiziBox | MolyStream",
-            url: playerIframe, // Bu URL WebView içinde Referer ile canavar gibi çalışır
+            name: "DiziBox | " + (m3u8 ? "Direkt Link" : "Player"),
+            url: finalLink.replace(/\\/g, ''),
             quality: "1080p",
             headers: { 
-                'Referer': 'https://www.dizibox.live/',
+                'Referer': 'https://dbx.molystream.org/',
+                'Origin': 'https://dbx.molystream.org',
                 'User-Agent': HEADERS['User-Agent']
             }
         }];
