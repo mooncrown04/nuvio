@@ -12,10 +12,7 @@ const HEADERS = {
 function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
     return new Promise(function(resolve, reject) {
         
-        // DiziBox Sadece Dizi Destekler
-        if (mediaType === 'movie') {
-            return resolve([]);
-        }
+        if (mediaType === 'movie') return resolve([]);
 
         var tmdbUrl = 'https://api.themoviedb.org/3/tv/' + tmdbId + '?language=tr-TR&api_key=4ef0d7355d9ffb5151e987764708ce96';
 
@@ -29,41 +26,65 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
             .then(function(res) { return res.text(); })
             .then(function(html) {
                 var $ = cheerio.load(html);
-                var firstLink = $('article.detailed-article a').first().attr('href') || $('.post-title a').first().attr('href');
+                
+                // 1. ADIM: Arama sonucundan ana dizi sayfasını bul
+                var firstLink = $('article.detailed-article a').first().attr('href') || 
+                               $('.post-title a').first().attr('href');
 
                 if (!firstLink) throw new Error("Dizi bulunamadı");
 
-                // Bölüm linkini oluştur
-                var epUrl = firstLink.replace(/\/$/, "") + '-' + seasonNum + '-sezon-' + episodeNum + '-bolum-izle/';
-                console.log('[DiziBox] Hedef:', epUrl);
-                return fetch(epUrl, { headers: HEADERS });
+                // 2. ADIM: Bölüm sayfasını bul (DiziBox bazen URL'ye '-izle-2' ekler)
+                // Bu yüzden doğrudan URL tahmin etmek yerine dizi sayfasına gidip bölümü oradan seçiyoruz
+                console.log('[DiziBox] Dizi Sayfası:', firstLink);
+                return fetch(firstLink, { headers: HEADERS });
+            })
+            .then(function(res) { return res.text(); })
+            .then(function(diziHtml) {
+                var $ = cheerio.load(diziHtml);
+                var targetEpUrl = '';
+
+                // Sayfa içindeki tüm linklerde Sezon ve Bölüm numarasını ara
+                $('a').each(function() {
+                    var href = $(this).attr('href') || '';
+                    var text = $(this).text().toLowerCase();
+                    if (href.includes(seasonNum + '-sezon') && href.includes(episodeNum + '-bolum')) {
+                        targetEpUrl = href;
+                        return false; // Döngüden çık
+                    }
+                });
+
+                if (!targetEpUrl) throw new Error("Bölüm linki sayfa içinde bulunamadı");
+                
+                console.log('[DiziBox] Gerçek Bölüm Sayfası:', targetEpUrl);
+                return fetch(targetEpUrl, { headers: HEADERS });
             })
             .then(function(res) { return res.text(); })
             .then(function(epHtml) {
                 var $ = cheerio.load(epHtml);
-                var iframeUrl = $('#video-area iframe').attr('src');
+                
+                // 3. ADIM: Iframe Seçicilerini Genişletiyoruz
+                var iframeUrl = $('#video-area iframe').attr('src') || 
+                                $('iframe[src*="king"]').attr('src') || 
+                                $('iframe[src*="moly"]').attr('src') ||
+                                $('.video-content iframe').attr('src');
 
-                if (!iframeUrl) throw new Error("Iframe yok");
+                if (!iframeUrl) throw new Error("Video oynatıcı bulunamadı");
                 if (iframeUrl.startsWith('//')) iframeUrl = 'https:' + iframeUrl;
 
-                // Iframe'e git (King/Moly/Haydi vb.)
+                console.log('[DiziBox] Iframe Çözülüyor:', iframeUrl);
                 return fetch(iframeUrl, { headers: { 'Referer': BASE_URL + '/' } });
             })
             .then(function(res) { return res.text(); })
             .then(function(playerHtml) {
-                // Katman 2: Gizli m3u8 linkini ayıkla
                 var streams = [];
                 
-                // 1. Yöntem: Standart regex
+                // M3U8 Regex (Dizipal'deki çalışan mantık)
                 var m3u8Match = playerHtml.match(/file\s*:\s*["']([^"']+\.m3u8[^"']*)["']/i);
                 
-                // 2. Yöntem: Unescape/Base64 koruması varsa (DiziBox bazen yapar)
                 if (!m3u8Match) {
-                    var encoded = playerHtml.match(/unescape\(['"](.*?)['"]\)/);
-                    if (encoded) {
-                        var decoded = decodeURIComponent(encoded[1]);
-                        m3u8Match = decoded.match(/file\s*:\s*["']([^"']+\.m3u8[^"']*)["']/i);
-                    }
+                    // Alternatif: unescape edilmiş m3u8 ara
+                    var decoded = decodeURIComponent(playerHtml);
+                    m3u8Match = decoded.match(/file\s*:\s*["']([^"']+\.m3u8[^"']*)["']/i);
                 }
 
                 if (m3u8Match) {
@@ -82,7 +103,7 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                 resolve(streams);
             })
             .catch(function(err) {
-                console.log('[DiziBox] Durum:', err.message);
+                console.log('[DiziBox] Hata:', err.message);
                 resolve([]);
             });
     });
