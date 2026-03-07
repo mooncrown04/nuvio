@@ -21,12 +21,16 @@ var HEADERS = {
 
 function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
     return new Promise(function(resolve, reject) {
-        if (mediaType !== 'tv') return resolve([]);
+        if (mediaType !== 'tv') {
+            return resolve([]);
+        }
 
         var tmdbUrl = 'https://api.themoviedb.org/3/tv/' + tmdbId + '?api_key=4ef0d7355d9ffb5151e987764708ce96&language=tr-TR';
 
         fetch(tmdbUrl)
-            .then(function(res) { return res.json(); })
+            .then(function(res) {
+                return res.json();
+            })
             .then(function(data) {
                 var name = data.original_name || data.name;
                 var slug = name.toLowerCase().trim()
@@ -35,16 +39,16 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
 
                 var epUrl = BASE_URL + '/' + slug + '-' + seasonNum + '-sezon-' + episodeNum + '-bolum-hd-izle/';
                 
-                // Önce ana sayfa, sonra hedef sayfa (setTimeout YOK)
-                return fetchWithWarmup(epUrl);
+                // setTimeout YOK - direkt ana sayfa çek
+                return fetchHomePage(epUrl);
             })
-            .then(function(html) {
-                if (isBlocked(html)) {
-                    console.error('[DiziBox] Engel algılandı. Boyut:', html.length);
+            .then(function(result) {
+                if (result.blocked) {
+                    console.error('[DiziBox] Engel algılandı. Boyut:', result.size);
                     return resolve([]);
                 }
 
-                var streams = extractStreams(html);
+                var streams = extractStreams(result.html);
                 resolve(streams);
             })
             .catch(function(err) {
@@ -54,32 +58,55 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
     });
 }
 
-// setTimeout kullanmadan sıralı fetch
-function fetchWithWarmup(targetUrl) {
-    // 1. Ana sayfayı çek
-    return fetch(BASE_URL + '/', { headers: HEADERS })
-        .then(function(res) { return res.text(); })
-        .then(function(homeHtml) {
-            console.log('[DiziBox] Ana sayfa çekildi, boyut:', homeHtml.length);
-            
-            // 2. Hemen hedef sayfaya git (delay yok, QuickJS desteklemiyor)
-            return fetch(targetUrl, { 
-                headers: Object.assign({}, HEADERS, {
-                    'Referer': BASE_URL + '/',
-                    'Sec-Fetch-Site': 'same-origin'
-                })
-            });
-        })
-        .then(function(res) { return res.text(); });
+// Ana sayfa çek, sonra hedef sayfa (setTimeout YOK)
+function fetchHomePage(targetUrl) {
+    return fetch(BASE_URL + '/', {
+        headers: HEADERS,
+        method: 'GET'
+    }).then(function(homeRes) {
+        return homeRes.text();
+    }).then(function(homeHtml) {
+        console.log('[DiziBox] Ana sayfa OK, boyut:', homeHtml.length);
+        
+        // Hemen hedef sayfaya geç (bekleme yok)
+        return fetch(targetUrl, {
+            headers: Object.assign({}, HEADERS, {
+                'Referer': BASE_URL + '/',
+                'Sec-Fetch-Site': 'same-origin'
+            }),
+            method: 'GET'
+        });
+    }).then(function(targetRes) {
+        return targetRes.text();
+    }).then(function(targetHtml) {
+        return {
+            blocked: isBlocked(targetHtml),
+            html: targetHtml,
+            size: targetHtml.length
+        };
+    });
 }
 
 function isBlocked(html) {
-    return html.length < 280000 ||
-           html.indexOf('cf-browser-verification') !== -1 ||
-           html.indexOf('Checking your browser') !== -1 ||
-           html.indexOf('Just a moment') !== -1 ||
-           html.indexOf('cf-challenge') !== -1 ||
-           html.indexOf('__cf_bm') !== -1;
+    if (html.length < 280000) {
+        return true;
+    }
+    if (html.indexOf('cf-browser-verification') !== -1) {
+        return true;
+    }
+    if (html.indexOf('Checking your browser') !== -1) {
+        return true;
+    }
+    if (html.indexOf('Just a moment') !== -1) {
+        return true;
+    }
+    if (html.indexOf('cf-challenge') !== -1) {
+        return true;
+    }
+    if (html.indexOf('__cf_bm') !== -1) {
+        return true;
+    }
+    return false;
 }
 
 function extractStreams(html) {
@@ -87,9 +114,10 @@ function extractStreams(html) {
     var match = html.match(/video_id["']?\s*[:=]\s*["']?(\d+)["']?/i);
     
     if (match) {
+        var videoId = match[1];
         streams.push({
             name: '⌜ DiziBox ⌟ | King Player',
-            url: BASE_URL + '/player/king.php?wmode=opaque&v=' + match[1],
+            url: BASE_URL + '/player/king.php?wmode=opaque&v=' + videoId,
             quality: '1080p',
             headers: {
                 'Referer': BASE_URL + '/',
