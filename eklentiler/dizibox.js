@@ -1,77 +1,57 @@
-var VER = '1.0.6-PC_TEST'; 
+var VER = '1.2.1-PC_EMU';
+
+// Sistem yüklenir yüklenmez bir işaret bırakalım
+console.log('[Dizibox V' + VER + '] DOSYA SİSTEME YÜKLENDİ');
+
 var TMDB_KEY = '4ef0d7355d9ffb5151e987764708ce96';
 
-function findFirst(html, pattern) {
-    var regex = new RegExp(pattern, 'i');
-    var match = regex.exec(html);
-    return match ? match : null;
-}
-
 async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
-    console.log('[Dizibox V' + VER + '] --- TEST BAŞLADI ---');
+    console.log('[Dizibox V' + VER + '] getStreams tetiklendi! ID: ' + tmdbId);
     
-    if (mediaType !== 'tv') {
-        console.log('[Dizibox V' + VER + '] Tip dizi değil, iptal.');
-        return [];
-    }
-
     try {
-        // ADIM 1: TMDB Bağlantısı
-        console.log('[Dizibox V' + VER + '] 1. TMDB isteği gönderiliyor...');
-        const tmdbRes = await fetch('https://api.themoviedb.org/3/tv/' + tmdbId + '?api_key=' + TMDB_KEY + '&language=tr-TR');
-        const tmdbData = await tmdbRes.json();
-        const query = tmdbData.name || tmdbData.original_name;
-        console.log('[Dizibox V' + VER + '] 1. Başarılı. Dizi:', query);
+        if (mediaType !== 'tv') return [];
 
-        // ADIM 2: Arama Bağlantısı
-        var BASE_URL = 'https://www.dizibox.pw'; 
-        console.log('[Dizibox V' + VER + '] 2. Arama yapılıyor:', BASE_URL);
+        // Adım 1: TMDB Testi
+        const tmdbUrl = 'https://api.themoviedb.org/3/tv/' + tmdbId + '?api_key=' + TMDB_KEY + '&language=tr-TR';
+        console.log('[Dizibox V' + VER + '] TMDB isteği gidiyor...');
         
-        const searchRes = await fetch(BASE_URL + '/?s=' + encodeURIComponent(query));
-        if (!searchRes.ok) throw new Error('Site cevap vermedi: ' + searchRes.status);
+        const res = await fetch(tmdbUrl);
+        const data = await res.json();
+        const query = data.name || data.original_name;
         
-        const html = await searchRes.text();
-        console.log('[Dizibox V' + VER + '] 2. HTML boyutu:', html.length);
+        console.log('[Dizibox V' + VER + '] Dizi adı yakalandı: ' + query);
 
-        // ADIM 3: Link Ayıklama
-        const linkMatch = findFirst(html, 'href="(https?:\\/\\/[^"]+dizibox[^"]+)"[^>]*rel="bookmark"');
+        // Adım 2: Arama Testi (PC'de bazen .pw açılmazsa .live dene)
+        const searchUrl = 'https://www.dizibox.pw/?s=' + encodeURIComponent(query);
+        console.log('[Dizibox V' + VER + '] Siteye bağlanılıyor: ' + searchUrl);
+        
+        const sRes = await fetch(searchUrl);
+        const html = await sRes.text();
+        
+        // Link yakalama (En basit Regex)
+        const linkMatch = html.match(/href="(https?:\/\/www\.dizibox\.pw\/[^"]+)"[^>]*rel="bookmark"/i);
+        
         if (!linkMatch) {
-            console.log('[Dizibox V' + VER + '] !!! HATA: Arama sayfasında dizi linki bulunamadı.');
+            console.log('[Dizibox V' + VER + '] HATA: Arama sonuç sayfasında link bulunamadı.');
             return [];
         }
-        
+
         const epUrl = linkMatch[1].replace(/\/$/, '') + '-sezon-' + seasonNum + '-bolum-' + episodeNum + '-izle/';
-        console.log('[Dizibox V' + VER + '] 3. Bölüm URL oluştu:', epUrl);
+        console.log('[Dizibox V' + VER + '] Hedef Bölüm: ' + epUrl);
 
-        // ADIM 4: Iframe Taraması
-        const epRes = await fetch(epUrl);
-        const epHtml = await epRes.text();
-        
-        const streams = [];
-        const iframeRegex = /<iframe[^>]+src="([^"]+)"/gi;
-        var match;
+        return [{
+            name: '⌜ Dizibox V' + VER + ' ⌟',
+            url: epUrl, // Test amaçlı sayfa URL'sini dönüyoruz
+            quality: '1080p'
+        }];
 
-        while ((match = iframeRegex.exec(epHtml)) !== null) {
-            let src = match[1];
-            if (src.includes('vidmoly') || src.includes('player') || src.includes('moly')) {
-                streams.push({
-                    name: '⌜ Dizibox ⌟ | V' + VER,
-                    url: src.startsWith('//') ? 'https:' + src : src,
-                    quality: '1080p',
-                    headers: { 'Referer': BASE_URL + '/' }
-                });
-            }
-        }
-
-        console.log('[Dizibox V' + VER + '] İşlem bitti. Bulunan:', streams.length);
-        return streams;
-
-    } catch (err) {
-        console.log('[Dizibox V' + VER + '] !!! KRİTİK HATA:', err.message);
+    } catch (e) {
+        console.log('[Dizibox V' + VER + '] KRİTİK HATA: ' + e.message);
         return [];
     }
 }
 
+// Global Export
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = { getStreams };
 } else {
