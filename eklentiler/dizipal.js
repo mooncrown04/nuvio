@@ -353,3 +353,9 @@ if (typeof module !== 'undefined' && module.exports) {
 } else {
     global.getStreams = getStreams;
 }
+
+// Test kodu - mevcut bir pluginin içine ekle
+console.log('[TEST] typeof app:', typeof app);
+if (typeof app !== 'undefined') {
+    console.log('[TEST] app keys:', Object.keys(app));
+}
