@@ -1,5 +1,5 @@
 /**
- * Provider: DDizi (v41 - Referer Bypass)
+ * Provider: DDizi (v42 - Deep Referer)
  */
 function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
     var mainUrl = "https://www.ddizi.im";
@@ -18,7 +18,6 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                 body: "arama=" + encodeURIComponent(name)
             });
         }).then(function(res) { return res.text(); }).then(function(searchHtml) {
-            // Logundaki gibi "sahtekarlar-21-bolum-izle" tarzı linkleri yakala
             var regex = new RegExp('href="([^"]*' + episodeNum + '-(?:bolum|Bölüm)[^"]*)"', 'i');
             var match = searchHtml.match(regex);
             if (!match) return null;
@@ -28,29 +27,34 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
         }).then(function(res) { return res.text(); }).then(function(html) {
             if (!html) return null;
 
-            // Logunda gördüğümüz /player/oynat/ linkini bul
             var playerMatch = html.match(/\/player\/oynat\/[a-z0-9]+/i);
             if (!playerMatch) return null;
 
             var playerUrl = mainUrl + playerMatch[0];
+            // Player sayfasını çekiyoruz
             return fetch(playerUrl, { headers: { "User-Agent": userAgent, "Referer": mainUrl } });
-        }).then(function(res) { return res.text(); }).then(function(playerHtml) {
-            if (!playerHtml) return resolve([]);
+        }).then(function(res) {
+            // Player sayfasının gerçek URL'sini (redirect varsa onu) sakla
+            var finalPlayerUrl = res.url; 
+            return res.text().then(function(playerHtml) {
+                return { html: playerHtml, url: finalPlayerUrl };
+            });
+        }).then(function(result) {
+            if (!result || !result.html) return resolve([]);
 
-            // JWPlayer kaynak linkini bul (m3u8 veya mp4)
-            var fileMatch = playerHtml.match(/file:\s*["']([^"']+)["']/i);
+            var fileMatch = result.html.match(/file:\s*["']([^"']+)["']/i);
             if (!fileMatch) return resolve([]);
 
             var videoUrl = fileMatch[1];
             
-            // --- KRİTİK: 403 HATASINI ÖNLEYEN HEADERS ---
+            // --- KRİTİK DEĞİŞİKLİK: Referer artık tam player linki ---
             resolve([{
-                name: "DDizi - High Quality",
+                name: "DDizi - Direct",
                 url: videoUrl,
                 quality: "1080p",
                 headers: {
                     "User-Agent": userAgent,
-                    "Referer": mainUrl + "/", // Ana site referer olmalı
+                    "Referer": result.url, // Örn: https://www.ddizi.im/player/oynat/0fcb...
                     "Origin": mainUrl,
                     "Accept": "*/*"
                 }
