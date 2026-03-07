@@ -1,6 +1,5 @@
 /**
- * Provider: Dizigom
- * Mantık: Arama tabanlı URL tespiti ve Iframe/Moly ayıklama
+ * Provider: Dizigom (Debug Mode)
  */
 function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
     const BASE_URL = 'https://dizigom104.com';
@@ -10,51 +9,75 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
     };
 
     return new Promise(async (resolve) => {
-        if (mediaType !== 'tv') return resolve([]);
+        if (mediaType !== 'tv') {
+            console.log('[Dizigom] Hata: Sadece TV dizileri destekleniyor.');
+            return resolve([]);
+        }
 
         try {
-            // 1. TMDB'den ismi al ve temizle
+            console.log(`[Dizigom] İŞLEM BAŞLADI -> TMDB ID: ${tmdbId}, S:${seasonNum} E:${episodeNum}`);
+
+            // 1. TMDB Aşaması
             const tmdbRes = await fetch(`https://api.themoviedb.org/3/tv/${tmdbId}?api_key=4ef0d7355d9ffb5151e987764708ce96&language=tr-TR`);
             const tmdbData = await tmdbRes.json();
-            const query = (tmdbData.name || tmdbData.original_name).split(':')[0].trim();
+            const originalName = tmdbData.name || tmdbData.original_name;
             
-            console.log(`[Dizigom] Aranıyor: ${query}`);
+            // Aramayı bozabilecek ekleri temizle (Örn: "The Last of Us (2023)" -> "The Last of Us")
+            const cleanQuery = originalName.split(' (')[0].split(':')[0].trim();
+            console.log(`[Dizigom] TMDB'den Alınan İsim: "${originalName}" -> Sorgu: "${cleanQuery}"`);
 
-            // 2. Sitede arama yap (Doğru slug'ı bulmak için)
-            const searchRes = await fetch(`${BASE_URL}/?s=${encodeURIComponent(query)}`, { headers: HEADERS });
-            const searchHtml = await searchRes.text();
+            // 2. Arama Aşaması
+            const searchUrl = `${BASE_URL}/?s=${encodeURIComponent(cleanQuery)}`;
+            console.log(`[Dizigom] Arama Yapılıyor: ${searchUrl}`);
             
-            // Arama sonuçlarından ilk dizi linkini yakala
+            const searchRes = await fetch(searchUrl, { headers: HEADERS });
+            console.log(`[Dizigom] Arama Yanıt Kodu: ${searchRes.status}`);
+            
+            const searchHtml = await searchRes.text();
+            console.log(`[Dizigom] Arama Sayfa Boyutu: ${searchHtml.length} karakter`);
+
+            // Arama sonucunda dizi linkini bul (Regex'i daha esnek yaptık)
             const linkMatch = searchHtml.match(/href="(https:\/\/dizigom104\.com\/dizi\/[^"]+)"/i);
-            if (!linkMatch) throw new Error('Dizi bulunamadı');
+            
+            if (!linkMatch) {
+                console.log('[Dizigom] KRİTİK HATA: Arama sonuçlarında dizi linki bulunamadı!');
+                // Log amaçlı sayfanın küçük bir kısmını yazdırabilirsin (isteğe bağlı)
+                // console.log('[Dizigom] Sayfa İçeriği İlk 500: ' + searchHtml.substring(0, 500));
+                throw new Error('Dizi bulunamadı');
+            }
 
             const showUrl = linkMatch[1].replace(/\/$/, '');
-            const epUrl = `${showUrl}-${seasonNum}-sezon-${episodeNum}-bolum/`;
-            
-            console.log(`[Dizigom] Hedef URL: ${epUrl}`);
+            console.log(`[Dizigom] Dizi Sayfası Tespit Edildi: ${showUrl}`);
 
-            // 3. Bölüm sayfasını çek
+            // 3. Bölüm Sayfası Aşaması
+            const epUrl = `${showUrl}-${seasonNum}-sezon-${episodeNum}-bolum/`;
+            console.log(`[Dizigom] Bölüm Sayfasına Gidiliyor: ${epUrl}`);
+
             let epRes = await fetch(epUrl, { headers: HEADERS });
-            
-            // Eğer 404 ise HD1 varyasyonunu dene
+            console.log(`[Dizigom] Bölüm Yanıt Kodu: ${epRes.status}`);
+
             if (epRes.status === 404) {
-                console.log('[Dizigom] 404 Alındı, HD1 deneniyor...');
-                epRes = await fetch(`${epUrl.replace(/\/$/, '')}-hd1/`, { headers: HEADERS });
+                const altUrl = `${epUrl.replace(/\/$/, '')}-hd1/`;
+                console.log(`[Dizigom] 404 Aldı. Alternatif (HD1) Deneniyor: ${altUrl}`);
+                epRes = await fetch(altUrl, { headers: HEADERS });
+                console.log(`[Dizigom] Alternatif Yanıt Kodu: ${epRes.status}`);
             }
 
             const html = await epRes.text();
             const streams = [];
 
-            // 4. Video kaynaklarını ayıkla (Regex ile)
+            // 4. Kaynak Ayıklama Aşaması
+            console.log('[Dizigom] Video Kaynakları Taranıyor...');
             const videoRegex = /src="([^"]*(?:vidmoly|moly|player|embed|ok\.ru)[^"]*)"/gi;
             let match;
+            
             while ((match = videoRegex.exec(html)) !== null) {
                 let src = match[1];
                 if (src.startsWith('//')) src = 'https:' + src;
                 
-                // Gereksiz/Reklam linkleri filtrele
                 if (src.includes('google') || src.includes('facebook')) continue;
 
+                console.log(`[Dizigom] KAYNAK BULUNDU: ${src}`);
                 streams.push({
                     name: `Dizigom | ${src.includes('moly') ? 'MolyStream' : 'Kaynak'}`,
                     url: src,
@@ -63,16 +86,15 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                 });
             }
 
-            console.log(`[Dizigom] Bitti. Link: ${streams.length}`);
+            console.log(`[Dizigom] İŞLEM TAMAMLANDI. Toplam Link: ${streams.length}`);
             resolve(streams);
 
         } catch (err) {
-            console.error(`[Dizigom] Hata: ${err.message}`);
+            console.error(`[Dizigom] Hata Detayı: ${err.message}`);
             resolve([]);
         }
     });
 }
 
-// Global Export
 if (typeof module !== 'undefined') { module.exports = { getStreams }; }
 globalThis.getStreams = getStreams;
