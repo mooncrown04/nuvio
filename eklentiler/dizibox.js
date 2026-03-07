@@ -1,5 +1,5 @@
-var VER = '3.8.0-SMART-URL';
-console.log('[Dizibox V' + VER + '] Akilli URL denemesi basladi');
+var VER = '4.5.0-PURE-DIRECT';
+console.log('[Dizibox V' + VER + '] Proxy devre disi, dogrudan baglanti deneniyor');
 
 var TMDB_KEY = '4ef0d7355d9ffb5151e987764708ce96';
 
@@ -10,55 +10,55 @@ async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
         const tmdbRes = await fetch(`https://api.themoviedb.org/3/tv/${tmdbId}?api_key=${TMDB_KEY}&language=tr-TR`);
         const tmdbData = await tmdbRes.json();
         
+        // Ismi temizle
         const slug = (tmdbData.original_name || tmdbData.name)
             .toLowerCase()
             .replace(/[^\w\s-]/g, '')
             .replace(/\s+/g, '-')
             .replace(/-+/g, '-');
 
-        // 3 Farklı varyasyon hazırlıyoruz
-        const urls = [
-            `https://www.dizibox.live/${slug}-${seasonNum}-sezon-${episodeNum}-bolum-hd-izle/`,
-            `https://www.dizibox.live/${slug}-${seasonNum}-sezon-${episodeNum}-bolum-izle/`,
-            `https://www.dizibox.live/${slug}-sezon-${seasonNum}-bolum-${episodeNum}-izle/`
-        ];
+        // Senin tarayicida actigin kesin link yapisi
+        const targetUrl = `https://www.dizibox.live/${slug}-${seasonNum}-sezon-${episodeNum}-bolum-hd-izle/`;
+        
+        console.log(`[Dizibox] Dogrudan Baglanti: ${targetUrl}`);
 
-        for (let targetUrl of urls) {
-            console.log(`[Dizibox] Deneniyor: ${targetUrl}`);
-            const proxyUrl = `https://images1-focus-opensocial.googleusercontent.com/gadgets/proxy?container=focus&refresh=604800&url=${encodeURIComponent(targetUrl)}`;
-            
-            const res = await fetch(proxyUrl);
-            const html = await res.text();
+        // Proxy kullanmadan, sadece headers ile kandirarak
+        const res = await fetch(targetUrl, {
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+                'Accept-Language': 'tr,en-US;q=0.7,en;q=0.3'
+            }
+        });
 
-            // Eğer sayfa bulunduysa (404 değilse ve içinde iframe varsa)
-            if (res.status === 200 && html.includes('<iframe')) {
-                return parseStreams(html);
+        const html = await res.text();
+
+        // Eger Cloudflare engeli gelirse html icinde "Just a moment" yazar
+        if (html.includes('Just a moment') || html.includes('DDoS protection')) {
+            throw new Error('Cloudflare Duvari Asilamadi (Doğrudan)');
+        }
+
+        const streams = [];
+        const iframeRegex = /<iframe[^>]+src="([^"]+)"/gi;
+        let match;
+
+        while ((match = iframeRegex.exec(html)) !== null) {
+            let src = match[1];
+            if (src.includes('vidmoly') || src.includes('player') || src.includes('moly')) {
+                streams.push({
+                    name: "Dizibox (Direct)",
+                    url: src.startsWith('//') ? 'https:' + src : src,
+                    quality: '1080p'
+                });
             }
         }
-        
-        throw new Error('Hicbir URL varyasyonu sonuc vermedi.');
+
+        return streams;
 
     } catch (err) {
         console.log(`[Dizibox] Hata: ${err.message}`);
         return [];
     }
-}
-
-function parseStreams(html) {
-    const streams = [];
-    const iframeRegex = /<iframe[^>]+src="([^"]+)"/gi;
-    let match;
-    while ((match = iframeRegex.exec(html)) !== null) {
-        let src = match[1];
-        if (src.includes('vidmoly') || src.includes('player') || src.includes('moly')) {
-            streams.push({
-                name: "Dizibox (Google Proxy)",
-                url: src.startsWith('//') ? 'https:' + src : src,
-                quality: '1080p'
-            });
-        }
-    }
-    return streams;
 }
 
 if (typeof module !== 'undefined' && module.exports) {
