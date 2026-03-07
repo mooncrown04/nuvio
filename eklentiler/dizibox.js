@@ -7,7 +7,7 @@ async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
     };
 
     try {
-        // 1. TMDB Bilgisi
+        // 1. TMDB -> Slug
         const tmdbRes = await fetch(`https://api.themoviedb.org/3/tv/${tmdbId}?api_key=4ef0d7355d9ffb5151e987764708ce96&language=tr-TR`);
         const tmdbData = await tmdbRes.json();
         const slug = (tmdbData.original_name || tmdbData.name).toLowerCase().trim()
@@ -15,22 +15,27 @@ async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
 
         const epUrl = `https://www.dizibox.live/${slug}-${seasonNum}-sezon-${episodeNum}-bolum-hd-izle/`;
         
-        // 2. Sayfayı Çek
+        // 2. Sayfa Çekimi
         const response = await fetch(epUrl, { headers: HEADERS });
-        const fullHtml = await response.text();
+        const html = await response.text();
         const streams = [];
 
-        // --- OPTİMİZASYON: Satır Satır Tarama ---
-        const lines = fullHtml.split('\n');
-        let foundId = null;
+        // 3. Çoklu ID Arama Stratejisi
+        // Strateji A: JSON objesi içinde (Yeni nesil)
+        // Strateji B: Klasik var video_id
+        // Strateji C: iframe src içindeki v= parametresi
+        const idPatterns = [
+            /["']video_id["']\s*[:=]\s*["']?(\d+)["']?/i,
+            /var\s+video_id\s*=\s*["']?(\d+)["']?/i,
+            /player\/king\.php\?v=(\d+)/i
+        ];
 
-        for (let line of lines) {
-            if (line.includes('video_id')) {
-                const match = line.match(/video_id\s*[:=]\s*["']?(\d+)["']?/i);
-                if (match) {
-                    foundId = match[1];
-                    break;
-                }
+        let foundId = null;
+        for (let pattern of idPatterns) {
+            const match = html.match(pattern);
+            if (match && match[1]) {
+                foundId = match[1];
+                break;
             }
         }
 
@@ -43,20 +48,18 @@ async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
             });
         }
 
-        // 3. Vidmoly Alternatifi (Eğer King yoksa)
-        if (streams.length === 0 && fullHtml.includes('unescape')) {
-            const uMatch = fullHtml.match(/unescape\("([^"]+)"\)/);
-            if (uMatch) {
-                const dec = decodeURIComponent(uMatch[1]);
-                const sMatch = dec.match(/src="([^"]+)"/i);
-                if (sMatch) {
-                    streams.push({
-                        name: "DiziBox | VidMoly",
-                        url: sMatch[1].startsWith('//') ? 'https:' + sMatch[1] : sMatch[1],
-                        quality: "720p",
-                        headers: { 'Referer': epUrl }
-                    });
-                }
+        // 4. Alternatif Vidmoly (King bulunamazsa veya yedek olarak)
+        const molyMatch = html.match(/unescape\("([^"]+)"\)/);
+        if (molyMatch) {
+            const decoded = decodeURIComponent(molyMatch[1]);
+            const src = decoded.match(/src="([^"]+)"/i);
+            if (src) {
+                streams.push({
+                    name: "DiziBox | VidMoly",
+                    url: src[1].startsWith('//') ? 'https:' + src[1] : src[1],
+                    quality: "720p",
+                    headers: { 'Referer': epUrl }
+                });
             }
         }
 
@@ -67,4 +70,4 @@ async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
 }
 
 if (typeof exports !== 'undefined') exports.getStreams = getStreams;
-if (typeof globalThis !== 'undefined') globalThis.getStreams = getStreams;
+if (typeof globalThis !== 'undefined') globalThis.getStreams = globalThis.getStreams || getStreams;
