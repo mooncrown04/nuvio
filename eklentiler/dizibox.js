@@ -1,74 +1,56 @@
-/**
- * DiziBox Scraper - Ultra Safe Edition
- * Amazon FireTV Compatibility fix
- */
+console.log('[DZB-LOG] DOSYA SISTEM TARAFINDAN OKUNDU');
 
 var BASE_URL = 'https://www.dizibox.live';
 
-function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
-    return new Promise(function(resolve) {
-        console.log('[DZB-LOG] Uygulama baslatildi. ID: ' + tmdbId);
+async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
+    console.log('[DZB-LOG] getStreams baslatildi: ' + tmdbId);
+    
+    try {
+        if (mediaType !== 'tv') return [];
 
-        // 1. ADIM: Dizi adını TMDB'den çek (En temel fetch)
-        var tmdbUrl = 'https://api.themoviedb.org/3/tv/' + tmdbId + '?api_key=4ef0d7355d9ffb5151e987764708ce96';
+        // TMDB Sorgusu
+        const tmdbRes = await fetch('https://api.themoviedb.org/3/tv/' + tmdbId + '?api_key=4ef0d7355d9ffb5151e987764708ce96');
+        const tmdbData = await tmdbRes.json();
+        const query = tmdbData.name || tmdbData.original_name;
+        
+        console.log('[DZB-LOG] Aranan dizi: ' + query);
 
-        fetch(tmdbUrl)
-            .then(function(res) { 
-                return res.json(); 
-            })
-            .then(function(data) {
-                var name = data.name || data.original_name;
-                if (!name) throw new Error('Isim bulunamadi');
-                
-                console.log('[DZB-LOG] Dizi bulundu: ' + name);
-                var searchUrl = BASE_URL + '/?s=' + encodeURIComponent(name);
-                
-                return fetch(searchUrl, { headers: { 'User-Agent': 'Mozilla/5.0' } });
-            })
-            .then(function(res) { return res.text(); })
-            .then(function(html) {
-                // Regex ile dizi slug'ını yakala
-                var match = html.match(/href="https:\/\/www\.dizibox\.live\/dizi\/([^/"]+)/);
-                if (!match) {
-                    console.log('[DZB-LOG] Arama sonucu bos.');
-                    return resolve([]);
-                }
+        // Arama
+        const searchRes = await fetch(BASE_URL + '/?s=' + encodeURIComponent(query));
+        const searchHtml = await searchRes.text();
+        
+        const slugMatch = searchHtml.match(/href="https:\/\/www\.dizibox\.live\/dizi\/([^/"]+)/);
+        if (!slugMatch) return [];
 
-                var slug = match[1];
-                var targetUrl = BASE_URL + '/' + slug + '-' + seasonNum + '-sezon-' + episodeNum + '-bolum-hd-1-izle/';
-                console.log('[DZB-LOG] Bolum URL: ' + targetUrl);
+        const targetUrl = BASE_URL + '/' + slugMatch[1] + '-' + seasonNum + '-sezon-' + episodeNum + '-bolum-hd-1-izle/';
+        console.log('[DZB-LOG] Hedef: ' + targetUrl);
 
-                return fetch(targetUrl, { headers: { 'Referer': BASE_URL } });
-            })
-            .then(function(res) { return res.text(); })
-            .then(function(html) {
-                // Video iframe'ini bul
-                var iframe = html.match(/<iframe[^>]+src="([^"]+)"/i);
-                if (iframe && iframe[1]) {
-                    var finalUrl = iframe[1].startsWith('//') ? 'https:' + iframe[1] : iframe[1];
-                    console.log('[DZB-LOG] Final Link: ' + finalUrl);
-
-                    resolve([{
-                        name: "DiziBox",
-                        url: finalUrl,
-                        quality: "1080p",
-                        headers: { 'Referer': BASE_URL }
-                    }]);
-                } else {
-                    console.log('[DZB-LOG] Video iframe bulunamadi.');
-                    resolve([]);
-                }
-            })
-            .catch(function(err) {
-                console.log('[DZB-LOG] Kritik Hata: ' + err.message);
-                resolve([]);
-            });
-    });
+        // Bolum Sayfası
+        const pageRes = await fetch(targetUrl);
+        const pageHtml = await pageRes.text();
+        
+        const iframeMatch = pageHtml.match(/<iframe[^>]+src="([^"]+)"/i);
+        if (iframeMatch) {
+            let streamUrl = iframeMatch[1];
+            if (streamUrl.startsWith('//')) streamUrl = 'https:' + streamUrl;
+            
+            return [{
+                name: "DiziBox",
+                url: streamUrl,
+                quality: "1080p"
+            }];
+        }
+    } catch (e) {
+        console.log('[DZB-LOG] Hata olustu: ' + e.message);
+    }
+    return [];
 }
 
-// Global tanım
-if (typeof module !== 'undefined') {
-    module.exports = { getStreams: getStreams };
+// Ortam bağımsız export
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = { getStreams };
+} else if (typeof window !== 'undefined') {
+    window.getStreams = getStreams;
 } else {
     this.getStreams = getStreams;
 }
