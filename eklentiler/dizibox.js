@@ -1,74 +1,64 @@
 async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
     if (mediaType !== 'tv') return [];
 
-    // Dizibox bot korumasını geçmek için mobil User-Agent şart
+    // En az şüphe çeken mobil profil: iPhone / Safari
     const HEADERS = {
-        'User-Agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
-        'Referer': 'https://www.google.com/',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,webp,*/*;q=0.8',
-        'Accept-Language': 'tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7',
-        'Cache-Control': 'no-cache',
-        'Connection': 'keep-alive'
+        'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
+        'Referer': 'https://www.google.com.tr/',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'tr-TR,tr;q=0.9'
     };
 
     try {
+        // 1. TMDB Bilgisi
         const tmdbRes = await fetch(`https://api.themoviedb.org/3/tv/${tmdbId}?api_key=4ef0d7355d9ffb5151e987764708ce96&language=tr-TR`);
         const tmdbData = await tmdbRes.json();
-        const slug = (tmdbData.original_name || tmdbData.name).toLowerCase().trim().replace(/\s+/g, '-').replace(/[^\w-]+/g, '');
+        const originalTitle = tmdbData.original_name || tmdbData.name;
+        
+        // Slug oluşturma (Dizibox formatı)
+        const slug = originalTitle.toLowerCase()
+            .replace(/ /g, '-')
+            .replace(/[^\w-]+/g, '');
 
         const epUrl = `https://www.dizibox.live/${slug}-${seasonNum}-sezon-${episodeNum}-bolum-hd-izle/`;
         
-        // Önce çerezleri almak için ana sayfaya küçük bir 'ping' atıyoruz (Opsiyonel ama etkili)
-        await fetch('https://www.dizibox.live/', { headers: { 'User-Agent': HEADERS['User-Agent'] } });
-
+        // 2. Sayfayı Çekme
         const response = await fetch(epUrl, { headers: HEADERS });
         const html = await response.text();
         const streams = [];
 
-        // 1. ADIM: King Player (Dizibox'ın ana player'ı)
-        // Sayfa içinde gizlenen tırnaklı veya tırnaksız sayısal ID'leri yakalar
-        const idMatch = html.match(/video_id\s*[:=]\s*["']?(\d{5,7})["']?/i);
+        // Debug için boyutu logla (Opsiyonel)
+        // console.log("HTML Boyutu: " + html.length);
+
+        // 3. Regex: King Player ID
+        // Dizibox'ın player yapısı: "video_id":"123456" veya video_id = 123456
+        const idMatch = html.match(/video_id["']?\s*[:=]\s*["']?(\d+)["']?/i);
         
         if (idMatch) {
             streams.push({
-                name: "DiziBox | King Player (Hızlı)",
+                name: "DiziBox | King Player (1080p)",
                 url: `https://www.dizibox.live/player/king.php?v=${idMatch[1]}`,
                 quality: "1080p",
                 headers: { 'Referer': epUrl }
             });
         }
 
-        // 2. ADIM: Vidmoly veya Moly (Genellikle 'unescape' içinde saklanır)
-        const unescapeData = html.match(/unescape\s*\(\s*["']([^"']+)["']/i);
-        if (unescapeData) {
-            const decoded = decodeURIComponent(unescapeData[1]);
-            const srcMatch = decoded.match(/src=["']([^"']+)["']/i);
-            if (srcMatch) {
-                let vUrl = srcMatch[1];
-                if (vUrl.startsWith('//')) vUrl = 'https:' + vUrl;
-                streams.push({
-                    name: "DiziBox | Vidmoly (Alternatif)",
-                    url: vUrl,
-                    quality: "720p",
-                    headers: { 'Referer': epUrl }
-                });
-            }
-        }
-
-        // 3. ADIM: Kaba Kuvvet (Hiçbir şey bulunamazsa sayfadaki 6 haneli rakamları dene)
-        if (streams.length === 0) {
-            const potentialIds = html.match(/"(\d{5,7})"/g);
-            if (potentialIds) {
-                potentialIds.slice(0, 2).forEach((idStr, index) => {
-                    const id = idStr.replace(/"/g, '');
+        // 4. Regex: Vidmoly / Moly / Alternatifler
+        // Genellikle <iframe> içinde veya unescape edilmiş JS içinde olurlar
+        const iframeMatch = html.match(/<iframe[^>]+src=["']([^"']+)["']/gi);
+        if (iframeMatch) {
+            iframeMatch.forEach(ifr => {
+                let src = ifr.match(/src=["']([^"']+)["']/i)[1];
+                if (src.includes('moly') || src.includes('player')) {
+                    if (src.startsWith('//')) src = 'https:' + src;
                     streams.push({
-                        name: `DiziBox | Kaynak #${index + 1}`,
-                        url: `https://www.dizibox.live/player/king.php?v=${id}`,
-                        quality: "HD",
+                        name: "DiziBox | Alternatif Kaynak",
+                        url: src,
+                        quality: "720p",
                         headers: { 'Referer': epUrl }
                     });
-                });
-            }
+                }
+            });
         }
 
         return streams;
