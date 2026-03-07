@@ -1,5 +1,5 @@
 /**
- * Provider: DDizi (v42 - Deep Referer)
+ * Provider: DDizi (v43 - Session & Cookie Support)
  */
 function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
     var mainUrl = "https://www.ddizi.im";
@@ -26,16 +26,13 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
             return fetch(epUrl, { headers: { "User-Agent": userAgent, "Referer": mainUrl } });
         }).then(function(res) { return res.text(); }).then(function(html) {
             if (!html) return null;
-
             var playerMatch = html.match(/\/player\/oynat\/[a-z0-9]+/i);
             if (!playerMatch) return null;
 
             var playerUrl = mainUrl + playerMatch[0];
-            // Player sayfasını çekiyoruz
             return fetch(playerUrl, { headers: { "User-Agent": userAgent, "Referer": mainUrl } });
         }).then(function(res) {
-            // Player sayfasının gerçek URL'sini (redirect varsa onu) sakla
-            var finalPlayerUrl = res.url; 
+            var finalPlayerUrl = res.url;
             return res.text().then(function(playerHtml) {
                 return { html: playerHtml, url: finalPlayerUrl };
             });
@@ -47,16 +44,22 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
 
             var videoUrl = fileMatch[1];
             
-            // --- KRİTİK DEĞİŞİKLİK: Referer artık tam player linki ---
+            // --- KRİTİK: Sunucu bazen videonun kendi domainini referer ister ---
+            var videoDomain = new URL(videoUrl).origin + "/";
+
             resolve([{
-                name: "DDizi - Direct",
+                name: "DDizi - Secure Line",
                 url: videoUrl,
                 quality: "1080p",
                 headers: {
                     "User-Agent": userAgent,
-                    "Referer": result.url, // Örn: https://www.ddizi.im/player/oynat/0fcb...
+                    "Referer": result.url, // Player sayfasını referer gösteriyoruz
                     "Origin": mainUrl,
-                    "Accept": "*/*"
+                    "Accept": "*/*",
+                    "Connection": "keep-alive",
+                    "Sec-Fetch-Dest": "video",
+                    "Sec-Fetch-Mode": "cors",
+                    "Sec-Fetch-Site": "cross-site"
                 }
             }]);
         }).catch(function() {
