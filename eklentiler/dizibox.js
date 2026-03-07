@@ -1,106 +1,94 @@
-var BASE_URL = 'https://www.dizibox.live';
+var BASE_URL = 'https://www.dizigom.tv';
 
 var HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-    'Accept-Language': 'tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7',
-    'Referer': BASE_URL + '/'
-};
-
-var STREAM_HEADERS = {
-    'User-Agent': HEADERS['User-Agent'],
-    'Accept': 'video/webm,video/ogg,video/*;q=0.9,application/ogg;q=0.7,audio/*;q=0.6,*/*;q=0.5',
-    'Accept-Language': 'tr-TR,tr;q=0.9',
-    'Accept-Encoding': 'identity',
-    'Origin': BASE_URL,
     'Referer': BASE_URL + '/',
-    'Sec-Fetch-Dest': 'video',
-    'Sec-Fetch-Mode': 'no-cors',
-    'Sec-Fetch-Site': 'cross-site',
-    'DNT': '1'
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8'
 };
 
-function findFirst(html, pattern) {
-    var regex = new RegExp(pattern, 'i');
-    var match = regex.exec(html);
-    return match ? match : null;
-}
-
-function loadContentPage(url) {
-    return fetch(url, { headers: HEADERS })
-        .then(res => res.text())
-        .then(html => {
-            var iframeMatch = findFirst(html,
-                '<iframe[^>]+src="([^"]+)"[^>]*class="[^"]*(?:responsive-player|series-player)[^"]*"'
-            ) || findFirst(html,
-                '<iframe[^>]+src="([^"]+)"'
-            );
-            return iframeMatch ? iframeMatch[1] : null;
-        });
-}
-
-function extractM3u8FromIframe(iframeSrc) {
-    if (!iframeSrc) return Promise.resolve(null);
-    var iframeUrl = iframeSrc.startsWith('http') ? iframeSrc : BASE_URL + iframeSrc;
-
-    return fetch(iframeUrl, { headers: HEADERS })
-        .then(res => res.text())
-        .then(html => {
-            var m3uMatch = findFirst(html, 'file:"([^"]+\\.m3u8[^"]*)"');
-            if (m3uMatch) return m3uMatch[1];
-            var sourceMatch = findFirst(html, '"file"\\s*:\\s*"([^"]+\\.m3u8[^"]*)"');
-            if (sourceMatch) return sourceMatch[1];
-            return null;
-        });
-}
-
-function getEpisodeUrl(slug, seasonNum, episodeNum) {
-    return BASE_URL + '/' + slug + '-' + seasonNum + '-sezon-' + episodeNum + '-bolum-hd-izle/';
-}
-
+/**
+ * Dizigom Link Çözücü
+ */
 function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
-    return new Promise((resolve) => {
+    return new Promise(function(resolve, reject) {
+        // Dizigom temel olarak TV dizileri odaklıdır
         if (mediaType !== 'tv') return resolve([]);
 
-        var tmdbUrl = 'https://api.themoviedb.org/3/tv/' + tmdbId +
-            '?api_key=4ef0d7355d9ffb5151e987764708ce96&language=tr-TR';
+        console.log('[Dizigom] Başlatıldı:', tmdbId, 'S:', seasonNum, 'E:', episodeNum);
+
+        // 1. TMDB'den Orijinal İsmi Al (Slug oluşturmak için)
+        var tmdbUrl = 'https://api.themoviedb.org/3/tv/' + tmdbId + '?api_key=4ef0d7355d9ffb5151e987764708ce96&language=tr-TR';
 
         fetch(tmdbUrl)
-            .then(res => res.json())
-            .then(data => {
-                var title = data.name || data.original_name || '';
-                if (!title) return resolve([]);
+            .then(function(res) { return res.json(); })
+            .then(function(data) {
+                var name = data.name || data.original_name;
+                if (!name) throw new Error('Dizi ismi bulunamadı');
 
-                var slug = title.toLowerCase().trim()
+                // 2. Dizigom Formatına Uygun Slug Oluştur
+                // Örnek: "The Boys" -> "the-boys"
+                var slug = name.toLowerCase().trim()
                     .replace(/[^a-z0-9]+/g, '-')
                     .replace(/^-+|-+$/g, '');
 
-                var epUrl = getEpisodeUrl(slug, seasonNum, episodeNum);
+                // Dizigom Bölüm URL Yapısı: /dizi/slug-season-sezon-episode-bolum/
+                var epUrl = BASE_URL + '/dizi/' + slug + '-' + seasonNum + '-sezon-' + episodeNum + '-bolum/';
+                console.log('[Dizigom] Hedef URL:', epUrl);
 
-                return loadContentPage(epUrl)
-                    .then(iframeSrc => extractM3u8FromIframe(iframeSrc))
-                    .then(m3u8Url => {
-                        if (!m3u8Url) return resolve([]);
-
-                        resolve([{
-                            name: '⌜ DiziBox ⌟ | Player',
-                            title: 'Bölüm ' + episodeNum,
-                            url: m3u8Url,
-                            quality: '720p',
-                            headers: STREAM_HEADERS,
-                            provider: 'dizibox'
-                        }]);
-                    });
+                return fetch(epUrl, { headers: HEADERS });
             })
-            .catch(err => {
-                console.error('[DiziBox] Hata:', err);
+            .then(function(res) { return res.text(); })
+            .then(function(html) {
+                var streams = [];
+
+                // 3. Iframe/Player Linklerini Yakala
+                // Dizigom genellikle "player.php" veya "embed" linkleri kullanır
+                var iframeRegex = /<iframe[^>]+src="([^"]+)"/gi;
+                var match;
+                
+                while ((match = iframeRegex.exec(html)) !== null) {
+                    var src = match[1];
+                    
+                    // Reklam veya sosyal medya linklerini filtrele
+                    if (src.includes('facebook') || src.includes('twitter')) continue;
+
+                    // URL'yi temizle (protocol eksikse ekle)
+                    if (src.startsWith('//')) src = 'https:' + src;
+
+                    streams.push({
+                        name: '⌜ Dizigom ⌟ | Kaynak #' + (streams.length + 1),
+                        url: src,
+                        quality: '1080p',
+                        headers: { 'Referer': BASE_URL + '/' }
+                    });
+                }
+
+                // 4. Alternatif: data-video-url gibi öznitelikleri ara
+                if (streams.length === 0) {
+                    var altMatch = html.match(/data-video-url="([^"]+)"/i);
+                    if (altMatch) {
+                        streams.push({
+                            name: '⌜ Dizigom ⌟ | Ana Player',
+                            url: altMatch[1],
+                            quality: 'HD',
+                            headers: { 'Referer': BASE_URL + '/' }
+                        });
+                    }
+                }
+
+                console.log('[Dizigom] Bulunan Link:', streams.length);
+                resolve(streams);
+            })
+            .catch(function(err) {
+                console.error('[Dizigom] Hata:', err.message);
                 resolve([]);
             });
     });
 }
 
+// Export yapısı
 if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { getStreams };
+    module.exports = { getStreams: getStreams };
 } else {
     global.getStreams = getStreams;
 }
