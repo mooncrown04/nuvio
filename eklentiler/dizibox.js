@@ -1,67 +1,51 @@
 /**
- * Provider: Dizigom (v19 - Aggressive Logging)
+ * Provider: Dizigom (v20 - Direct Access / No Search)
+ * Amaç: "Job was cancelled" hatasını aşmak için maksimum hız.
  */
 function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
     var BASE_URL = 'https://dizigom104.com';
     var HEADERS = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-        'X-Requested-With': 'XMLHttpRequest'
+        'Referer': BASE_URL + '/'
     };
 
     return new Promise(function(resolve) {
         if (mediaType !== 'tv') return resolve([]);
 
-        console.log('[DEBUG-DIZIGOM] Istek baslatildi: TMDB-' + tmdbId);
-
-        // 1. TMDB'den temiz isim al
+        // 1. TMDB'den isim al (Bu adım hızlıdır)
         fetch('https://api.themoviedb.org/3/tv/' + tmdbId + '?api_key=4ef0d7355d9ffb5151e987764708ce96&language=tr-TR')
             .then(function(res) { return res.json(); })
             .then(function(data) {
-                var query = (data.name || data.original_name).split(':')[0].trim();
-                console.log('[DEBUG-DIZIGOM] Temiz Sorgu: ' + query);
+                var name = data.name || data.original_name;
+                // Slug oluştur (Türkçe karakter ve boşluk temizleme)
+                var slug = name.toLowerCase().trim()
+                    .replace(/[üçşğöı]/g, function(m) { return {'ü':'u','ç':'c','ş':'s','ğ':'g','ö':'o','ı':'i'}[m]; })
+                    .replace(/[^a-z0-9]+/g, '-')
+                    .replace(/^-+|-+$/g, '');
 
-                // 2. Arama motorunu sorgula
-                return fetch(BASE_URL + '/?s=' + encodeURIComponent(query), { headers: HEADERS });
+                // ARAMA YAPMADAN DOĞRUDAN URL TAHMİNİ (Hız için)
+                var targetUrl = BASE_URL + '/dizi/' + slug + '-izle-' + seasonNum + '-sezon-' + episodeNum + '-bolum/';
+                console.log('[Dizigom-v20] Hedef URL: ' + targetUrl);
+
+                return fetch(targetUrl, { headers: HEADERS });
             })
             .then(function(res) {
-                console.log('[DEBUG-DIZIGOM] Arama Yanit Status: ' + res.status);
+                if (res.status !== 200) {
+                    // Eğer 404 aldıysak sessizce bitir ki sistem kilitlenmesin
+                    return resolve([]);
+                }
                 return res.text();
             })
             .then(function(html) {
-                // 3. Link Ayıklama
-                var linkMatch = html.match(/href="(https:\/\/dizigom104\.com\/dizi\/[^"]+)"/i);
-                
-                if (!linkMatch) {
-                    console.log('[DEBUG-DIZIGOM] KRITIK: Sitede bu dizi bulunamadi!');
-                    return resolve([]); 
-                }
-
-                var showUrl = linkMatch[1].replace(/\/$/, '');
-                var epUrl = showUrl + '-' + seasonNum + '-sezon-' + episodeNum + '-bolum/';
-                console.log('[DEBUG-DIZIGOM] Bolum URL Deneniyor: ' + epUrl);
-
-                return fetch(epUrl, { headers: HEADERS }).then(function(r) {
-                    if (r.status === 404) {
-                        return fetch(epUrl.replace(/\/$/, '') + '-hd1/', { headers: HEADERS });
-                    }
-                    return r;
-                });
-            })
-            .then(function(res) {
-                if (!res) return null;
-                return res.text();
-            })
-            .then(function(epHtml) {
-                if (!epHtml) return resolve([]);
+                if (!html) return resolve([]);
 
                 var streams = [];
-                // Video kaynaklarını (Vidmoly, Moly vb.) topla
+                // Sayfadaki video linklerini yakala (Moly, Vidmoly vb.)
                 var regex = /src="([^"]*(?:vidmoly|moly|player|embed|ok\.ru)[^"]*)"/gi;
                 var match;
                 
-                while ((match = regex.exec(epHtml)) !== null) {
+                while ((match = regex.exec(html)) !== null) {
                     var src = match[1].startsWith('//') ? 'https:' + match[1] : match[1];
-                    console.log('[DEBUG-DIZIGOM] Kaynak Yakalandi: ' + src);
                     streams.push({
                         name: 'Dizigom | ' + (src.includes('moly') ? 'Moly' : 'Kaynak'),
                         url: src,
@@ -70,11 +54,11 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                     });
                 }
                 
-                console.log('[DEBUG-DIZIGOM] Islem Tamamlandi. Link Sayisi: ' + streams.length);
+                console.log('[Dizigom-v20] Link Bulundu: ' + streams.length);
                 resolve(streams);
             })
             .catch(function(err) {
-                console.log('[DEBUG-DIZIGOM] HATA: ' + err.message);
+                console.log('[Dizigom-v20] Hata: ' + err.message);
                 resolve([]);
             });
     });
