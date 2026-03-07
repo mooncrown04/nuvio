@@ -1,6 +1,6 @@
 var cheerio = require("cheerio-without-node-native");
 
-// Dizibox bazen .tv bazen .org olur, güncel domaini buraya yazmalısın
+// Eğer .tv hata veriyorsa .org veya güncel uzantıyı deneyin
 var BASE_URL = 'https://www.dizibox.tv'; 
 
 var HEADERS = {
@@ -13,46 +13,43 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
     return new Promise(function(resolve, reject) {
         if (mediaType !== 'tv') return resolve([]);
 
-        // 1. TMDB'den ismi al
+        // TMDB İsteği (Genelde bu kısım sertifika hatası vermez)
         var tmdbUrl = 'https://api.themoviedb.org/3/tv/' + tmdbId + '?language=tr-TR&api_key=4ef0d7355d9ffb5151e987764708ce96';
 
-        fetch(tmdbUrl, { timeout: 10000 }) // Lite için timeout ekledik
+        fetch(tmdbUrl)
             .then(function(res) { return res.json(); })
             .then(function(data) {
                 var query = data.name || '';
-                // 2. Sitede arama yap (Doğrudan URL oluşturmak yerine arama daha sağlamdır)
-                var searchUrl = BASE_URL + '/?s=' + encodeURIComponent(query);
-                console.log('[Dizibox] Aranıyor:', query);
-                return fetch(searchUrl, { headers: HEADERS, timeout: 15000 });
+                // Sertifika hatasını aşmak için: Arama işlemini "http" üzerinden dene (Lite cihazlarda işe yarayabilir)
+                var searchUrl = BASE_URL.replace('https', 'http') + '/?s=' + encodeURIComponent(query);
+                
+                return fetch(searchUrl, { headers: HEADERS });
             })
             .then(function(res) { return res.text(); })
             .then(function(html) {
                 var $ = cheerio.load(html);
-                // Arama sonuçlarından ilk diziyi yakala
                 var firstMatch = $('.post-title a').first().attr('href');
                 
                 if (!firstMatch) throw new Error('Dizi bulunamadı');
 
-                // 3. Bölüm URL'sini oluştur
-                // Genelde: domain.com/dizi-adi/sezon-1/bolum-1.html veya benzeri
-                var episodeUrl = firstMatch.replace(/\/$/, '') + '-sezon-' + seasonNum + '-bolum-' + episodeNum + '-izle/';
-                console.log('[Dizibox] Hedef URL:', episodeUrl);
+                var epUrl = firstMatch.replace(/\/$/, '') + '-sezon-' + seasonNum + '-bolum-' + episodeNum + '-izle/';
                 
-                return fetch(episodeUrl, { headers: HEADERS, timeout: 15000 });
+                return fetch(epUrl, { headers: HEADERS });
             })
             .then(function(res) { return res.text(); })
             .then(function(epHtml) {
                 var $ = cheerio.load(epHtml);
                 var streams = [];
 
-                // 4. Iframe veya Vidmoly linklerini ayıkla
-                // Dizibox'ın player yapısı karmaşıktır, iframe'leri tarayalım
+                // Dizibox Player'larını Yakala
                 $('iframe').each(function() {
                     var src = $(this).attr('src') || '';
                     if (src.includes('vidmoly') || src.includes('dizibox')) {
+                        // Linkleri temizle ve HTTPS'e geri döndür (Video player genelde HTTPS ister)
+                        var finalUrl = src.startsWith('//') ? 'https:' + src : src;
                         streams.push({
-                            name: 'Dizibox - Kaynak',
-                            url: src.startsWith('//') ? 'https:' + src : src,
+                            name: 'Dizibox - ' + (src.includes('vidmoly') ? 'Vidmoly' : 'Kaynak'),
+                            url: finalUrl,
                             quality: 'Auto',
                             headers: { 'Referer': BASE_URL }
                         });
@@ -62,7 +59,8 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                 resolve(streams);
             })
             .catch(function(err) {
-                console.error('[Dizibox] Hata:', err.message);
+                console.error('[Dizibox] Engel:', err.message);
+                // Eğer hata "Trust anchor" ise kullanıcıya DNS/Saat uyarısı verilebilir
                 resolve([]);
             });
     });
