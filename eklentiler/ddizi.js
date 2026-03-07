@@ -1,68 +1,69 @@
 /**
- * Provider: DDizi (v56 - Deep Scan)
+ * Provider: DDizi (v57 - Precision Scan)
  */
 (function() {
     const getStreams = async (tmdbId, mediaType, seasonNum, episodeNum) => {
         const mainUrl = "https://www.ddizi.im";
-        const UA = "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36";
+        const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36";
 
         try {
-            // Loglardan aldığımız kesinleşmiş URL
+            // Loglardan gelen kesinleşmiş çalışan URL
             const targetUrl = `https://www.ddizi.im/izle/72226/dark-3-sezon-8-bolum-izle.htm`;
             
             const res = await fetch(targetUrl, { headers: { "User-Agent": UA } });
             const html = await res.text();
 
-            const playerPath = html.match(/\/player\/oynat\/[a-z0-9]+/i);
-            if (!playerPath) return [];
+            // Player ID'sini yakala
+            const playerPathMatch = html.match(/\/player\/oynat\/[a-z0-9]+/i);
+            if (!playerPathMatch) return [];
 
-            const playerUrl = mainUrl + playerPath[0];
+            const playerUrl = mainUrl + playerPathMatch[0];
 
-            // Player sayfasını alırken kimlik doğrulamasını (Referer) yapıyoruz
+            // Player sayfasını al (Referer hayati önemde!)
             const pRes = await fetch(playerUrl, {
                 headers: {
                     "User-Agent": UA,
-                    "Referer": targetUrl,
-                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,webp,*/*;q=0.8"
+                    "Referer": targetUrl
                 }
             });
             const pHtml = await pRes.text();
 
-            // VİDEO LİNKİNİ BULMA (Çoklu Yöntem)
-            let videoUrl = "";
+            // VİDEO AYIKLAMA MANTIĞI
+            let streams = [];
 
-            // Yöntem A: Standart file parametresi
-            const fileMatch = pHtml.match(/["']?file["']?\s*:\s*["']([^"']+)["']/i);
-            // Yöntem B: JWPlayer/VideoJS sources yapısı
-            const sourceMatch = pHtml.match(/["']?source["']?\s*:\s*["']([^"']+)["']/i);
-            // Yöntem C: Base64 kontrolü (Eğer link 'aHR0cD' ile başlıyorsa)
-            const b64Match = pHtml.match(/["']([a-zA-Z0-9+/=]{50,})["']/);
+            // 1. JSON/Script içinde 'file' arama
+            const fileMatches = [...pHtml.matchAll(/["']?file["']?\s*:\s*["']([^"']+\.(?:mp4|m3u8|ts)[^"']*)["']/gi)];
+            
+            // 2. Base64 gizlenmiş linkleri arama (DDizi bazen bunu yapar)
+            const b64Matches = [...pHtml.matchAll(/["']([a-zA-Z0-9+/=]{100,})["']/g)];
 
-            if (fileMatch) videoUrl = fileMatch[1];
-            else if (sourceMatch) videoUrl = sourceMatch[1];
-            else if (b64Match) {
-                try {
-                    const decoded = atob(b64Match[1]);
-                    if (decoded.includes('http')) videoUrl = decoded;
-                } catch(e) {}
+            for (let match of fileMatches) {
+                let url = match[1];
+                if (url.startsWith('//')) url = 'https:' + url;
+                streams.push({ name: "DDizi HD", url: url });
             }
 
-            if (videoUrl) {
-                if (videoUrl.startsWith('//')) videoUrl = 'https:' + videoUrl;
-
-                return [{
-                    name: "DDizi - Direct",
-                    url: videoUrl,
-                    quality: "1080p",
-                    headers: { 
-                        "User-Agent": UA, 
-                        "Referer": playerUrl,
-                        "Origin": mainUrl
-                    }
-                }];
+            if (streams.length === 0) {
+                for (let match of b64Matches) {
+                    try {
+                        const decoded = atob(match[1]);
+                        if (decoded.includes('http') && (decoded.includes('.mp4') || decoded.includes('.m3u8'))) {
+                            streams.push({ name: "DDizi Decoded", url: decoded });
+                        }
+                    } catch(e) {}
+                }
             }
 
-            return [];
+            return streams.map(s => ({
+                ...s,
+                quality: "1080p",
+                headers: { 
+                    "User-Agent": UA, 
+                    "Referer": playerUrl,
+                    "Origin": mainUrl 
+                }
+            }));
+
         } catch (e) {
             return [];
         }
