@@ -1,5 +1,5 @@
 /**
- * Provider: Hybrid (v38 - ExoPlayer Header Fix)
+ * Provider: Hybrid (v39 - HLS Global Header Fix)
  */
 function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
     var userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36";
@@ -7,41 +7,48 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
     return new Promise(function(resolve) {
         if (mediaType !== 'tv') return resolve([]);
 
-        // TMDB üzerinden dizi ismini al ve sitelerde ara
         var tmdbUrl = 'https://api.themoviedb.org/3/tv/' + tmdbId + '?api_key=4ef0d7355d9ffb5151e987764708ce96&language=tr-TR';
         
         fetch(tmdbUrl).then(function(res) { return res.json(); }).then(function(data) {
             var name = data.name || data.original_name || "";
-            // Dizipal arama motoruna git
+            // Dizipal Arama
             return fetch("https://dizipal.bar/?s=" + encodeURIComponent(name), { headers: { "User-Agent": userAgent } });
         }).then(function(res) { return res.text(); }).then(function(html) {
-            // Loglarındaki 'paradise-1-sezon-1-bolum-izle' linkini yakalama
+            // Bölüm Sayfası Bulma
             var linkMatch = html.match(new RegExp('href="(https://dizipal\\.bar/bolum/[^"]*' + seasonNum + '-sezon-' + episodeNum + '-bolum[^"]*)"', 'i'));
             if (!linkMatch) return null;
             return fetch(linkMatch[1], { headers: { "User-Agent": userAgent } });
         }).then(function(res) { return res.text(); }).then(function(pageHtml) {
-            // Embed URL'sini (x.ag2m4.cfd) yakala
+            // Embed/Iframe Sayfası
             var embedMatch = pageHtml.match(/iframe[^>]*src="([^"]+)"/i);
             if (!embedMatch) return null;
             var embedUrl = embedMatch[1];
+            if (embedUrl.indexOf('//') === 0) embedUrl = 'https:' + embedUrl;
+            
             return fetch(embedUrl, { headers: { "User-Agent": userAgent, "Referer": "https://dizipal.bar/" } });
         }).then(function(res) { return res.text(); }).then(function(embedHtml) {
-            // Master.m3u8 linkini ve player başlıklarını ayıkla
+            // HLS (.m3u8) Linkini Çekme
             var m3u8Match = embedHtml.match(/file:\s*["']([^"']+\.m3u8[^"']*)["']/i);
             if (!m3u8Match) return resolve([]);
 
             var videoUrl = m3u8Match[1];
             
-            // --- KRİTİK NOKTA: ExoPlayer'a 403 Yedirmeme ---
+            // Loglarında gördüğümüz referer: x.ag2m4.cfd
+            var domainMatch = videoUrl.match(/https?:\/\/([^\/]+)/);
+            var domain = domainMatch ? domainMatch[0] : "";
+
+            // --- EKSTRA GÜVENLİK: Alt Segmentler İçin Header Enjeksiyonu ---
             resolve([{
-                name: "Dizipal - HLS",
+                name: "Dizipal - HLS (High)",
                 url: videoUrl,
                 quality: "1080p",
+                isM3u8: true,
                 headers: {
                     "User-Agent": userAgent,
-                    "Referer": "https://x.ag2m4.cfd/", // Sunucunun beklediği anahtar
+                    "Referer": "https://x.ag2m4.cfd/",
                     "Origin": "https://x.ag2m4.cfd",
-                    "Accept": "*/*"
+                    "Accept": "*/*",
+                    "Connection": "keep-alive"
                 }
             }]);
         }).catch(function() {
