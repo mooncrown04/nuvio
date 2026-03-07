@@ -1,65 +1,75 @@
-/**
- * Provider: Dizigom (v21 - Lightweight & Timeout Protected)
- */
-function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
-    var BASE_URL = 'https://dizigom104.com';
-    
-    return new Promise(function(resolve) {
-        if (mediaType !== 'tv') return resolve([]);
+const HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+    'Referer': 'https://www.dizibox.live/'
+};
 
-        // Emniyet Kilidi: 8 saniye sonra otomatik iptal (Time-out hatasını önlemek için)
-        var timeout = setTimeout(function() {
-            console.log('[Dizigom] Zaman asimi koruması devreye girdi.');
-            resolve([]);
-        }, 8000);
+async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
+    if (mediaType !== 'tv') return [];
 
-        // 1. TMDB'den isim al
-        fetch('https://api.themoviedb.org/3/tv/' + tmdbId + '?api_key=4ef0d7355d9ffb5151e987764708ce96&language=tr-TR')
-            .then(function(res) { return res.json(); })
-            .then(function(data) {
-                var name = data.name || data.original_name;
-                var slug = name.toLowerCase().trim()
-                    .replace(/[üçşğöı]/g, function(m) { return {'ü':'u','ç':'c','ş':'s','ğ':'g','ö':'o','ı':'i'}[m]; })
-                    .replace(/[^a-z0-9]+/g, '-')
-                    .replace(/^-+|-+$/g, '');
+    try {
+        const tmdbRes = await fetch(`https://api.themoviedb.org/3/tv/${tmdbId}?api_key=4ef0d7355d9ffb5151e987764708ce96&language=tr-TR`);
+        const tmdbData = await tmdbRes.json();
+        const slug = (tmdbData.original_name || tmdbData.name).toLowerCase().trim().replace(/\s+/g, '-').replace(/[^\w-]+/g, '');
 
-                // Sadece en garanti URL'yi dene (Hız için)
-                var targetUrl = BASE_URL + '/dizi/' + slug + '-izle-' + seasonNum + '-sezon-' + episodeNum + '-bolum/';
-                
-                return fetch(targetUrl, { 
-                    headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0' } 
-                });
-            })
-            .then(function(res) {
-                if (res.status !== 200) throw new Error('404');
-                return res.text();
-            })
-            .then(function(html) {
-                clearTimeout(timeout); // Başarılı olursa süreyi durdur
-                
-                var streams = [];
-                // Sadece vidmoly ve moly odaklı regex
-                var regex = /src="([^"]*(?:vidmoly|moly|player|ok\.ru)[^"]*)"/gi;
-                var match;
-                
-                while ((match = regex.exec(html)) !== null) {
-                    var src = match[1].startsWith('//') ? 'https:' + match[1] : match[1];
-                    streams.push({
-                        name: 'Dizigom | Kaynak',
-                        url: src,
-                        quality: '1080p',
-                        headers: { 'Referer': BASE_URL + '/' }
-                    });
-                }
-                resolve(streams);
-            })
-            .catch(function() {
-                clearTimeout(timeout);
-                resolve([]);
+        const epUrl = `https://www.dizibox.live/${slug}-${seasonNum}-sezon-${episodeNum}-bolum-hd-izle/`;
+        console.log(`[Dizibox] Analiz: ${epUrl}`);
+
+        const mainRes = await fetch(epUrl, { headers: HEADERS });
+        const html = await mainRes.text();
+        const streams = [];
+
+        // 1. King Player ID Yakalayıcı (Sayfada link olmasa bile ID'den oluşturur)
+        // Kotlin örneğindeki gibi regex ile ID ara
+        const idRegex = /"video_id"\s*:\s*"(\d+)"|video_id\s*=\s*'(\d+)'/i;
+        const idMatch = html.match(idRegex);
+        const videoId = idMatch ? (idMatch[1] || idMatch[2]) : null;
+
+        if (videoId) {
+            streams.push({
+                name: "DiziBox | King Player (Hızlı)",
+                url: `https://www.dizibox.live/player/king.php?v=${videoId}`,
+                quality: "1080p",
+                headers: { 'Referer': epUrl }
             });
-    });
+        }
+
+        // 2. Gizli Moly Linklerini Çöz (unescape yakalama)
+        const unescapeMatch = html.match(/unescape\("([^"]+)"\)/);
+        if (unescapeMatch) {
+            const decoded = decodeURIComponent(unescapeMatch[1]);
+            const molyMatch = decoded.match(/src="([^"]*moly[^"]*)"/i);
+            if (molyMatch) {
+                streams.push({
+                    name: "DiziBox | MolyStream",
+                    url: molyMatch[1].startsWith('//') ? 'https:' + molyMatch[1] : molyMatch[1],
+                    quality: "1080p",
+                    headers: { 'Referer': epUrl }
+                });
+            }
+        }
+
+        // 3. Genel Link Tarama (Eğer yukarıdakiler yemezse)
+        const allLinks = html.match(/https?:\/\/[^"']*(?:king|moly|vidmoly|ok\.ru)[^"']*/gi) || [];
+        allLinks.forEach(link => {
+            if (!streams.find(s => s.url === link)) {
+                streams.push({
+                    name: "DiziBox | Alternatif",
+                    url: link,
+                    quality: "1080p",
+                    headers: { 'Referer': epUrl }
+                });
+            }
+        });
+
+        console.log(`[Dizibox] Islem bitti. Bulunan: ${streams.length}`);
+        return streams;
+
+    } catch (err) {
+        console.error(`[Dizibox] Hata: ${err.message}`);
+        return [];
+    }
 }
 
-// Global Export
-if (typeof module !== 'undefined') { module.exports = { getStreams: getStreams }; }
-globalThis.getStreams = getStreams;
+// Global Exportlar
+if (typeof exports !== 'undefined') exports.getStreams = getStreams;
+if (typeof globalThis !== 'undefined') globalThis.getStreams = getStreams;
