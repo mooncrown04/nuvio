@@ -1,24 +1,30 @@
-// [DZB-FIX] Dizibox Link Onarıcı Kod
-console.log('[DZB-LOG] Eklenti Baslatildi');
+// [DZB-FIX] Diziyou to Dizibox Bridge
+console.log('[DZB-LOG] Eklenti Yuklendi: Diziyou -> Dizibox');
 
-const plugin = {
-    name: 'DiziYou',
+const scraper = {
+    // Uygulama arama yaptığında bu fonksiyon çalışır
     async search(query) {
-        // Arama yaparken dizibox üzerinden gitmesini sağlıyoruz
-        const url = `https://www.dizibox.tv/?s=${encodeURIComponent(query)}`;
-        console.log('[DZB-LOG] Aranan URL: ' + url);
+        console.log('[DZB-LOG] Aranan Kelime: ' + query);
+        
+        // Dizibox'ın güncel arama URL'si
+        const searchUrl = `https://www.dizibox.tv/?s=${encodeURIComponent(query)}`;
         
         try {
-            const response = await fetch(url);
+            const response = await fetch(searchUrl);
             const html = await response.text();
-            // Burada sonuçları parse eden orijinal mantık devam edecek
-            return []; // Şimdilik boş dönelim, bağlantıyı test ediyoruz
+            
+            // Eğer buraya kadar geldiyse bağlantı başarılıdır
+            console.log('[DZB-LOG] Sayfa Alindi, Uzunluk: ' + html.length);
+            
+            // Önemli: Uygulamanın orijinal parse mantığı burada olmalı.
+            // Şimdilik bağlantıyı test etmek için boş dönüyoruz.
+            return []; 
         } catch (e) {
-            console.log('[DZB-LOG] Hata: ' + e.message);
+            console.log('[DZB-LOG] Baglanti Hatasi: ' + e.message);
             return [];
         }
     }
 };
 
-// Uygulamanın eklentiyi tanıması için gerekli export (Uygulamanın orijinal formatına göre)
-// Not: Eğer orijinal diziyou.js dosyan varsa, sadece link kısmını "dizibox.tv" olarak düzeltmen yeterli.
+// QuickJS motoru için eklentiyi dışa aktar (Export)
+export default scraper;
