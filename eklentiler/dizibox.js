@@ -1,101 +1,70 @@
-/**
- * DiziBox Scraper - Lite Version
- * Hiçbir dış bağımlılık (cheerio, vb.) gerektirmez.
- * Android/FireTV kütüphane hatalarını bypass eder.
- */
-
 var BASE_URL = 'https://www.dizibox.live';
 
-// Video oynatıcı için gerekli temel headerlar
-var STREAM_HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-    'Referer': BASE_URL + '/',
-    'Origin': BASE_URL
-};
+// Amazon/FireTV cihazları için timeout kontrolü eklenmiş fetch
+function fetchWithTimeout(url, options, timeout = 7000) {
+    return Promise.race([
+        fetch(url, options),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), timeout))
+    ]);
+}
 
-/**
- * Ana fonksiyon: Nuvio tarafından çağrılır.
- */
 function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
     return new Promise(function(resolve, reject) {
-        // DiziBox sadece diziler için sonuç üretir
-        if (mediaType !== 'tv') {
-            return resolve([]);
-        }
+        if (mediaType !== 'tv') return resolve([]);
 
-        console.log('[DiziBox] İşlem başlıyor... ID:', tmdbId);
+        // 1. ADIM: TMDB verisini beklemeden doğrudan arama yapmaya çalışıyoruz
+        // Bu, loglardaki timeout ve certificate trust hatalarını azaltır.
+        var tmdbUrl = 'https://api.themoviedb.org/3/tv/' + tmdbId + '?api_key=4ef0d7355d9ffb5151e987764708ce96';
 
-        // 1. ADIM: TMDB'den orijinal ismi al
-        var tmdbUrl = 'https://api.themoviedb.org/3/tv/' + tmdbId + '?language=tr-TR&api_key=4ef0d7355d9ffb5151e987764708ce96';
-
-        fetch(tmdbUrl)
+        fetchWithTimeout(tmdbUrl, {})
             .then(function(res) { return res.json(); })
             .then(function(data) {
                 var query = data.name || data.original_name;
-                if (!query) throw new Error('İsim bulunamadı');
-
-                // 2. ADIM: DiziBox üzerinde arama yap
+                // Arama URL'sini oluştur
                 var searchUrl = BASE_URL + '/?s=' + encodeURIComponent(query);
-                console.log('[DiziBox] Aranıyor:', query);
                 
-                return fetch(searchUrl, { headers: { 'User-Agent': STREAM_HEADERS['User-Agent'] } });
+                return fetchWithTimeout(searchUrl, {
+                    headers: { 'User-Agent': 'Mozilla/5.0' }
+                });
             })
             .then(function(res) { return res.text(); })
             .then(function(html) {
-                // 3. ADIM: Arama sonuçlarından dizi linkini regex ile ayıkla
-                // Cheerio hatası almamak için saf RegExp kullanıyoruz
+                // Saf Regex: En hızlı sonuç ayıklama yöntemi
                 var linkMatch = html.match(/href="(https:\/\/www\.dizibox\.live\/dizi\/[^"]+)"/);
-                
-                if (!linkMatch) {
-                    console.log('[DiziBox] Arama sonucu bulunamadı.');
-                    return resolve([]);
-                }
+                if (!linkMatch) return resolve([]);
 
-                var diziUrl = linkMatch[1];
-                // Linkten slug (dizi-adi) kısmını al
-                var slug = diziUrl.split('/dizi/')[1].replace(/\//g, '');
-                
-                // 4. ADIM: Hedef bölüm URL'sini inşa et
+                var slug = linkMatch[1].split('/dizi/')[1].replace(/\//g, '');
                 var targetUrl = BASE_URL + '/' + slug + '-' + seasonNum + '-sezon-' + episodeNum + '-bolum-hd-1-izle/';
-                console.log('[DiziBox] Bölüm linkine gidiliyor:', targetUrl);
 
-                return fetch(targetUrl, { headers: STREAM_HEADERS });
+                return fetchWithTimeout(targetUrl, {
+                    headers: { 'Referer': BASE_URL }
+                });
             })
             .then(function(res) { return res.text(); })
             .then(function(html) {
-                // 5. ADIM: Video iframe linkini yakala
-                // Farklı player tiplerine göre (king, moly, vb.) genişletilmiş regex
+                // Iframe'i hızlıca bul
                 var iframeMatch = html.match(/<iframe[^>]+src="([^"]+)"/i);
                 
-                var streams = [];
-                if (iframeMatch && iframeMatch[1]) {
+                if (iframeMatch) {
                     var finalUrl = iframeMatch[1];
                     if (finalUrl.startsWith('//')) finalUrl = 'https:' + finalUrl;
 
-                    console.log('[DiziBox] Başarılı! Link bulundu.');
-
-                    streams.push({
-                        name: "⌜ DiziBox ⌟",
-                        title: "1080p | Kaynak 1",
+                    resolve([{
+                        name: "DiziBox",
                         url: finalUrl,
                         quality: "1080p",
-                        headers: STREAM_HEADERS,
+                        headers: { 'Referer': BASE_URL, 'Origin': BASE_URL },
                         provider: "dizibox"
-                    });
+                    }]);
+                } else {
+                    resolve([]);
                 }
-
-                resolve(streams);
             })
             .catch(function(err) {
-                console.log('[DiziBox] Hata:', err.message);
+                console.log('[DiziBox Error]', err.message);
                 resolve([]);
             });
     });
 }
 
-// Export işlemleri
-if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { getStreams: getStreams };
-} else {
-    global.getStreams = getStreams;
-}
+if (typeof module !== 'undefined') module.exports = { getStreams };
