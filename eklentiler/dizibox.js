@@ -2,27 +2,31 @@ async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
     if (mediaType !== 'tv') return [];
 
     const HEADERS = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Referer': 'https://www.dizibox.live/',
-        'Origin': 'https://www.dizibox.live'
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36',
+        'Referer': 'https://www.dizibox.live/'
     };
 
     try {
+        // 1. TMDB Verisi
         const tmdbRes = await fetch(`https://api.themoviedb.org/3/tv/${tmdbId}?api_key=4ef0d7355d9ffb5151e987764708ce96&language=tr-TR`);
         const tmdbData = await tmdbRes.json();
         const slug = (tmdbData.original_name || tmdbData.name).toLowerCase().trim().replace(/\s+/g, '-').replace(/[^\w-]+/g, '');
 
         const epUrl = `https://www.dizibox.live/${slug}-${seasonNum}-sezon-${episodeNum}-bolum-hd-izle/`;
+        
+        // 2. Sayfa İçeriği
         const response = await fetch(epUrl, { headers: HEADERS });
         const html = await response.text();
         const streams = [];
 
-        // 1. ADIM: King Player ID Yakalama (Daha güvenli regex)
-        const idMatch = html.match(/video_id\s*[:=]\s*["'](\d+)["']/i);
-        
+        // 3. KRİTİK: Video ID Yakalama
+        // Dizibox bazen 'var video_id = "12345";' bazen de 'data-id="12345"' kullanır.
+        const idMatch = html.match(/video_id\s*[:=]\s*["']?(\d+)["']?/i) || 
+                        html.match(/data-id=["']?(\d+)["']?/i);
+
         if (idMatch) {
-            // ExoPlayer'ın UnknownHostException vermemesi için URL'yi tam formatta yazıyoruz
             const videoId = idMatch[1];
+            // DNS sorununu aşmak için tam URL protokolüyle ekliyoruz
             streams.push({
                 name: "DiziBox | King Player HD",
                 url: "https://www.dizibox.live/player/king.php?v=" + videoId,
@@ -34,35 +38,20 @@ async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
             });
         }
 
-        // 2. ADIM: Alternatif Kaynak (Vidmoly vb.)
-        const unescapeMatch = html.match(/unescape\("([^"]+)"\)/);
-        if (unescapeMatch) {
-            const decoded = decodeURIComponent(unescapeMatch[1]);
-            const src = decoded.match(/src=["']([^"']+)["']/i);
-            if (src) {
-                let vUrl = src[1];
-                if (vUrl.startsWith('//')) vUrl = 'https:' + vUrl;
-                
-                streams.push({
-                    name: "DiziBox | Alternatif Kaynak",
-                    url: vUrl,
-                    quality: "720p",
-                    headers: { 'Referer': epUrl }
-                });
-            }
-        }
-
-        // 3. ADIM: Güvenlik Ağı (Eğer hiç link yoksa TEST butonu yerine boş dönme)
-        if (streams.length === 0) {
-            // Sayfadaki ilk sayısal diziyi ID kabul et (Dizibox yapısı gereği)
-            const backupId = html.match(/(\d{6})/); 
-            if (backupId) {
-                streams.push({
-                    name: "DiziBox | Otomatik Kaynak",
-                    url: "https://www.dizibox.live/player/king.php?v=" + backupId[1],
-                    quality: "HD",
-                    headers: { 'Referer': epUrl }
-                });
+        // 4. Alternatif Kaynak (Vidmoly vb.)
+        const iframes = html.match(/<iframe[^>]+src=["']([^"']+)["']/gi);
+        if (iframes) {
+            for (let ifr of iframes) {
+                let src = ifr.match(/src=["']([^"']+)["']/i)[1];
+                if (src.includes('moly') || src.includes('player')) {
+                    if (src.startsWith('//')) src = 'https:' + src;
+                    streams.push({
+                        name: "DiziBox | Alternatif Kaynak",
+                        url: src,
+                        quality: "720p",
+                        headers: { 'Referer': epUrl }
+                    });
+                }
             }
         }
 
@@ -73,4 +62,4 @@ async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
 }
 
 if (typeof exports !== 'undefined') exports.getStreams = getStreams;
-if (typeof globalThis !== 'undefined') globalThis.getStreams = globalThis.getStreams || getStreams;
+if (typeof globalThis !== 'undefined') globalThis.getStreams = globalThis.getStreams || globalThis.getStreams;
