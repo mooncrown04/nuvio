@@ -1,83 +1,73 @@
 /**
- * Provider: DDizi (v34 - Precise Linker)
+ * Provider: DDizi (v36 - Kotlin Logic Port)
  */
 function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
     var mainUrl = "https://www.ddizi.im";
-    var tmdbUrl = 'https://api.themoviedb.org/3/tv/' + tmdbId + '?api_key=4ef0d7355d9ffb5151e987764708ce96&language=tr-TR';
+    var userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36";
 
     return new Promise(function(resolve) {
         if (mediaType !== 'tv') return resolve([]);
 
+        // 1. Dizi ismini al
+        var tmdbUrl = 'https://api.themoviedb.org/3/tv/' + tmdbId + '?api_key=4ef0d7355d9ffb5151e987764708ce96&language=tr-TR';
+        
         fetch(tmdbUrl).then(function(res) { return res.json(); }).then(function(data) {
             var name = data.name || data.original_name || "";
-            if (!name) return resolve([]);
-
-            // Arama sorgusunu gönder
-            var searchData = "arama=" + encodeURIComponent(name);
+            // 2. Arama yap (POST)
             return fetch(mainUrl + "/arama/", {
                 method: "POST",
-                headers: { 
-                    "Content-Type": "application/x-www-form-urlencoded",
-                    "User-Agent": "Mozilla/5.0",
-                    "Referer": mainUrl 
-                },
-                body: searchData
+                headers: { "Content-Type": "application/x-www-form-urlencoded", "User-Agent": userAgent, "Referer": mainUrl },
+                body: "arama=" + encodeURIComponent(name)
             });
         }).then(function(res) { return res.text(); }).then(function(searchHtml) {
-            if (!searchHtml) return null;
+            // 3. Bölüm linkini bul (Kotlin parseTitle mantığıyla)
+            var linkMatch = searchHtml.match(new RegExp('href="([^"]*' + episodeNum + '-(?:bolum|Bölüm)[^"]*)"', 'i'));
+            if (!linkMatch) return null;
 
-            // --- GELİŞMİŞ LİNK YAKALAMA ---
-            // Bölüm numarasını farklı formatlarda arıyoruz (Örn: "1.Bölüm", "1-bolum", "1. Bölüm")
-            var patterns = [
-                new RegExp('href="([^"]*[^/]*' + episodeNum + '[\\.-]bolum[^"]*)"', 'i'),
-                new RegExp('href="([^"]*izle/[^"]*' + episodeNum + '[^"]*)"', 'i')
-            ];
-
-            var targetUrl = "";
-            for (var i = 0; i < patterns.length; i++) {
-                var match = searchHtml.match(patterns[i]);
-                if (match && match[1] && match[1].indexOf('javascript') === -1) {
-                    targetUrl = match[1].trim();
-                    break;
-                }
-            }
-
-            if (targetUrl) {
-                if (targetUrl.indexOf('http') !== 0) targetUrl = mainUrl + (targetUrl.indexOf('/') === 0 ? "" : "/") + targetUrl;
-                // Bölüm sayfasına git
-                return fetch(targetUrl, { headers: { "Referer": mainUrl } });
-            }
-            return null;
+            var episodeUrl = linkMatch[1].indexOf('http') === 0 ? linkMatch[1] : mainUrl + (linkMatch[1][0] === '/' ? '' : '/') + linkMatch[1];
+            return fetch(episodeUrl, { headers: { "User-Agent": userAgent, "Referer": mainUrl } });
         }).then(function(res) {
             if (res && res.status === 200) return res.text();
             return null;
         }).then(function(html) {
-            if (!html) return resolve([]);
+            if (!html) return null;
+
+            // 4. og:video üzerinden Player URL'sini al (Kotlin loadLinks mantığı)
+            var ogVideoMatch = html.match(/property="og:video" content="([^"]+)"/i);
+            if (!ogVideoMatch) return null;
+
+            var playerUrl = ogVideoMatch[1];
+            return fetch(playerUrl, { headers: { "User-Agent": userAgent, "Referer": mainUrl } });
+        }).then(function(res) {
+            if (res && res.status === 200) return res.text();
+            return null;
+        }).then(function(playerHtml) {
+            if (!playerHtml) return resolve([]);
 
             var streams = [];
-            // Video Etiketlerini Taramak (iframe ve og:video)
-            var videoRegex = /property="og:video" content="([^"]+)"/i;
-            var iframeRegex = /<iframe[^>]*src="([^"]+)"/i;
+            
+            // 5. JWPlayer kaynaklarını ayıkla (sources: [{ file: "..." }])
+            var fileMatch = playerHtml.match(/file:\s*["']([^"']+)["']/i);
+            if (fileMatch && fileMatch[1]) {
+                var streamUrl = fileMatch[1];
+                
+                // master.txt gelirse m3u8 olarak işaretle
+                var isM3u8 = streamUrl.indexOf(".m3u8") !== -1 || streamUrl.indexOf("master.txt") !== -1;
 
-            var videoMatch = html.match(videoRegex);
-            var iframeMatch = html.match(iframeRegex);
-
-            if (videoMatch && videoMatch[1]) {
                 streams.push({
-                    name: "DDizi - Player",
-                    url: videoMatch[1].trim(),
-                    quality: "1080p"
+                    name: "DDizi - " + (isM3u8 ? "HLS" : "Direct"),
+                    url: streamUrl,
+                    quality: "1080p",
+                    headers: {
+                        "User-Agent": userAgent,
+                        "Referer": mainUrl,
+                        "Origin": mainUrl
+                    }
                 });
             }
 
-            if (iframeMatch && iframeMatch[1] && iframeMatch[1].indexOf('youtube') === -1) {
-                var iUrl = iframeMatch[1].trim();
-                if (iUrl.indexOf('//') === 0) iUrl = 'https:' + iUrl;
-                streams.push({ name: "DDizi - Alternatif", url: iUrl, quality: "720p" });
-            }
-
             resolve(streams);
-        }).catch(function() {
+        }).catch(function(e) {
             resolve([]);
         });
     });
