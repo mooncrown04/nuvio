@@ -8,7 +8,7 @@
       "description": "Yabancı Dizi izle, Tüm yabancı dizilerin yeni ve eski sezonlarını full hd izleyebileceğiniz elit site.",
       "version": "1.0.0",
       "author": "mooncrown",
-      "supportedTypes": ["movie", "tv"],
+      "supportedTypes": ["tv"],
       "filename": "eklentiler/dizibox.js",
       "enabled": true,
       "formats": ["mp4", "mkv", "hls", "m3u8"],
