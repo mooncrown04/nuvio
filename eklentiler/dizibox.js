@@ -1,72 +1,92 @@
+var VER = '1.0.5'; // KOD VERSİYONU
 var TMDB_KEY = '4ef0d7355d9ffb5151e987764708ce96';
 
+// Dizipal tarzı hafif Regex fonksiyonu
 function findFirst(html, pattern) {
     var regex = new RegExp(pattern, 'i');
     var match = regex.exec(html);
     return match ? match : null;
 }
 
-async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
-    if (mediaType !== 'tv') return [];
+function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
+    return new Promise(function(resolve, reject) {
+        // Log başlangıcında versiyonu basıyoruz
+        console.log('[Dizibox V' + VER + '] İşlem Başladı. ID:', tmdbId, 'S:', seasonNum, 'E:', episodeNum);
 
-    // www ve https bazen bloklanır, pw/live/tv uzantıları sürekli değişir.
-    // En stabil arama yolu budur.
-    var BASE_URL = 'http://www.dizibox.pw'; 
+        if (mediaType !== 'tv') return resolve([]);
 
-    try {
-        console.log('[Dizibox] TMDB Sorgusu Başlatıldı');
-        const tmdbRes = await fetch(`https://api.themoviedb.org/3/tv/${tmdbId}?api_key=${TMDB_KEY}&language=tr-TR`);
-        const tmdbData = await tmdbRes.json();
-        const query = tmdbData.name || tmdbData.original_name;
+        // Güncel adres (Bloklanırsa buradan değiştirilebilir)
+        var BASE_URL = 'https://www.dizibox.pw'; 
 
-        // ARAMA ADIMI: 30 saniyelik beklemeyi aşmak için timeout ekliyoruz
-        console.log('[Dizibox] Arama Yapılıyor:', query);
-        const searchUrl = `${BASE_URL}/?s=${encodeURIComponent(query)}`;
-        
-        const searchRes = await fetch(searchUrl, {
-            headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/110.0.0.0 Safari/537.36' },
-            method: 'GET'
-        });
-        
-        const searchHtml = await searchRes.text();
+        // 1. TMDB'den isim al
+        fetch('https://api.themoviedb.org/3/tv/' + tmdbId + '?api_key=' + TMDB_KEY + '&language=tr-TR')
+            .then(function(res) { return res.json(); })
+            .then(function(data) {
+                var query = data.name || data.original_name;
+                console.log('[Dizibox V' + VER + '] Aranan Dizi:', query);
 
-        // Regex ile link ayıklama
-        const linkMatch = findFirst(searchHtml, 'href="(http[^"]+dizibox[^"]+)"[^>]*rel="bookmark"') || 
-                          findFirst(searchHtml, '<h2[^>]*>\\s*<a href="([^"]+)"');
+                // 2. Arama Yap
+                var searchUrl = BASE_URL + '/?s=' + encodeURIComponent(query);
+                return fetch(searchUrl, { headers: { 'User-Agent': 'Mozilla/5.0' } });
+            })
+            .then(function(res) { return res.text(); })
+            .then(function(html) {
+                // Regex ile dizi ana sayfasını bul
+                var linkMatch = findFirst(html, 'href="(https?:\\/\\/[^"]+dizibox[^"]+)"[^>]*rel="bookmark"') || 
+                                findFirst(html, '<h2[^>]*>\\s*<a href="([^"]+)"');
 
-        if (!linkMatch) throw new Error('Dizi bulunamadı veya site erişimi engellendi');
+                if (!linkMatch) throw new Error('Arama sonucunda dizi bulunamadı');
 
-        const mainUrl = linkMatch[1].replace('https:', 'http:'); // SSL hatasını bypass et
-        const epUrl = `${mainUrl.replace(/\/$/, '')}-sezon-${seasonNum}-bolum-${episodeNum}-izle/`;
+                var mainUrl = linkMatch[1].replace(/\/$/, '');
+                var epUrl = mainUrl + '-sezon-' + seasonNum + '-bolum-' + episodeNum + '-izle/';
+                
+                console.log('[Dizibox V' + VER + '] Bölüm Sayfası:', epUrl);
+                return fetch(epUrl);
+            })
+            .then(function(res) { return res.text(); })
+            .then(function(epHtml) {
+                var streams = [];
 
-        console.log('[Dizibox] Bölüm Linki:', epUrl);
-        const epRes = await fetch(epUrl);
-        const epHtml = await epRes.text();
+                // --- OG ETİKETİ KONTROLÜ ---
+                // Bazı temalarda video doğrudan og:video içinde olabilir
+                var ogVideo = findFirst(epHtml, 'property="og:video" content="([^"]+)"');
+                if (ogVideo) {
+                    console.log('[Dizibox V' + VER + '] OG:Video Yakalandı');
+                    streams.push({
+                        name: '⌜ Dizibox ⌟ | OG Player',
+                        url: ogVideo[1],
+                        quality: '720p',
+                        headers: { 'Referer': BASE_URL }
+                    });
+                }
 
-        const streams = [];
-        const iframeRegex = /<iframe[^>]+src="([^"]+)"/gi;
-        let match;
+                // --- IFRAME TARAMASI ---
+                var iframeRegex = /<iframe[^>]+src="([^"]+)"/gi;
+                var match;
+                while ((match = iframeRegex.exec(epHtml)) !== null) {
+                    var src = match[1];
+                    if (src.includes('vidmoly') || src.includes('player') || src.includes('moly') || src.includes('king')) {
+                        var finalUrl = src.startsWith('//') ? 'https:' + src : src;
+                        streams.push({
+                            name: '⌜ Dizibox ⌟ | ' + (src.includes('vidmoly') ? 'Vidmoly' : 'Kaynak'),
+                            url: finalUrl,
+                            quality: '1080p',
+                            headers: { 'Referer': BASE_URL + '/' }
+                        });
+                    }
+                }
 
-        while ((match = iframeRegex.exec(epHtml)) !== null) {
-            let src = match[1];
-            if (src.includes('vidmoly') || src.includes('player') || src.includes('moly') || src.includes('king')) {
-                streams.push({
-                    name: "Dizibox | " + (src.includes('vidmoly') ? "Vidmoly" : "Player"),
-                    url: src.startsWith('//') ? 'https:' + src : src,
-                    quality: "1080p",
-                    headers: { 'Referer': BASE_URL + '/' }
-                });
-            }
-        }
-
-        return streams;
-
-    } catch (err) {
-        console.error("[Dizibox] Hata Detayı:", err.message);
-        return [];
-    }
+                console.log('[Dizibox V' + VER + '] Toplam Kaynak:', streams.length);
+                resolve(streams);
+            })
+            .catch(function(err) {
+                console.error('[Dizibox V' + VER + '] Hata:', err.message);
+                resolve([]);
+            });
+    });
 }
 
+// Nuvio / Mooncrown Export
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = { getStreams: getStreams };
 } else {
