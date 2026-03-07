@@ -1,72 +1,49 @@
 /**
- * Provider: Hybrid (v37 - Strict Name Match & Dizipal Fix)
+ * Provider: Hybrid (v38 - ExoPlayer Header Fix)
  */
 function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
-    var ddiziUrl = "https://www.ddizi.im";
-    var dizipalUrl = "https://dizipal.bar";
     var userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36";
 
     return new Promise(function(resolve) {
         if (mediaType !== 'tv') return resolve([]);
 
+        // TMDB üzerinden dizi ismini al ve sitelerde ara
         var tmdbUrl = 'https://api.themoviedb.org/3/tv/' + tmdbId + '?api_key=4ef0d7355d9ffb5151e987764708ce96&language=tr-TR';
         
         fetch(tmdbUrl).then(function(res) { return res.json(); }).then(function(data) {
             var name = data.name || data.original_name || "";
-            if (!name) return resolve([]);
+            // Dizipal arama motoruna git
+            return fetch("https://dizipal.bar/?s=" + encodeURIComponent(name), { headers: { "User-Agent": userAgent } });
+        }).then(function(res) { return res.text(); }).then(function(html) {
+            // Loglarındaki 'paradise-1-sezon-1-bolum-izle' linkini yakalama
+            var linkMatch = html.match(new RegExp('href="(https://dizipal\\.bar/bolum/[^"]*' + seasonNum + '-sezon-' + episodeNum + '-bolum[^"]*)"', 'i'));
+            if (!linkMatch) return null;
+            return fetch(linkMatch[1], { headers: { "User-Agent": userAgent } });
+        }).then(function(res) { return res.text(); }).then(function(pageHtml) {
+            // Embed URL'sini (x.ag2m4.cfd) yakala
+            var embedMatch = pageHtml.match(/iframe[^>]*src="([^"]+)"/i);
+            if (!embedMatch) return null;
+            var embedUrl = embedMatch[1];
+            return fetch(embedUrl, { headers: { "User-Agent": userAgent, "Referer": "https://dizipal.bar/" } });
+        }).then(function(res) { return res.text(); }).then(function(embedHtml) {
+            // Master.m3u8 linkini ve player başlıklarını ayıkla
+            var m3u8Match = embedHtml.match(/file:\s*["']([^"']+\.m3u8[^"']*)["']/i);
+            if (!m3u8Match) return resolve([]);
 
-            // İki siteye de eş zamanlı ama kontrollü istek at
-            var searchName = name.split(' ')[0]; // Ana kelimeyi al (Örn: "Dark")
-
-            // DDizi Araması
-            var ddiziSearch = fetch(ddiziUrl + "/arama/", {
-                method: "POST",
-                headers: { "Content-Type": "application/x-www-form-urlencoded", "User-Agent": userAgent, "Referer": ddiziUrl },
-                body: "arama=" + encodeURIComponent(name)
-            }).then(function(r) { return r.text(); });
-
-            // Dizipal Araması
-            var dizipalSearch = fetch(dizipalUrl + "/?s=" + encodeURIComponent(name), {
-                headers: { "User-Agent": userAgent }
-            }).then(function(r) { return r.text(); });
-
-            return Promise.all([ddiziSearch, dizipalSearch, name]);
-        }).then(function(results) {
-            var ddiziHtml = results[0];
-            var dizipalHtml = results[1];
-            var originalName = results[2].toLowerCase();
+            var videoUrl = m3u8Match[1];
             
-            var streams = [];
-
-            // --- DIZIPAL AYIKLAMA (Gelişmiş) ---
-            if (dizipalHtml) {
-                // Sadece tam isim eşleşen linkleri topla
-                var dizipalRegex = new RegExp('href="([^"]+)"[^>]*>([^<]*' + originalName + '[^<]*)', 'gi');
-                var dMatch;
-                while ((dMatch = dizipalRegex.exec(dizipalHtml)) !== null) {
-                    var link = dMatch[1];
-                    var text = dMatch[2].toLowerCase();
-                    // "Dark Wolf" gibi alakasız sonuçları ele, tam sezon/bölüm kontrolü yap
-                    if (text.indexOf(originalName) !== -1 && link.indexOf(seasonNum + "-sezon-" + episodeNum + "-bolum") !== -1) {
-                        streams.push({ name: "Dizipal", url: link, quality: "720p" });
-                        break;
-                    }
+            // --- KRİTİK NOKTA: ExoPlayer'a 403 Yedirmeme ---
+            resolve([{
+                name: "Dizipal - HLS",
+                url: videoUrl,
+                quality: "1080p",
+                headers: {
+                    "User-Agent": userAgent,
+                    "Referer": "https://x.ag2m4.cfd/", // Sunucunun beklediği anahtar
+                    "Origin": "https://x.ag2m4.cfd",
+                    "Accept": "*/*"
                 }
-            }
-
-            // --- DDizi AYIKLAMA (Kotlin Mantığı) ---
-            if (ddiziHtml) {
-                var ddiziRegex = new RegExp('href="([^"]*' + episodeNum + '-(?:bolum|Bölüm)[^"]*)"', 'i');
-                var ddMatch = ddiziHtml.match(ddiziRegex);
-                if (ddMatch) {
-                    var fullLink = ddMatch[1].indexOf('http') === 0 ? ddMatch[1] : ddiziUrl + (ddMatch[1][0] === '/' ? '' : '/') + ddMatch[1];
-                    streams.push({ name: "DDizi", url: fullLink, quality: "1080p" });
-                }
-            }
-
-            // Eğer linkler bulunduysa, ilk geçerli olanın içine girip asıl videoyu çekmemiz gerekecek
-            // Şimdilik sadece linkleri bulup bulmadığımızı test edelim
-            resolve(streams);
+            }]);
         }).catch(function() {
             resolve([]);
         });
