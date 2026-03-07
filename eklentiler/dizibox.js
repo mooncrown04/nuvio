@@ -1,72 +1,77 @@
-var VER = '1.3.0'; 
-// Saat farkı olsa bile dosyanın yüklendiğini görmek için düz log
-console.log('>>> [Dizibox V' + VER + '] KOD YÜKLENDİ - TEST BAŞLIYOR <<<');
+var VER = '1.4.0';
+console.log('[Dizibox V' + VER + '] Başlatıldı');
 
 var TMDB_KEY = '4ef0d7355d9ffb5151e987764708ce96';
 
-function findFirst(html, pattern) {
-    var regex = new RegExp(pattern, 'i');
-    var match = regex.exec(html);
-    return match ? match : null;
-}
+// Agresif Header yapısı (Dizipal'den esinlenildi)
+var HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+    'Accept-Language': 'tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7'
+};
 
 async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
-    console.log('[Dizibox V' + VER + '] Sorgu Tetiklendi. TMDB ID: ' + tmdbId);
-
     if (mediaType !== 'tv') return [];
 
     try {
-        // SSL/Saat hatasını aşmak için TMDB isteğini try-catch içine alıyoruz
-        console.log('[Dizibox V' + VER + '] 1. TMDB Bilgisi Çekiliyor...');
-        const tmdbRes = await fetch('https://api.themoviedb.org/3/tv/' + tmdbId + '?api_key=' + TMDB_KEY + '&language=tr-TR');
+        // 1. TMDB Bilgisi
+        const tmdbRes = await fetch(`https://api.themoviedb.org/3/tv/${tmdbId}?api_key=${TMDB_KEY}&language=tr-TR`);
         const tmdbData = await tmdbRes.json();
         const query = tmdbData.name || tmdbData.original_name;
-        
-        console.log('[Dizibox V' + VER + '] 2. Dizi Adı Bulundu: ' + query);
 
-        // PC Emülatörü için HTTP kullanımı (Sertifika hatasını bypass eder)
-        var BASE_URL = 'http://www.dizibox.pw'; 
-        const searchUrl = BASE_URL + '/?s=' + encodeURIComponent(query);
-        
-        console.log('[Dizibox V' + VER + '] 3. Arama Yapılıyor: ' + searchUrl);
-        
-        const sRes = await fetch(searchUrl, {
-            headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' }
+        // 2. Arama Sayfası (Dizipal'in başarılı olduğu protokolü taklit ediyoruz)
+        // NOT: .pw yerine .live veya .tv denenebilir eğer timeout devam ederse
+        const searchUrl = `https://www.dizibox.pw/?s=${encodeURIComponent(query)}`;
+        console.log(`[Dizibox V${VER}] İstek: ${searchUrl}`);
+
+        const response = await fetch(searchUrl, { 
+            headers: HEADERS,
+            method: 'GET'
         });
-        const html = await sRes.text();
 
-        // Regex ile link ayıklama
-        const linkMatch = findFirst(html, 'href="(http[^"]+dizibox[^"]+)"[^>]*rel="bookmark"') || 
-                          findFirst(html, '<h2[^>]*>\\s*<a href="([^"]+)"');
+        const html = await response.text();
+        
+        // Link yakalama (Daha esnek Regex)
+        const linkMatch = html.match(/href="(https?:\/\/(www\.)?dizibox\.[a-z]+\/[^"]+)"[^>]*rel="bookmark"/i) || 
+                          html.match(/<h2[^>]*>\s*<a href="([^"]+)"/i);
 
-        if (!linkMatch) {
-            console.log('[Dizibox V' + VER + '] !!! HATA: Arama sonuçlarında link bulunamadı.');
-            return [];
+        if (!linkMatch) throw new Error('Dizi bulunamadı');
+
+        const mainUrl = linkMatch[1].replace(/\/$/, '');
+        const epUrl = `${mainUrl}-sezon-${seasonNum}-bolum-${episodeNum}-izle/`;
+        
+        console.log(`[Dizibox V${VER}] Hedef: ${epUrl}`);
+
+        // 3. Iframe Yakalama
+        const epRes = await fetch(epUrl, { headers: HEADERS });
+        const epHtml = await epRes.text();
+
+        const streams = [];
+        const iframeRegex = /<iframe[^>]+src="([^"]+)"/gi;
+        let match;
+
+        while ((match = iframeRegex.exec(epHtml)) !== null) {
+            let src = match[1];
+            if (src.includes('vidmoly') || src.includes('player') || src.includes('moly')) {
+                streams.push({
+                    name: `⌜ Dizibox ⌟ | V${VER}`,
+                    url: src.startsWith('//') ? 'https:' + src : src,
+                    quality: '1080p',
+                    headers: { 'Referer': 'https://www.dizibox.pw/' }
+                });
+            }
         }
 
-        // HTTPS'i HTTP'ye çevirerek emülatörün "Certificate Trust" hatasını atlıyoruz
-        const targetUrl = linkMatch[1].replace('https:', 'http:').replace(/\/$/, '') + 
-                          '-sezon-' + seasonNum + '-bolum-' + episodeNum + '-izle/';
-        
-        console.log('[Dizibox V' + VER + '] 4. Bölüm Sayfasına Gidiliyor: ' + targetUrl);
-
-        return [{
-            name: "⌜ Dizibox V" + VER + " ⌟",
-            url: targetUrl,
-            quality: "1080p",
-            headers: { 'Referer': BASE_URL }
-        }];
+        return streams;
 
     } catch (err) {
-        console.log('[Dizibox V' + VER + '] !!! KRİTİK HATA: ' + err.message);
-        // Eğer hata TMDB'den kaynaklıysa, loglardan göreceğiz.
+        console.log(`[Dizibox V${VER}] Hata: ${err.message}`);
         return [];
     }
 }
 
-// Global Export
 if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { getStreams: getStreams };
+    module.exports = { getStreams };
 } else {
     global.getStreams = getStreams;
 }
