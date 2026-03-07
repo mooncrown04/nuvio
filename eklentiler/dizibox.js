@@ -20,15 +20,43 @@ var STREAM_HEADERS = {
     'DNT': '1'
 };
 
+// Regex yardımcıları (DiziPal'deki gibi)
+function findFirst(html, pattern) {
+    var regex = new RegExp(pattern, 'i');
+    var match = regex.exec(html);
+    return match ? match : null;
+}
+
+function findAll(html, pattern) {
+    var results = [];
+    var regex = new RegExp(pattern, 'gi');
+    var match;
+    while ((match = regex.exec(html)) !== null) {
+        results.push(match);
+    }
+    return results;
+}
+
+// Cookie ile istek (DiziPal'deki gibi)
+function fetchWithCookie(url, customHeaders) {
+    var headers = Object.assign({}, HEADERS, customHeaders || {}, {
+        'Cookie': 'LockUser=true; isTrustedUser=true; dbxu=' + Date.now()
+    });
+    
+    return fetch(url, { headers: headers });
+}
+
 function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
     return new Promise(function(resolve, reject) {
         if (mediaType !== 'tv') {
+            console.log('[DiziBox] Sadece TV desteklenir');
             return resolve([]);
         }
 
         console.log('[DiziBox] Başladı:', tmdbId, 'S:', seasonNum, 'E:', episodeNum);
 
-        var tmdbUrl = 'https://api.themoviedb.org/3/tv/' + tmdbId + '?api_key=4ef0d7355d9ffb5151e987764708ce96&language=tr-TR';
+        var tmdbUrl = 'https://api.themoviedb.org/3/tv/' + tmdbId + 
+                      '?api_key=4ef0d7355d9ffb5151e987764708ce96&language=tr-TR';
 
         fetch(tmdbUrl)
             .then(function(res) { return res.json(); })
@@ -40,18 +68,20 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                 }
                 console.log('[DiziBox] Dizi:', title);
 
+                // Slug oluştur (DiziPal'deki gibi)
                 var slug = title.toLowerCase().trim()
                     .replace(/[^a-z0-9]+/g, '-')
                     .replace(/^-+|-+$/g, '');
 
-                var epUrl = BASE_URL + '/' + slug + '-' + seasonNum + '-sezon-' + episodeNum + '-bolum-hd-izle/';
+                // Direkt bölüm URL'si (DiziYou'daki gibi)
+                var epUrl = BASE_URL + '/' + slug + '-' + seasonNum + 
+                           '-sezon-' + episodeNum + '-bolum-hd-izle/';
                 console.log('[DiziBox] URL:', epUrl);
 
-                // Cloudflare bypass denemeleri
-                return tryFetchWithBypass(epUrl, title);
+                return loadEpisodePage(epUrl, title);
             })
-            .then(function(result) {
-                resolve(result || []);
+            .then(function(streams) {
+                resolve(streams || []);
             })
             .catch(function(err) {
                 console.error('[DiziBox] Hata:', err.message || err);
@@ -60,103 +90,62 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
     });
 }
 
-function tryFetchWithBypass(epUrl, title) {
-    // Yöntem 1: Normal fetch (cookie ile)
-    var headersWithCookie = Object.assign({}, HEADERS, {
-        'Cookie': 'LockUser=true; isTrustedUser=true; dbxu=' + Date.now()
-    });
+function loadEpisodePage(epUrl, title) {
+    console.log('[DiziBox] Sayfa yükleniyor:', epUrl);
 
-    return fetch(epUrl, { headers: headersWithCookie })
+    return fetchWithCookie(epUrl)
         .then(function(res) { return res.text(); })
         .then(function(html) {
-            console.log('[DiziBox] Normal fetch boyut:', html.length);
+            console.log('[DiziBox] Sayfa boyutu:', html.length);
+
+            // Cloudflare kontrolü (SineWix'teki gibi)
+            if (html.length < 280000) {
+                console.log('[DiziBox] Cloudflare engeli veya boş sayfa');
+                return [];
+            }
+
+            // Video ID çıkar (DiziPal'deki regex mantığı)
+            var videoIdMatch = findFirst(html, 'video_id["\']?\\s*[:=]\\s*["\']?(\\d+)["\']?');
+            if (!videoIdMatch) {
+                console.log('[DiziBox] Video ID bulunamadı');
+                return [];
+            }
+
+            var videoId = videoIdMatch[1];
+            console.log('[DiziBox] Video ID:', videoId);
+
+            // Stream oluştur
+            var streams = [];
             
-            // Başarılı mı?
-            if (html.length > 300000 && html.indexOf('video_id') !== -1) {
-                console.log('[DiziBox] Normal fetch başarılı');
-                return parseStreams(html, title);
+            // King Player (ana kaynak)
+            var playerUrl = BASE_URL + '/player/king.php?wmode=opaque&v=' + videoId;
+            streams.push({
+                name: '⌜ DiziBox ⌟ | King Player',
+                title: title + ' · 1080p',
+                url: playerUrl,
+                quality: '1080p',
+                headers: STREAM_HEADERS,
+                provider: 'dizibox'
+            });
+
+            // Alternatif embed varsa ekle
+            var embedMatch = findFirst(html, 'embed_src["\']?\\s*[:=]\\s*["\']?([^"\'>]+)["\']?');
+            if (embedMatch && embedMatch[1].includes('dizibox')) {
+                streams.push({
+                    name: '⌜ DiziBox ⌟ | Alternatif',
+                    title: title + ' · 720p',
+                    url: embedMatch[1],
+                    quality: '720p',
+                    headers: STREAM_HEADERS,
+                    provider: 'dizibox'
+                });
             }
-            
-            // Cloudflare engeli var, app.bypass dene (eğer varsa)
-            console.log('[DiziBox] Cloudflare engeli, bypass deneniyor...');
-            return tryAppBypass(epUrl, title);
+
+            return streams;
         });
 }
 
-function tryAppBypass(epUrl, title) {
-    // Nuvio'nun app objesinde bypass var mı kontrol et
-    if (typeof app === 'undefined') {
-        console.log('[DiziBox] app objesi yok');
-        return [];
-    }
-
-    // Yöntem 2: app.fetchCloudflare (varsayalım)
-    if (app.fetchCloudflare) {
-        return app.fetchCloudflare(epUrl, {
-            headers: HEADERS,
-            cookies: {
-                'LockUser': 'true',
-                'isTrustedUser': 'true',
-                'dbxu': Date.now().toString()
-            }
-        }).then(function(res) {
-            return res.text();
-        }).then(function(html) {
-            console.log('[DiziBox] Bypass fetch boyut:', html.length);
-            if (html.length > 300000) {
-                return parseStreams(html, title);
-            }
-            return [];
-        });
-    }
-
-    // Yöntem 3: app.get (Kotlin'deki gibi)
-    if (app.get) {
-        return app.get(epUrl, {
-            headers: HEADERS,
-            cookies: {
-                'LockUser': 'true',
-                'isTrustedUser': 'true',
-                'dbxu': Date.now().toString()
-            },
-            interceptor: true // Cloudflare interceptor
-        }).then(function(res) {
-            return res.text();
-        }).then(function(html) {
-            console.log('[DiziBox] App.get boyut:', html.length);
-            if (html.length > 300000) {
-                return parseStreams(html, title);
-            }
-            return [];
-        });
-    }
-
-    console.log('[DiziBox] Bypass metodu bulunamadı');
-    return [];
-}
-
-function parseStreams(html, title) {
-    var videoIdMatch = html.match(/video_id["']?\s*[:=]\s*["']?(\d+)["']?/i);
-    if (!videoIdMatch) {
-        console.log('[DiziBox] Video ID bulunamadı');
-        return [];
-    }
-
-    var videoId = videoIdMatch[1];
-    console.log('[DiziBox] Video ID:', videoId);
-
-    var playerUrl = BASE_URL + '/player/king.php?wmode=opaque&v=' + videoId;
-
-    return [{
-        name: '⌜ DiziBox ⌟ | King Player',
-        title: title + ' · 1080p',
-        url: playerUrl,
-        quality: '1080p',
-        headers: STREAM_HEADERS,
-        provider: 'dizibox'
-    }];
-}
-
+// Export (SineWix/DiziPal/DiziYou ile aynı)
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = { getStreams: getStreams };
 } else {
