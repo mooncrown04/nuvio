@@ -1,75 +1,88 @@
 /**
- * Provider: DDizi (v44 - Debug Mode & Aggressive Headers)
+ * Provider: DDizi (v45 - Ultra Debug)
  */
 function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
-    var mainUrl = "https://www.ddizi.im";
-    var userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36";
+    const mainUrl = "https://www.ddizi.im";
+    const UA = "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Mobile Safari/537.36";
 
-    console.log("--- DDizi Debug Start ---");
-
-    return new Promise(function(resolve) {
+    return new Promise((resolve) => {
         if (mediaType !== 'tv') return resolve([]);
 
-        var tmdbUrl = 'https://api.themoviedb.org/3/tv/' + tmdbId + '?api_key=4ef0d7355d9ffb5151e987764708ce96&language=tr-TR';
-        
-        fetch(tmdbUrl).then(function(res) { return res.json(); }).then(function(data) {
-            var name = data.name || data.original_name || "";
-            console.log("Searching for: " + name);
-            return fetch(mainUrl + "/arama/", {
+        // 1. TMDB Bilgisi Al
+        fetch(`https://api.themoviedb.org/3/tv/${tmdbId}?api_key=4ef0d7355d9ffb5151e987764708ce96&language=tr-TR`)
+        .then(res => res.json())
+        .then(data => {
+            const query = data.name || data.original_name;
+            console.error(`[DEBUG] Aranan Dizi: ${query} | Sezon: ${seasonNum} Ep: ${episodeNum}`);
+            
+            // 2. Arama Yap
+            return fetch(`${mainUrl}/arama/`, {
                 method: "POST",
-                headers: { "Content-Type": "application/x-www-form-urlencoded", "User-Agent": userAgent, "Referer": mainUrl },
-                body: "arama=" + encodeURIComponent(name)
+                headers: { "Content-Type": "application/x-www-form-urlencoded", "User-Agent": UA, "Referer": mainUrl },
+                body: `arama=${encodeURIComponent(query)}`
             });
-        }).then(function(res) { return res.text(); }).then(function(searchHtml) {
-            var regex = new RegExp('href="([^"]*' + episodeNum + '-(?:bolum|Bölüm)[^"]*)"', 'i');
-            var match = searchHtml.match(regex);
-            if (!match) { console.log("Episode not found in search"); return null; }
+        })
+        .then(res => res.text())
+        .then(searchHtml => {
+            // REGEX DÜZELTME: Daha spesifik arama yapıyoruz
+            // "dizi-adi-1-sezon-5-bolum" veya "dizi-adi-5-bolum" formatlarını yakala
+            const regex = new RegExp(`href="([^"]*${episodeNum}-(?:bolum|Bölüm|bolum-izle)[^"]*)"`, 'i');
+            const match = searchHtml.match(regex);
+            
+            if (!match) {
+                console.error("[DEBUG] Bölüm linki bulunamadı! Arama sayfası HTML uzunluğu: " + searchHtml.length);
+                return null;
+            }
 
-            var epUrl = match[1].indexOf('http') === 0 ? match[1] : mainUrl + (match[1][0] === '/' ? '' : '/') + match[1];
-            console.log("Episode Page: " + epUrl);
-            return fetch(epUrl, { headers: { "User-Agent": userAgent, "Referer": mainUrl } });
-        }).then(function(res) { return res.text(); }).then(function(html) {
+            const epUrl = match[1].startsWith('http') ? match[1] : mainUrl + (match[1].startsWith('/') ? '' : '/') + match[1];
+            console.error("[DEBUG] Gidilen Bölüm Sayfası: " + epUrl);
+            return fetch(epUrl, { headers: { "User-Agent": UA, "Referer": mainUrl } });
+        })
+        .then(res => res ? res.text() : null)
+        .then(html => {
             if (!html) return null;
-            var playerMatch = html.match(/\/player\/oynat\/[a-z0-9]+/i);
-            if (!playerMatch) { console.log("Player ID not found"); return null; }
+            const playerMatch = html.match(/\/player\/oynat\/([a-z0-9]+)/i);
+            
+            if (!playerMatch) {
+                console.error("[DEBUG] Player ID (oynat/xxx) bulunamadı!");
+                return null;
+            }
 
-            var playerUrl = mainUrl + playerMatch[0];
-            console.log("Fetching Player: " + playerUrl);
-            return fetch(playerUrl, { headers: { "User-Agent": userAgent, "Referer": mainUrl } });
-        }).then(function(res) {
-            var finalPlayerUrl = res.url;
-            return res.text().then(function(playerHtml) {
-                return { html: playerHtml, url: finalPlayerUrl };
-            });
-        }).then(function(result) {
-            if (!result || !result.html) return resolve([]);
+            const playerUrl = mainUrl + playerMatch[0];
+            console.error("[DEBUG] Player Sayfası Çekiliyor: " + playerUrl);
+            return fetch(playerUrl, { headers: { "User-Agent": UA, "Referer": mainUrl } }).then(r => r.text().then(t => ({h: t, u: r.url})));
+        })
+        .then(result => {
+            if (!result || !result.h) return resolve([]);
 
-            var fileMatch = result.html.match(/file:\s*["']([^"']+)["']/i);
-            if (!fileMatch) { console.log("Video source (file:) not found in player html"); return resolve([]); }
+            // Video URL yakalama
+            const fileMatch = result.h.match(/file:\s*["']([^"']+)["']/i);
+            if (!fileMatch) {
+                console.error("[DEBUG] HTML içinde 'file:' etiketi yok!");
+                return resolve([]);
+            }
 
-            var videoUrl = fileMatch[1];
-            console.log("CRITICAL - Found Video URL: " + videoUrl);
-            console.log("Using Referer: " + result.url);
+            let videoUrl = fileMatch[1];
+            if (videoUrl.startsWith('//')) videoUrl = 'https:' + videoUrl;
+
+            console.error("[DEBUG] EXOPLAYER'A GİDEN URL: " + videoUrl);
+            console.error("[DEBUG] KULLANILAN REFERER: " + result.u);
 
             resolve([{
-                name: "DDizi (v44 - Debug)",
+                name: "DDizi (v45 Debug)",
                 url: videoUrl,
                 quality: "1080p",
                 headers: {
-                    "User-Agent": userAgent,
-                    "Referer": result.url,
-                    "Origin": mainUrl,
-                    "Accept": "*/*",
-                    "Range": "bytes=0-", // Bazı sunucular partial content için bunu zorunlu tutar
-                    "X-Requested-With": "XMLHttpRequest" // Bot olmadığımızı kanıtlamak için
+                    "User-Agent": UA,
+                    "Referer": result.u, // Player URL'sini referer olarak gönderiyoruz
+                    "Origin": "https://www.ddizi.im",
+                    "X-Requested-With": "XMLHttpRequest"
                 }
             }]);
-        }).catch(function(err) {
-            console.log("Error in DDizi: " + err);
+        })
+        .catch(err => {
+            console.error("[DEBUG] HATA: " + err.message);
             resolve([]);
         });
     });
 }
-
-if (typeof module !== 'undefined') { module.exports = { getStreams: getStreams }; }
-globalThis.getStreams = getStreams;
