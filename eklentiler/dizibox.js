@@ -8,27 +8,32 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
     return new Promise(function(resolve, reject) {
         if (mediaType !== 'tv') return resolve([]);
 
-        // 1. TMDB'den ismi al ve slug oluştur
-        var tmdbUrl = 'https://api.themoviedb.org/3/tv/' + tmdbId + '?api_key=4ef0d7355d9ffb5151e987764708ce96&language=tr-TR';
-
-        fetch(tmdbUrl)
+        // 1. TMDB'den ismi al
+        fetch('https://api.themoviedb.org/3/tv/' + tmdbId + '?api_key=4ef0d7355d9ffb5151e987764708ce96&language=tr-TR')
             .then(function(res) { return res.json(); })
             .then(function(data) {
-                var name = data.original_name || data.name;
-                var slug = name.toLowerCase().trim()
-                    .replace(/[üçşğöı]/g, function(m) { return {'ü':'u','ç':'c','ş':'s','ğ':'g','ö':'o','ı':'i'}[m]; })
-                    .replace(/[^a-z0-9]+/g, '-')
-                    .replace(/^-+|-+$/g, '');
+                var query = data.name || data.original_name;
+                console.log('[Dizigom] Aranan Dizi: ' + query);
 
-                // Dizigom'un muhtemel URL varyasyonlarını sırayla deneyeceğiz
-                var epUrl = BASE_URL + '/dizi/' + slug + '-' + seasonNum + '-sezon-' + episodeNum + '-bolum/';
-                console.log('[Dizigom] Sayfa Analiz Ediliyor: ' + epUrl);
+                // 2. Sitede arama yap (DiziYou mantığı)
+                return fetch(BASE_URL + '/?s=' + encodeURIComponent(query), { headers: HEADERS });
+            })
+            .then(function(res) { return res.text(); })
+            .then(function(searchHtml) {
+                // 3. Arama sonucundan doğru dizi linkini ayıkla
+                var linkMatch = searchHtml.match(/href="(https:\/\/dizigom104\.com\/dizi\/[^"]+)"/i);
+                if (!linkMatch) throw new Error('Dizi bulunamadı');
+
+                var showUrl = linkMatch[1].replace(/\/$/, '');
+                // Bölüm URL'sini oluştur
+                var epUrl = showUrl + '-' + seasonNum + '-sezon-' + episodeNum + '-bolum/';
+                console.log('[Dizigom] Bölüm Sayfası: ' + epUrl);
 
                 return fetch(epUrl, { headers: HEADERS });
             })
-            .then(function(res) { 
-                if(res.status === 404) {
-                    // Eğer 404 ise bir de sonuna -hd1 ekleyip dene (Breaking Bad örneğindeki gibi)
+            .then(function(res) {
+                if (res.status === 404) {
+                    // 404 ise alternatif (HD1) dene
                     return fetch(res.url.replace(/\/$/, '') + '-hd1/', { headers: HEADERS });
                 }
                 return res;
@@ -36,30 +41,19 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
             .then(function(res) { return res.text(); })
             .then(function(html) {
                 var streams = [];
-                
-                // 1. Yöntem: Standart Iframe Yakalama (Vidmoly, Moly vb.)
-                var iframeRegex = /src="([^"]*(?:vidmoly|moly|player|embed|ok\.ru)[^"]*)"/gi;
+                // 4. Video kaynaklarını tara
+                var videoRegex = /src="([^"]*(?:vidmoly|moly|player|embed|ok\.ru)[^"]*)"/gi;
                 var match;
-                while ((match = iframeRegex.exec(html)) !== null) {
+                while ((match = videoRegex.exec(html)) !== null) {
                     var src = match[1].startsWith('//') ? 'https:' + match[1] : match[1];
-                    if (!streams.find(s => s.url === src)) {
-                        streams.push({
-                            name: '⌜ Dizigom ⌟ | Kaynak',
-                            url: src,
-                            quality: '1080p',
-                            headers: { 'Referer': BASE_URL + '/' }
-                        });
-                    }
+                    streams.push({
+                        name: '⌜ Dizigom ⌟ | ' + (src.includes('moly') ? 'Moly' : 'Kaynak'),
+                        url: src,
+                        quality: '1080p',
+                        headers: { 'Referer': BASE_URL + '/' }
+                    });
                 }
-
-                // 2. Yöntem: Sayfa içindeki gizli ID'yi yakala (DiziYou mantığı)
-                var idMatch = html.match(/data-id="(\d+)"/i) || html.match(/post_id\s*[:=]\s*(\d+)/i);
-                if (idMatch && streams.length === 0) {
-                    console.log('[Dizigom] Gizli ID bulundu: ' + idMatch[1]);
-                    // Gelecekte bu ID ile doğrudan API isteği atılabilir
-                }
-
-                console.log('[Dizigom] İşlem bitti. Bulunan link: ' + streams.length);
+                console.log('[Dizigom] Bitti. Link Sayısı: ' + streams.length);
                 resolve(streams);
             })
             .catch(function(err) {
@@ -69,6 +63,6 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
     });
 }
 
-// Global Export (Nuvio / SineWix Uyumluluğu)
+// Export
 if (typeof module !== 'undefined') { module.exports = { getStreams: getStreams }; }
 globalThis.getStreams = getStreams;
