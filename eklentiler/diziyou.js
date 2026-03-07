@@ -1,43 +1,31 @@
-console.log('[DZB-LOG] Diziyou Modulu Baslatildi');
-
-// Uygulamanın aradığı ana fonksiyonlar
+// Uygulamanın tanıması için global seviyede tanımlama yapıyoruz
 const scraper = {
-    // 1. Arama Fonksiyonu
+    // 1. Arama Fonksiyonu: Uygulama bir şey arattığında burası çalışır
     search: async function(query) {
-        console.log('[DZB-LOG] Arama yapiliyor: ' + query);
-        try {
-            // Arama isteğini doğrudan Dizibox'a yönlendiriyoruz
-            const searchUrl = 'https://www.dizibox.tv/?s=' + encodeURIComponent(query);
-            return [{
-                name: "Dizibox Sonucu: " + query,
-                url: searchUrl,
-                poster: "" 
-            }];
-        } catch (e) {
-            return [];
-        }
+        console.log("Diziyou: Arama yapılıyor -> " + query);
+        // Test amaçlı sabit bir sonuç döndürelim
+        return [{
+            name: query + " - Dizibox Sonucu",
+            url: "https://www.dizibox.tv/?s=" + encodeURIComponent(query),
+            poster: "https://www.dizibox.tv/favicon.ico"
+        }];
     },
 
-    // 2. Uygulamanın özellikle aradığı o kritik fonksiyon: getStreams
+    // 2. KRİTİK FONKSİYON: Uygulamanın logda "bulamadım" dediği yer
     getStreams: async function(url) {
-        console.log('[DZB-LOG] Yayınlar getiriliyor: ' + url);
-        try {
-            // Burası video linklerinin döndüğü yer
-            // Şimdilik sistemin çalıştığını görmek için boş dönüyoruz
-            return [];
-        } catch (e) {
-            console.log('[DZB-LOG] getStreams Hatası: ' + e.message);
-            return [];
-        }
+        console.log("Diziyou: Yayınlar alınıyor -> " + url);
+        // Uygulamanın çökmemesi için şimdilik boş bir liste döndürüyoruz
+        return [];
     }
 };
 
-// Uygulamanın hata vermemesi için export işlemi
+// Uygulamanın eklentiyi görmesi için dışa aktarma (Export)
 if (typeof module !== 'undefined') {
     module.exports = scraper;
 } else {
-    globalThis.getStreams = scraper.getStreams;
+    // Bazı ortamlar için global tanımlama
     globalThis.search = scraper.search;
+    globalThis.getStreams = scraper.getStreams;
 }
 
-console.log('[DZB-LOG] Modul Disa Aktarildi');
+console.log("Diziyou: Modül başarıyla yüklendi!");
