@@ -1,13 +1,15 @@
-var VER = '1.4.0';
+var VER = '1.4.5';
 console.log('[Dizibox V' + VER + '] Başlatıldı');
 
 var TMDB_KEY = '4ef0d7355d9ffb5151e987764708ce96';
 
-// Agresif Header yapısı (Dizipal'den esinlenildi)
+// Dizipal'in loglarda görülen başarılı Header yapısı
 var HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-    'Accept-Language': 'tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7'
+    'Accept-Language': 'tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7',
+    'Cache-Control': 'no-cache',
+    'Pragma': 'no-cache'
 };
 
 async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
@@ -19,30 +21,33 @@ async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
         const tmdbData = await tmdbRes.json();
         const query = tmdbData.name || tmdbData.original_name;
 
-        // 2. Arama Sayfası (Dizipal'in başarılı olduğu protokolü taklit ediyoruz)
-        // NOT: .pw yerine .live veya .tv denenebilir eğer timeout devam ederse
-        const searchUrl = `https://www.dizibox.pw/?s=${encodeURIComponent(query)}`;
-        console.log(`[Dizibox V${VER}] İstek: ${searchUrl}`);
+        // 2. Arama - Domain Alternatifi
+        // .pw engelliyse alternatifleri sırayla dene
+        const domains = ['https://www.dizibox.tv', 'https://www.dizibox.pw'];
+        let html = "";
+        let usedDomain = "";
 
-        const response = await fetch(searchUrl, { 
-            headers: HEADERS,
-            method: 'GET'
-        });
+        for (let domain of domains) {
+            console.log(`[Dizibox V${VER}] Deneniyor: ${domain}`);
+            try {
+                const searchRes = await fetch(`${domain}/?s=${encodeURIComponent(query)}`, { headers: HEADERS });
+                html = await searchRes.text();
+                if (html && html.length > 500) { 
+                    usedDomain = domain;
+                    break; 
+                }
+            } catch (e) { continue; }
+        }
 
-        const html = await response.text();
-        
-        // Link yakalama (Daha esnek Regex)
-        const linkMatch = html.match(/href="(https?:\/\/(www\.)?dizibox\.[a-z]+\/[^"]+)"[^>]*rel="bookmark"/i) || 
-                          html.match(/<h2[^>]*>\s*<a href="([^"]+)"/i);
+        if (!html || html.length < 500) throw new Error('Site içeriği boş (Engellendi)');
 
-        if (!linkMatch) throw new Error('Dizi bulunamadı');
+        // 3. Link Ayıklama
+        const linkMatch = html.match(/href="(https?:\/\/[^"]+dizibox[^"]+)"[^>]*rel="bookmark"/i);
+        if (!linkMatch) throw new Error('Dizi linki bulunamadı');
 
-        const mainUrl = linkMatch[1].replace(/\/$/, '');
-        const epUrl = `${mainUrl}-sezon-${seasonNum}-bolum-${episodeNum}-izle/`;
-        
-        console.log(`[Dizibox V${VER}] Hedef: ${epUrl}`);
+        const epUrl = linkMatch[1].replace(/\/$/, '') + `-sezon-${seasonNum}-bolum-${episodeNum}-izle/`;
+        console.log(`[Dizibox V${VER}] Bölüm Sayfası: ${epUrl}`);
 
-        // 3. Iframe Yakalama
         const epRes = await fetch(epUrl, { headers: HEADERS });
         const epHtml = await epRes.text();
 
@@ -52,12 +57,12 @@ async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
 
         while ((match = iframeRegex.exec(epHtml)) !== null) {
             let src = match[1];
-            if (src.includes('vidmoly') || src.includes('player') || src.includes('moly')) {
+            if (src.includes('vidmoly') || src.includes('player') || src.includes('moly') || src.includes('king')) {
                 streams.push({
                     name: `⌜ Dizibox ⌟ | V${VER}`,
                     url: src.startsWith('//') ? 'https:' + src : src,
                     quality: '1080p',
-                    headers: { 'Referer': 'https://www.dizibox.pw/' }
+                    headers: { 'Referer': usedDomain + '/' }
                 });
             }
         }
