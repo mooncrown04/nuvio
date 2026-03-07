@@ -1,22 +1,11 @@
-var VER = '1.9.0-G-PROXY';
-console.log('[Dizibox V' + VER + '] Google Proxy Aktif');
+var VER = '1.9.5-G-BYPASS';
+console.log('[Dizibox V' + VER + '] Google Bypass Modu Devreye Girdi');
 
 var TMDB_KEY = '4ef0d7355d9ffb5151e987764708ce96';
 
-// Google üzerinden veriyi bypass ederek çekmek için bir yöntem
-async function googleProxyFetch(url) {
-    // Google Translate altyapısını bir proxy gibi kullanıyoruz
-    const proxyUrl = `https://translate.google.com/translate?sl=auto&tl=en&u=${encodeURIComponent(url)}`;
-    
-    try {
-        const res = await fetch(proxyUrl, {
-            headers: { 'User-Agent': 'Mozilla/5.0' }
-        });
-        return await res.text();
-    } catch (e) {
-        console.log("Bağlantı hatası: " + e.message);
-        return null;
-    }
+// Google Translate'i bir tünel gibi kullanıyoruz
+function getGoogleProxyUrl(target) {
+    return `https://translate.google.com/translate?sl=en&tl=tr&u=${encodeURIComponent(target)}`;
 }
 
 async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
@@ -27,40 +16,48 @@ async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
         const tmdbData = await tmdbRes.json();
         const query = tmdbData.name || tmdbData.original_name;
 
-        // Adres olarak .live kullanıyoruz
-        const targetUrl = `https://www.dizibox.live/?s=${encodeURIComponent(query)}`;
-        console.log(`[Dizibox] Google üzerinden sorgulanıyor...`);
+        // Arama sayfasını Google üzerinden çek
+        const searchUrl = `https://www.dizibox.live/?s=${encodeURIComponent(query)}`;
+        console.log(`[Dizibox] Tünel açılıyor: ${searchUrl}`);
 
-        const html = await googleProxyFetch(targetUrl);
+        const res = await fetch(getGoogleProxyUrl(searchUrl));
+        const html = await res.text();
 
-        if (!html) throw new Error('Ağ engeli aşılamadı.');
+        if (!html || html.length < 1000) throw new Error('Google Tüneli yanıt vermedi.');
 
-        // Google Translate bazen HTML yapısını değiştirir, regex'i esnetiyoruz
-        const linkMatch = html.match(/href="([^"]+dizibox\.live\/[^"]+)"[^>]*rel="bookmark"/i) || 
-                          html.match(/href="([^"]+dizibox\.live\/[^"]+)"/i);
-                          
-        if (!linkMatch) throw new Error('Dizi linki bulunamadı.');
+        // Link ayıklama (Google Translate linkleri biraz değiştirir, o yüzden esnek regex)
+        const linkMatch = html.match(/href="([^"]+dizibox\.live\/[^"]+)"/i);
+        if (!linkMatch) throw new Error('Dizi bulunamadı (Google engeli veya sonuç yok).');
 
-        let epUrl = linkMatch[1];
-        // Eğer link Google Translate linkine dönüşmüşse temizle
-        if (epUrl.includes('translate.google')) {
-            const urlParams = new URLSearchParams(epUrl.split('?')[1]);
-            epUrl = urlParams.get('u');
+        let cleanUrl = linkMatch[1];
+        // Google parametrelerini temizle
+        if (cleanUrl.includes('translate.google')) {
+            const urlObj = new URL(cleanUrl);
+            cleanUrl = urlObj.searchParams.get('u') || cleanUrl;
         }
-        
-        epUrl = epUrl.replace(/\/$/, '') + `-sezon-${seasonNum}-bolum-${episodeNum}-izle/`;
-        console.log(`[Dizibox] Bölüm: ${epUrl}`);
 
-        const epHtml = await googleProxyFetch(epUrl);
+        const epUrl = cleanUrl.replace(/\/$/, '') + `-sezon-${seasonNum}-bolum-${episodeNum}-izle/`;
+        console.log(`[Dizibox] Bölüm Sayfası: ${epUrl}`);
+
+        const epRes = await fetch(getGoogleProxyUrl(epUrl));
+        const epHtml = await epRes.text();
+
         const streams = [];
+        // Iframe'leri yakala
         const iframeRegex = /<iframe[^>]+src="([^"]+)"/gi;
         let match;
 
         while ((match = iframeRegex.exec(epHtml)) !== null) {
             let src = match[1];
-            if (src.includes('vidmoly') || src.includes('player')) {
+            // Google tünelinden geliyorsa orijinal linki geri al
+            if (src.includes('u=')) {
+                const urlObj = new URL(src.startsWith('http') ? src : 'https:' + src);
+                src = urlObj.searchParams.get('u') || src;
+            }
+            
+            if (src.includes('vidmoly') || src.includes('moly') || src.includes('player')) {
                 streams.push({
-                    name: "Dizibox G-PROXY",
+                    name: "Dizibox (Google Bypass)",
                     url: src.startsWith('//') ? 'https:' + src : src,
                     quality: '1080p'
                 });
@@ -68,8 +65,9 @@ async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
         }
 
         return streams;
+
     } catch (err) {
-        console.log(`[Dizibox] Hata: ${err.message}`);
+        console.log(`[Dizibox V${VER}] Hata: ${err.message}`);
         return [];
     }
 }
