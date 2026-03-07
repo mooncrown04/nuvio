@@ -1,5 +1,5 @@
 /**
- * Provider: DDizi (v52 - Anti-Trap & Matcher)
+ * Provider: DDizi (v53 - Smart Search & Filter)
  */
 (function() {
     const getStreams = async (tmdbId, mediaType, seasonNum, episodeNum) => {
@@ -12,7 +12,12 @@
             const tmdbRes = await fetch(`https://api.themoviedb.org/3/tv/${tmdbId}?api_key=4ef0d7355d9ffb5151e987764708ce96&language=tr-TR`);
             const tmdbData = await tmdbRes.json();
             const originalName = tmdbData.name || tmdbData.original_name;
-            const searchSlug = originalName.toLowerCase().trim();
+            
+            // Arama için temiz isim (Türkçe karakterleri ve boşlukları yönetelim)
+            const searchSlug = originalName.toLowerCase()
+                .replace(/ğ/g, 'g').replace(/ü/g, 'u').replace(/ş/g, 's')
+                .replace(/ı/g, 'i').replace(/ö/g, 'o').replace(/ç/g, 'c')
+                .replace(/[^a-z0-9]/g, '-');
 
             const searchRes = await fetch(`${mainUrl}/arama/`, {
                 method: "POST",
@@ -21,35 +26,36 @@
             });
             const searchHtml = await searchRes.text();
 
-            // 1. Popüler dizi tuzağından kurtulmak için sadece 'dizi-list' veya sonuç alanına odaklan
-            // Arama sonuçları genellikle bir liste içindedir. Linkleri dizi ismiyle doğrula.
-            const links = searchHtml.match(/href="([^"]*\/diziler\/[^"]*)"/gi) || [];
+            // Tüm /diziler/ linklerini topla
+            const allLinks = searchHtml.match(/href="([^"]*\/diziler\/[^"]*)"/gi) || [];
             let seriesUrl = "";
 
-            for (let link of links) {
-                const cleanLink = link.match(/href="([^"]*)"/i)[1];
-                // Eğer link aradığımız dizinin ismini içeriyorsa (Örn: /dark-hd)
-                if (cleanLink.toLowerCase().includes(searchSlug.replace(/\s+/g, '-'))) {
-                    seriesUrl = cleanLink.startsWith('http') ? cleanLink : mainUrl + cleanLink;
+            for (let linkTag of allLinks) {
+                const link = linkTag.match(/href="([^"]*)"/i)[1];
+                // TUZAKTAN KURTULMA: Linkin içinde aradığımız dizinin ismi geçiyor mu?
+                // "abi-1-son-bolum" içinde "dark" geçmediği için elenecek.
+                if (link.toLowerCase().includes(searchSlug) || link.toLowerCase().includes(originalName.toLowerCase().replace(/\s+/g, '-'))) {
+                    seriesUrl = link.startsWith('http') ? link : mainUrl + link;
                     break;
                 }
             }
 
-            if (!seriesUrl) return [];
+            // Eğer filtreleme ile bulamadıysa, son çare olarak en basit slug'ı dene
+            if (!seriesUrl) {
+                seriesUrl = `${mainUrl}/diziler/${searchSlug}`;
+            }
 
-            // 2. Dizi Sayfasına git
+            // Dizi sayfasına git ve bölümü ara
             const seriesRes = await fetch(seriesUrl, { headers: { "User-Agent": UA, "Referer": mainUrl } });
             const seriesPageHtml = await seriesRes.text();
 
-            // 3. Bölüm Linkini bul (Nokta atışı: Sezon ve Bölüm kontrolü)
-            // Örn: "1. Sezon 5. Bölüm" veya sadece "5. Bölüm"
             const episodeRegex = new RegExp(`href="([^"]*/izle/[^"]*${episodeNum}-(?:bolum|Bölüm)[^"]*)"`, 'i');
             const epMatch = seriesPageHtml.match(episodeRegex);
             
             if (!epMatch) return [];
             const epUrl = epMatch[1].startsWith('http') ? epMatch[1] : mainUrl + epMatch[1];
 
-            // 4. Player ve Video Dosyası
+            // Player safhası
             const epRes = await fetch(epUrl, { headers: { "User-Agent": UA, "Referer": seriesUrl } });
             const epHtml = await epRes.text();
             
@@ -67,14 +73,10 @@
             if (videoUrl.startsWith('//')) videoUrl = 'https:' + videoUrl;
 
             return [{
-                name: "DDizi (v52 Matcher)",
+                name: "DDizi (v53 Filtered)",
                 url: videoUrl,
                 quality: "1080p",
-                headers: {
-                    "User-Agent": UA,
-                    "Referer": playerUrl,
-                    "Origin": mainUrl
-                }
+                headers: { "User-Agent": UA, "Referer": playerUrl, "Origin": mainUrl }
             }];
 
         } catch (e) {
