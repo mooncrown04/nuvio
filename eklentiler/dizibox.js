@@ -1,9 +1,11 @@
 /**
- * Provider: DDizi (v43 - Session & Cookie Support)
+ * Provider: DDizi (v44 - Debug Mode & Aggressive Headers)
  */
 function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
     var mainUrl = "https://www.ddizi.im";
     var userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36";
+
+    console.log("--- DDizi Debug Start ---");
 
     return new Promise(function(resolve) {
         if (mediaType !== 'tv') return resolve([]);
@@ -12,6 +14,7 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
         
         fetch(tmdbUrl).then(function(res) { return res.json(); }).then(function(data) {
             var name = data.name || data.original_name || "";
+            console.log("Searching for: " + name);
             return fetch(mainUrl + "/arama/", {
                 method: "POST",
                 headers: { "Content-Type": "application/x-www-form-urlencoded", "User-Agent": userAgent, "Referer": mainUrl },
@@ -20,16 +23,18 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
         }).then(function(res) { return res.text(); }).then(function(searchHtml) {
             var regex = new RegExp('href="([^"]*' + episodeNum + '-(?:bolum|Bölüm)[^"]*)"', 'i');
             var match = searchHtml.match(regex);
-            if (!match) return null;
+            if (!match) { console.log("Episode not found in search"); return null; }
 
             var epUrl = match[1].indexOf('http') === 0 ? match[1] : mainUrl + (match[1][0] === '/' ? '' : '/') + match[1];
+            console.log("Episode Page: " + epUrl);
             return fetch(epUrl, { headers: { "User-Agent": userAgent, "Referer": mainUrl } });
         }).then(function(res) { return res.text(); }).then(function(html) {
             if (!html) return null;
             var playerMatch = html.match(/\/player\/oynat\/[a-z0-9]+/i);
-            if (!playerMatch) return null;
+            if (!playerMatch) { console.log("Player ID not found"); return null; }
 
             var playerUrl = mainUrl + playerMatch[0];
+            console.log("Fetching Player: " + playerUrl);
             return fetch(playerUrl, { headers: { "User-Agent": userAgent, "Referer": mainUrl } });
         }).then(function(res) {
             var finalPlayerUrl = res.url;
@@ -40,29 +45,27 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
             if (!result || !result.html) return resolve([]);
 
             var fileMatch = result.html.match(/file:\s*["']([^"']+)["']/i);
-            if (!fileMatch) return resolve([]);
+            if (!fileMatch) { console.log("Video source (file:) not found in player html"); return resolve([]); }
 
             var videoUrl = fileMatch[1];
-            
-            // --- KRİTİK: Sunucu bazen videonun kendi domainini referer ister ---
-            var videoDomain = new URL(videoUrl).origin + "/";
+            console.log("CRITICAL - Found Video URL: " + videoUrl);
+            console.log("Using Referer: " + result.url);
 
             resolve([{
-                name: "DDizi - Secure Line",
+                name: "DDizi (v44 - Debug)",
                 url: videoUrl,
                 quality: "1080p",
                 headers: {
                     "User-Agent": userAgent,
-                    "Referer": result.url, // Player sayfasını referer gösteriyoruz
+                    "Referer": result.url,
                     "Origin": mainUrl,
                     "Accept": "*/*",
-                    "Connection": "keep-alive",
-                    "Sec-Fetch-Dest": "video",
-                    "Sec-Fetch-Mode": "cors",
-                    "Sec-Fetch-Site": "cross-site"
+                    "Range": "bytes=0-", // Bazı sunucular partial content için bunu zorunlu tutar
+                    "X-Requested-With": "XMLHttpRequest" // Bot olmadığımızı kanıtlamak için
                 }
             }]);
-        }).catch(function() {
+        }).catch(function(err) {
+            console.log("Error in DDizi: " + err);
             resolve([]);
         });
     });
