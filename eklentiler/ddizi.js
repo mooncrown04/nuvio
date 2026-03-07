@@ -1,10 +1,10 @@
 /**
- * Provider: DDizi (v61 - Ghost Protocol)
+ * Provider: DDizi (v63 - The Phantom)
  */
 (function() {
     const getStreams = async (tmdbId, mediaType, seasonNum, episodeNum) => {
         const UA = "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36";
-        // DDizi'nin player URL'sini doğrudan hedefliyoruz
+        // Loglardaki tespit edilen ana player URL'si
         const targetUrl = "https://www.ddizi.im/player/oynat/f827901dcad74c34ebf7541c2bcb1377";
 
         try {
@@ -12,48 +12,55 @@
                 headers: {
                     "User-Agent": UA,
                     "Referer": "https://www.ddizi.im/",
-                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,webp,*/*;q=0.8"
+                    "X-Requested-With": "XMLHttpRequest"
                 }
             });
 
             const html = await res.text();
             let streams = [];
 
-            // STRATEJİ 1: Vidmoly/Moly Linklerini Ayıkla
-            // DDizi genellikle vidmoly.me veya moly.to kullanır.
-            const molyRegex = /(?:https?:)?\/\/(?:vidmoly\.me|moly\.to|uqload\.com|fembed\.com)\/(?:embed-)?([a-zA-Z0-9]+)/gi;
+            // 1. STRATEJİ: Iframe Kaynaklarını Derinlemesine Tara
+            // DDizi bazen src="..." bazen data-src="..." kullanır
+            const iframeRegex = /(?:src|data-src)=["']([^"']*(?:vidmoly|moly|uqload|fembed|dood|streamwish)[^"']*)["']/gi;
             let m;
-            while ((m = molyRegex.exec(html)) !== null) {
+            while ((m = iframeRegex.exec(html)) !== null) {
+                let foundUrl = m[1];
+                if (foundUrl.startsWith('//')) foundUrl = 'https:' + foundUrl;
+                
                 streams.push({
-                    name: "DDizi - " + m[0].split('.')[0].replace('https://', ''),
-                    url: m[0].startsWith('http') ? m[0] : 'https:' + m[0],
+                    name: "DDizi Player (" + (foundUrl.includes('moly') ? 'Moly' : 'Vidmoly') + ")",
+                    url: foundUrl,
                     quality: "720p"
                 });
             }
 
-            // STRATEJİ 2: M3U8 Kaynaklarını Çek (HLS Streaming)
-            const hlsRegex = /["'](https?:\/\/[^"']+\.m3u8[^"']*)["']/gi;
-            let h;
-            while ((h = hlsRegex.exec(html)) !== null) {
-                if (!h[1].includes("analytics")) {
+            // 2. STRATEJİ: JWPlayer "sources" Bloğunu Yakala
+            // Eğer sayfa içinde doğrudan bir video dosyası varsa yakalar
+            const jwRegex = /["']?file["']?\s*:\s*["']([^"']+\.(?:m3u8|mp4)[^"']*)["']/gi;
+            let j;
+            while ((j = jwRegex.exec(html)) !== null) {
+                streams.push({
+                    name: "DDizi Master HD",
+                    url: j[1],
+                    quality: "1080p"
+                });
+            }
+
+            // 3. STRATEJİ: Script İçindeki URL Tanımlamaları
+            // Bazı yeni player'larda linkler 'var link = "..."' şeklinde tanımlanır
+            const linkVarRegex = /var\s+(?:link|videoUrl|source)\s*=\s*["'](https?:\/\/[^"']+)["']/gi;
+            let l;
+            while ((l = linkVarRegex.exec(html)) !== null) {
+                if (!l[1].includes('.jpg') && !l[1].includes('.png')) {
                     streams.push({
-                        name: "DDizi Master Stream",
-                        url: h[1],
-                        quality: "1080p"
+                        name: "DDizi Cloud Stream",
+                        url: l[1],
+                        quality: "720p"
                     });
                 }
             }
 
-            // STRATEJİ 3: Ajax Linkini Simüle Et
-            // Eğer hala bir şey yoksa, DDizi'nin video yükleme API'sine "sık kullanılan" ID'leri dene
-            if (streams.length === 0) {
-               // Bazı durumlarda video ID'si HTML içinde "file: '...'" olarak geçer
-               const fileMatch = html.match(/file\s*:\s*["']([^"']+)["']/i);
-               if (fileMatch) {
-                   streams.push({ name: "DDizi Direct", url: fileMatch[1], quality: "HD" });
-               }
-            }
-
+            // Temizleme ve Header Ekleme
             return streams.map(s => ({
                 ...s,
                 headers: {
@@ -64,6 +71,7 @@
             }));
 
         } catch (e) {
+            console.log("DDizi Error: " + e);
             return [];
         }
     };
