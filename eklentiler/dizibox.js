@@ -14,71 +14,67 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
             .then(function(res) { return res.json(); })
             .then(function(data) {
                 var name = data.name || data.original_name;
-                // Arama sorgusunu temizle (Özel karakterleri at)
-                var query = name.replace(/[:\-!]/g, '').trim();
+                // Aramayı kolaylaştırmak için sadece ilk iki kelimeyi al (Örn: "The Walking Dead" -> "The Walking")
+                var cleanName = name.replace(/[:\-!]/g, '').split(' ').slice(0, 2).join(' ');
                 
-                console.log('[Dizigom] Sorgu:', query);
-                return fetch(BASE_URL + '/?s=' + encodeURIComponent(query), { headers: HEADERS });
+                console.log('[Dizigom] Kritik Sorgu:', cleanName);
+                return fetch(BASE_URL + '/?s=' + encodeURIComponent(cleanName), { headers: HEADERS });
             })
             .then(function(res) { return res.text(); })
             .then(function(searchHtml) {
-                // Arama sonuçlarından ilk geçerli dizi linkini bul
+                // 1. Arama sonuçlarında link ara
                 var linkMatch = searchHtml.match(/href="(https:\/\/dizigom104\.com\/dizi\/[^"]+)"/i);
-                var finalEpUrl;
+                var targetUrl;
 
                 if (linkMatch) {
                     var showUrl = linkMatch[1].replace(/\/$/, '');
-                    // Dizigom'un farklı bölüm sonu eklerini (hd1, tek-part vb.) yakalamak için ana sayfayı çekmeliyiz
-                    return fetch(showUrl, { headers: HEADERS })
-                        .then(function(r) { return r.text(); })
-                        .then(function(showHtml) {
-                            var epRegex = new RegExp('href="([^"]+-' + seasonNum + '-sezon-' + episodeNum + '-bolum[^"]*)"', 'i');
-                            var epMatch = showHtml.match(epRegex);
-                            
-                            if (epMatch) {
-                                return fetch(epMatch[1], { headers: HEADERS });
-                            } else {
-                                // Eğer ana sayfada bulamazsa manuel tahmin et (hd1 ekleyerek)
-                                return fetch(showUrl + '-' + seasonNum + '-sezon-' + episodeNum + '-bolum-hd1/', { headers: HEADERS });
-                            }
-                        });
+                    targetUrl = showUrl + '-' + seasonNum + '-sezon-' + episodeNum + '-bolum/';
                 } else {
-                    throw new Error('Arama sonucu bulunamadı.');
+                    // 2. Arama başarısızsa manuel tahmin et (B planı)
+                    console.log('[Dizigom] Arama başarısız, manuel deneniyor...');
+                    return resolve(getFallbackStream(tmdbId, seasonNum, episodeNum));
                 }
-            })
-            .then(function(res) { return res.text(); })
-            .then(function(html) {
-                var streams = [];
-                // Video kaynaklarını tara
-                var patterns = [
-                    /src="([^"]*(?:vidmoly|moly|player|embed|ok\.ru)[^"]*)"/gi,
-                    /data-video="([^"]+)"/gi
-                ];
 
-                patterns.forEach(function(pattern) {
-                    var m;
-                    while ((m = pattern.exec(html)) !== null) {
-                        var src = m[1];
-                        if (src.startsWith('//')) src = 'https:' + src;
-                        if (!streams.find(s => s.url === src)) {
-                            streams.push({
-                                name: 'Dizigom | ' + (src.includes('moly') ? 'Moly' : 'Kaynak'),
-                                url: src,
-                                quality: '1080p',
-                                headers: { 'Referer': BASE_URL + '/' }
-                            });
-                        }
-                    }
-                });
-
-                console.log('[Dizigom] Tamamlandı. Link:', streams.length);
-                resolve(streams);
+                // 3. Bölüm sayfasını çek (hd1 veya normal halini kontrol ederek)
+                return fetch(targetUrl, { headers: HEADERS })
+                    .then(function(res) {
+                        if (res.status === 404) return fetch(targetUrl.replace(/\/$/, '') + '-hd1/', { headers: HEADERS });
+                        return res;
+                    })
+                    .then(function(res) { return res.text(); })
+                    .then(function(html) {
+                        resolve(parseVideoLinks(html));
+                    });
             })
             .catch(function(err) {
                 console.error('[Dizigom] Hata:', err.message);
                 resolve([]);
             });
     });
+}
+
+// Video linklerini ayıklayan yardımcı fonksiyon
+function parseVideoLinks(html) {
+    var streams = [];
+    var iframeMatches = html.match(/src="([^"]*(?:vidmoly|moly|player|embed|ok\.ru)[^"]*)"/gi) || [];
+    
+    iframeMatches.forEach(function(m) {
+        var src = m.match(/src="([^"]+)"/i)[1];
+        if (src.startsWith('//')) src = 'https:' + src;
+        streams.push({
+            name: 'Dizigom | ' + (src.includes('moly') ? 'Moly' : 'Kaynak'),
+            url: src,
+            quality: '1080p',
+            headers: { 'Referer': BASE_URL + '/' }
+        });
+    });
+    return streams;
+}
+
+// Hiçbir şey bulunamazsa yedek mekanizma
+function getFallbackStream(tmdbId, s, e) {
+    // Burada istersen başka bir siteye (örn: Diziyou) yönlendirme yapabilirsin
+    return [];
 }
 
 if (typeof module !== 'undefined' && module.exports) {
