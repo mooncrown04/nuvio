@@ -2,43 +2,21 @@ var BASE_URL = 'https://www.dizibox.live';
 
 var HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-    'Accept-Language': 'tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7',
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+    'Accept-Language': 'tr-TR,tr;q=0.9',
     'Referer': BASE_URL + '/'
 };
 
 var STREAM_HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-    'Accept': 'video/webm,video/ogg,video/*;q=0.9,application/ogg;q=0.7,audio/*;q=0.6,*/*;q=0.5',
-    'Accept-Language': 'tr-TR,tr;q=0.9',
-    'Accept-Encoding': 'identity',
-    'Origin': BASE_URL,
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+    'Accept': 'video/*;q=0.9,*/*;q=0.5',
     'Referer': BASE_URL + '/',
-    'Sec-Fetch-Dest': 'video',
-    'Sec-Fetch-Mode': 'no-cors',
-    'Sec-Fetch-Site': 'cross-site',
-    'DNT': '1'
+    'Origin': BASE_URL
 };
 
-// DiziPal'den kopya: Regex fonksiyonları
-function findFirst(html, pattern) {
-    var regex = new RegExp(pattern, 'i');
-    var match = regex.exec(html);
-    return match ? match : null;
-}
-
-function loadPage(url, customHeaders) {
-    var headers = Object.assign({}, HEADERS, customHeaders || {}, {
-        'Cookie': 'LockUser=true; isTrustedUser=true; dbxu=' + Date.now()
-    });
-    return fetch(url, { headers: headers }).then(function(res) { return res.text(); });
-}
-
 function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
-    return new Promise(function(resolve, reject) {
+    return new Promise(function(resolve) {
         if (mediaType !== 'tv') return resolve([]);
-
-        console.log('[DiziBox] Başladı:', tmdbId, 'S:', seasonNum, 'E:', episodeNum);
 
         var tmdbUrl = 'https://api.themoviedb.org/3/tv/' + tmdbId + 
                       '?api_key=4ef0d7355d9ffb5151e987764708ce96&language=tr-TR';
@@ -46,165 +24,46 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
         fetch(tmdbUrl)
             .then(function(res) { return res.json(); })
             .then(function(data) {
-                var title = data.name || data.original_name || '';
+                var title = data.name || '';
                 if (!title) return resolve([]);
                 
-                console.log('[DiziBox] Dizi:', title);
+                var slug = title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+                var epUrl = BASE_URL + '/' + slug + '-' + seasonNum + '-sezon-' + episodeNum + '-bolum-hd-izle/';
                 
-                // Slug oluştur (DiziPal'deki gibi)
-                var slug = title.toLowerCase().trim()
-                    .replace(/[^a-z0-9]+/g, '-')
-                    .replace(/^-+|-+$/g, '');
-                
-                // DiziBox URL formatı
-                var epUrl = BASE_URL + '/' + slug + '-' + seasonNum + 
-                           '-sezon-' + episodeNum + '-bolum-hd-izle/';
-                
-                console.log('[DiziBox] URL:', epUrl);
-                return loadEpisodePage(epUrl, title, slug, seasonNum, episodeNum);
+                return fetch(epUrl, {
+                    headers: Object.assign({}, HEADERS, {
+                        'Cookie': 'LockUser=true; isTrustedUser=true; dbxu=' + Date.now()
+                    })
+                });
             })
-            .then(function(streams) { resolve(streams || []); })
+            .then(function(res) { return res.text(); })
+            .then(function(html) {
+                // Cloudflare kontrolü
+                if (html.length < 280000) {
+                    console.log('[DiziBox] Engel:', html.length);
+                    return resolve([]);
+                }
+                
+                var match = html.match(/video_id["']?\s*[:=]\s*["']?(\d+)["']?/i);
+                if (!match) return resolve([]);
+                
+                var videoId = match[1];
+                var playerUrl = BASE_URL + '/player/king.php?wmode=opaque&v=' + videoId;
+                
+                resolve([{
+                    name: '⌜ DiziBox ⌟ | King',
+                    title: 'Bölüm ' + episodeNum,
+                    url: playerUrl,
+                    quality: '1080p',
+                    headers: STREAM_HEADERS,
+                    provider: 'dizibox'
+                }]);
+            })
             .catch(function(err) {
                 console.error('[DiziBox] Hata:', err);
                 resolve([]);
             });
     });
-}
-
-function loadEpisodePage(epUrl, title, slug, seasonNum, episodeNum) {
-    return loadPage(epUrl)
-        .then(function(html) {
-            console.log('[DiziBox] HTML boyut:', html.length);
-            
-            // Cloudflare kontrolü (DiziPal'deki gibi)
-            if (html.length < 50000) {
-                console.log('[DiziBox] Sayfa boş veya engelli');
-                return tryAlternativePaths(slug, seasonNum, episodeNum, title);
-            }
-            
-            // 1. Iframe ara (DiziPal'deki gibi)
-            var iframeMatch = findFirst(html, '<iframe[^>]+src="([^"]+)"[^>]*class="[^"]*(?:player|video|king)[^"]*"') ||
-                             findFirst(html, 'class="[^"]*(?:player|video|king)[^"]*"[^>]*>[\\s\\S]*?<iframe[^>]+src="([^"]+)"') ||
-                             findFirst(html, '<div[^>]*id="[^"]*(?:video|player)[^"]*"[^>]*>[\\s\\S]*?<iframe[^>]+src="([^"]+)"') ||
-                             findFirst(html, '<iframe[^>]+src="([^"]+)"');
-            
-            if (iframeMatch) {
-                var iframeSrc = iframeMatch[1];
-                console.log('[DiziBox] Iframe bulundu:', iframeSrc);
-                return extractFromIframe(iframeSrc, title);
-            }
-            
-            // 2. Direkt video ID ara
-            var videoIdMatch = findFirst(html, 'video_id["\']?\\s*[:=]\\s*["\']?(\\d+)["\']?');
-            if (videoIdMatch) {
-                return buildKingPlayer(videoIdMatch[1], title);
-            }
-            
-            // 3. Embed link ara
-            var embedMatch = findFirst(html, 'href="([^"]*player[^"]*v=\\d+[^"]*)"');
-            if (embedMatch) {
-                return extractFromIframe(embedMatch[1], title);
-            }
-            
-            console.log('[DiziBox] Hiçbir kaynak bulunamadı');
-            return [];
-        });
-}
-
-function tryAlternativePaths(slug, seasonNum, episodeNum, title) {
-    // Alternatif 1: /bolum/ formatı
-    var altUrl1 = BASE_URL + '/bolum/' + slug + '-' + seasonNum + 
-                  '-sezon-' + episodeNum + '-bolum-izle/';
-    
-    console.log('[DiziBox] Deneniyor:', altUrl1);
-    
-    return loadPage(altUrl1).then(function(html) {
-        if (html.length > 50000) {
-            console.log('[DiziBox] Alternatif 1 başarılı, boyut:', html.length);
-            
-            var iframeMatch = findFirst(html, '<iframe[^>]+src="([^"]+)"');
-            if (iframeMatch) return extractFromIframe(iframeMatch[1], title);
-            
-            var videoIdMatch = findFirst(html, 'video_id["\']?\\s*[:=]\\s*["\']?(\\d+)["\']?');
-            if (videoIdMatch) return buildKingPlayer(videoIdMatch[1], title);
-        }
-        
-        // Alternatif 2: Farklı slug formatı
-        var altSlug = slug.replace(/-/g, '');
-        var altUrl2 = BASE_URL + '/' + altSlug + '-' + seasonNum + 
-                      '-sezon-' + episodeNum + '-bolum-hd-izle/';
-        
-        console.log('[DiziBox] Deneniyor:', altUrl2);
-        return loadPage(altUrl2);
-    }).then(function(html) {
-        if (typeof html === 'string' && html.length > 50000) {
-            var videoIdMatch = findFirst(html, 'video_id["\']?\\s*[:=]\\s*["\']?(\\d+)["\']?');
-            if (videoIdMatch) return buildKingPlayer(videoIdMatch[1], title);
-        }
-        return [];
-    });
-}
-
-function extractFromIframe(iframeSrc, title) {
-    var iframeUrl = iframeSrc.startsWith('http') ? iframeSrc : 
-                   (iframeSrc.startsWith('//') ? 'https:' + iframeSrc : BASE_URL + iframeSrc);
-    
-    console.log('[DiziBox] Iframe yükleniyor:', iframeUrl);
-    
-    return fetch(iframeUrl, {
-        headers: Object.assign({}, HEADERS, { 'Referer': BASE_URL + '/' })
-    }).then(function(res) { return res.text(); })
-    .then(function(html) {
-        console.log('[DiziBox] Iframe HTML boyut:', html.length);
-        
-        // m3u8 ara (DiziPal'deki gibi)
-        var m3u8Match = findFirst(html, '(https?://[^"\']+\\.m3u8[^"\']*)');
-        if (m3u8Match) {
-            console.log('[DiziBox] m3u8 bulundu:', m3u8Match[1]);
-            return [{
-                name: '⌜ DiziBox ⌟ | HD',
-                title: title,
-                url: m3u8Match[1],
-                quality: '1080p',
-                headers: STREAM_HEADERS,
-                provider: 'dizibox'
-            }];
-        }
-        
-        // Video ID ara
-        var videoIdMatch = findFirst(html, 'video_id["\']?\\s*[:=]\\s*["\']?(\\d+)["\']?');
-        if (videoIdMatch) {
-            return buildKingPlayer(videoIdMatch[1], title);
-        }
-        
-        // file: "..." formatı
-        var fileMatch = findFirst(html, 'file["\']?\\s*[:=]\\s*["\']?(https?://[^"\']+)["\']?');
-        if (fileMatch) {
-            return [{
-                name: '⌜ DiziBox ⌟ | Video',
-                title: title,
-                url: fileMatch[1],
-                quality: '720p',
-                headers: STREAM_HEADERS,
-                provider: 'dizibox'
-            }];
-        }
-        
-        return [];
-    });
-}
-
-function buildKingPlayer(videoId, title) {
-    var playerUrl = BASE_URL + '/player/king.php?wmode=opaque&v=' + videoId;
-    
-    return [{
-        name: '⌜ DiziBox ⌟ | King Player',
-        title: title + ' · 1080p',
-        url: playerUrl,
-        quality: '1080p',
-        headers: STREAM_HEADERS,
-        provider: 'dizibox'
-    }];
 }
 
 if (typeof module !== 'undefined' && module.exports) {
