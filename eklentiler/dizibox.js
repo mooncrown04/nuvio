@@ -2,9 +2,9 @@ async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
     if (mediaType !== 'tv') return [];
 
     const HEADERS = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         'Referer': 'https://www.dizibox.live/',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,webp,*/*;q=0.8'
+        'Origin': 'https://www.dizibox.live'
     };
 
     try {
@@ -17,55 +17,53 @@ async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
         const html = await response.text();
         const streams = [];
 
-        // --- TEST MODU ---
-        // Eğer bu listede çıkarsa, kodun buraya kadar çalıştığını anlarız.
-        streams.push({
-            name: "--- DIZIBOX TEST HATTI ---",
-            url: "http://test.com/check",
-            quality: "SD"
-        });
-
-        // 1. YÖNTEM: King Player ID Yakala (Gelişmiş Regex)
-        const idMatch = html.match(/video_id["']?\s*[:=]\s*["']?(\d+)["']?/i) || 
-                        html.match(/post_id["']?\s*[:=]\s*["']?(\d+)["']?/i);
+        // 1. ADIM: King Player ID Yakalama (Daha güvenli regex)
+        const idMatch = html.match(/video_id\s*[:=]\s*["'](\d+)["']/i);
         
         if (idMatch) {
+            // ExoPlayer'ın UnknownHostException vermemesi için URL'yi tam formatta yazıyoruz
+            const videoId = idMatch[1];
             streams.push({
                 name: "DiziBox | King Player HD",
-                url: `https://www.dizibox.live/player/king.php?v=${idMatch[1]}`,
+                url: "https://www.dizibox.live/player/king.php?v=" + videoId,
                 quality: "1080p",
-                headers: { 'Referer': epUrl }
-            });
-        }
-
-        // 2. YÖNTEM: Sayfadaki tüm iFrame'leri tarayıp vidmoly ara
-        const iframeMatch = html.match(/<iframe[^>]+src=["']([^"']+)["']/gi);
-        if (iframeMatch) {
-            iframeMatch.forEach(ifr => {
-                const src = ifr.match(/src=["']([^"']+)["']/i);
-                if (src && (src[1].includes('moly') || src[1].includes('player'))) {
-                    let finalUrl = src[1].startsWith('//') ? 'https:' + src[1] : src[1];
-                    streams.push({
-                        name: "DiziBox | Alternatif Player",
-                        url: finalUrl,
-                        quality: "720p",
-                        headers: { 'Referer': epUrl }
-                    });
+                headers: { 
+                    'Referer': epUrl,
+                    'User-Agent': HEADERS['User-Agent']
                 }
             });
         }
 
-        // 3. YÖNTEM: Sadece sayısal ID'yi zorla çek (Eğer ilk 2 yöntem boşsa)
-        if (streams.length < 2) {
-             const anyId = html.match(/["'](\d{5,7})["']/);
-             if (anyId) {
+        // 2. ADIM: Alternatif Kaynak (Vidmoly vb.)
+        const unescapeMatch = html.match(/unescape\("([^"]+)"\)/);
+        if (unescapeMatch) {
+            const decoded = decodeURIComponent(unescapeMatch[1]);
+            const src = decoded.match(/src=["']([^"']+)["']/i);
+            if (src) {
+                let vUrl = src[1];
+                if (vUrl.startsWith('//')) vUrl = 'https:' + vUrl;
+                
                 streams.push({
-                    name: "DiziBox | Auto-Detected ID",
-                    url: `https://www.dizibox.live/player/king.php?v=${anyId[1]}`,
+                    name: "DiziBox | Alternatif Kaynak",
+                    url: vUrl,
+                    quality: "720p",
+                    headers: { 'Referer': epUrl }
+                });
+            }
+        }
+
+        // 3. ADIM: Güvenlik Ağı (Eğer hiç link yoksa TEST butonu yerine boş dönme)
+        if (streams.length === 0) {
+            // Sayfadaki ilk sayısal diziyi ID kabul et (Dizibox yapısı gereği)
+            const backupId = html.match(/(\d{6})/); 
+            if (backupId) {
+                streams.push({
+                    name: "DiziBox | Otomatik Kaynak",
+                    url: "https://www.dizibox.live/player/king.php?v=" + backupId[1],
                     quality: "HD",
                     headers: { 'Referer': epUrl }
                 });
-             }
+            }
         }
 
         return streams;
