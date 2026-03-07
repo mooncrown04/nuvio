@@ -1,5 +1,5 @@
 /**
- * Provider: DDizi (v31 - Deep Extractor)
+ * Provider: DDizi (v32 - Strict Match & Extra Deep)
  */
 function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
     var mainUrl = "https://www.ddizi.im";
@@ -10,8 +10,8 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
 
         fetch(tmdbUrl).then(function(res) { return res.json(); }).then(function(data) {
             var name = data.name || data.original_name || "";
-            // Arama doğruluğu için ismi temizle
             var searchData = "arama=" + encodeURIComponent(name);
+            
             return fetch(mainUrl + "/arama/", {
                 method: "POST",
                 headers: { "Content-Type": "application/x-www-form-urlencoded", "User-Agent": "Mozilla/5.0", "Referer": mainUrl },
@@ -20,13 +20,24 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
         }).then(function(res) { return res.text(); }).then(function(searchHtml) {
             if (!searchHtml) return null;
 
-            // ÖNEMLİ: Sadece aradığımız sezon/bölüm numarasını içeren linki seç
-            // Örn: Sahtekarlar'ı değil, sadece Arafta'yı alması için RegExp'i daralttım
-            var pattern = new RegExp('href="([^"]*[^/]*' + episodeNum + '-bolum-izle[^"]*)"', 'i');
-            var match = searchHtml.match(pattern);
+            // --- SIKILAŞTIRILMIŞ EŞLEŞTİRME ---
+            // Sadece içinde bölüm numarası geçen VE reklam olmayan gerçek sonuçları ara
+            var links = searchHtml.match(/href="([^"]*)"[^>]*>([^<]+)/g) || [];
+            var targetUrl = "";
 
-            if (match && match[1]) {
-                var targetUrl = match[1].trim();
+            for (var i = 0; i < links.length; i++) {
+                var linkText = links[i].toLowerCase();
+                // Link hem bölüm numarasını içermeli hem de 'izle' kelimesini barındırmalı
+                if (linkText.indexOf(episodeNum + ".bolum") !== -1 || linkText.indexOf(episodeNum + "-bolum") !== -1) {
+                    var hrefMatch = links[i].match(/href="([^"]+)"/);
+                    if (hrefMatch) {
+                        targetUrl = hrefMatch[1].trim();
+                        break; 
+                    }
+                }
+            }
+
+            if (targetUrl) {
                 if (targetUrl.indexOf('http') !== 0) targetUrl = mainUrl + targetUrl;
                 return fetch(targetUrl, { headers: { "Referer": mainUrl } });
             }
@@ -37,43 +48,34 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
         }).then(function(html) {
             if (!html) return resolve([]);
 
-            // DERİN AYIKLAMA (Deep Extraction)
-            // Sayfa içindeki 'og:video' linkine gitmemiz lazım, o link de genelde bir iframe/player sayfasıdır
-            var ogMatch = html.match(/property="og:video" content="([^"]+)"/i);
-            if (ogMatch && ogMatch[1]) {
-                var playerUrl = ogMatch[1].trim();
-                // Player sayfasının içine giriyoruz (Asıl m3u8 burada saklı)
-                return fetch(playerUrl, { headers: { "Referer": mainUrl } });
+            // DERİN AYIKLAMA 1: Sayfa içindeki asıl player iframe'ini bul
+            var playerFrame = html.match(/iframe[^>]*src="([^"]*)"/i);
+            if (playerFrame && playerFrame[1]) {
+                var pUrl = playerFrame[1].trim();
+                if (pUrl.indexOf('//') === 0) pUrl = 'https:' + pUrl;
+                
+                // Eğer doğrudan bir player ise içine girip m3u8 arayalım
+                return fetch(pUrl, { headers: { "Referer": mainUrl } });
             }
             return null;
         }).then(function(res) {
             if (res && res.status === 200) return res.text();
             return null;
-        }).then(function(playerHtml) {
-            if (!playerHtml) return resolve([]);
+        }).then(function(finalHtml) {
+            if (!finalHtml) return resolve([]);
 
             var streams = [];
-            // JWPlayer veya benzeri kaynaklarda 'file: "..."' arıyoruz
-            var fileMatch = playerHtml.match(/file:\s*["']([^"']+)["']/i) || playerHtml.match(/src="([^"]*\.m3u8[^"]*)"/i);
+            // DERİN AYIKLAMA 2: m3u8 veya mp4 linkini yakala
+            var videoMatch = finalHtml.match(/["'](http[^"']+\.m3u8[^"']*)["']/i) || 
+                             finalHtml.match(/file:\s*["']([^"']+)["']/i);
             
-            if (fileMatch && fileMatch[1]) {
-                var finalUrl = fileMatch[1].trim();
-                if (finalUrl.indexOf('//') === 0) finalUrl = 'https:' + finalUrl;
-                
+            if (videoMatch && videoMatch[1]) {
                 streams.push({
-                    name: "DDizi - HLS",
-                    url: finalUrl,
+                    name: "DDizi - Direct",
+                    url: videoMatch[1].trim(),
                     quality: "1080p",
-                    headers: { "Referer": mainUrl }
+                    headers: { "Referer": mainUrl, "User-Agent": "Mozilla/5.0" }
                 });
-            }
-
-            // Alternatif Vidmoly/Moly iframe'leri
-            var iframeMatch = playerHtml.match(/iframe[^>]*src="([^"]+)"/i);
-            if (iframeMatch && iframeMatch[1] && iframeMatch[1].indexOf('youtube') === -1) {
-                var iUrl = iframeMatch[1].trim();
-                if (iUrl.indexOf('//') === 0) iUrl = 'https:' + iUrl;
-                streams.push({ name: "DDizi - Alternatif", url: iUrl, quality: "720p" });
             }
 
             resolve(streams);
