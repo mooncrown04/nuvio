@@ -1,31 +1,23 @@
-// [DZB-FIX] Diziyou Bridge - Legacy Version
-console.log('[DZB-LOG] Eklenti Baslatiliyor (Legacy Mod)...');
+console.log('[DZB-LOG] >>> TEST BASLADI <<<');
 
+// 1. Format: Global Değişken (En yaygın olanı)
 var scraper = {
     search: function(query) {
-        console.log('[DZB-LOG] Aranan Kelime: ' + query);
-        
-        var searchUrl = 'https://www.dizibox.tv/?s=' + encodeURIComponent(query);
-        
-        // Bu motor büyük ihtimalle 'fetch' yerine uygulamanın kendi 'http' kütüphanesini bekliyor olabilir.
-        // Ama önce fetch deneyelim:
-        try {
-            fetch(searchUrl)
-                .then(function(res) { return res.text(); })
-                .then(function(html) {
-                    console.log('[DZB-LOG] Sayfa Alindi. Uzunluk: ' + html.length);
-                })
-                .catch(function(e) {
-                    console.log('[DZB-LOG] Istek Hatasi: ' + e.message);
-                });
-        } catch (err) {
-            console.log('[DZB-LOG] Genel Hata: ' + err.message);
-        }
-        
+        console.log('[DZB-LOG] Arama tetiklendi: ' + query);
         return [];
     }
 };
 
-// Uygulama 'export' tanımadığı için nesneyi doğrudan tanımlıyoruz.
-// Eğer uygulama eklentiyi bu isimle çağırıyorsa bu çalışacaktır.
+// 2. Format: Fonksiyonun doğrudan kendisi
+function search(query) {
+    console.log('[DZB-LOG] Direkt fonksiyon tetiklendi: ' + query);
+    return [];
+}
+
+// 3. Format: QuickJS için nesneyi açıkta bırakma
 scraper;
+
+// 4. Format: Bazı sistemler için 'module.exports'
+try {
+    module.exports = scraper;
+} catch(e) {}
