@@ -1,3 +1,6 @@
+/**
+ * Dizigom v10 - Arama ve Link Çözücü
+ */
 function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
     var BASE_URL = 'https://dizigom104.com';
     var HEADERS = {
@@ -13,14 +16,15 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
             .then(function(res) { return res.json(); })
             .then(function(data) {
                 var query = data.name || data.original_name;
-                console.log('[Dizigom] Aranan Dizi: ' + query);
+                // Arama sorgusunu temizle (Örn: "The Boys: Gen V" -> "The Boys")
+                var cleanQuery = query.split(':')[0].split('-')[0].trim();
+                console.log('[Dizigom] Aranıyor: ' + cleanQuery);
 
-                // 2. Sitede arama yap (DiziYou mantığı)
-                return fetch(BASE_URL + '/?s=' + encodeURIComponent(query), { headers: HEADERS });
+                return fetch(BASE_URL + '/?s=' + encodeURIComponent(cleanQuery), { headers: HEADERS });
             })
             .then(function(res) { return res.text(); })
             .then(function(searchHtml) {
-                // 3. Arama sonucundan doğru dizi linkini ayıkla
+                // 2. Arama sonuçlarından ilk dizi linkini yakala
                 var linkMatch = searchHtml.match(/href="(https:\/\/dizigom104\.com\/dizi\/[^"]+)"/i);
                 if (!linkMatch) throw new Error('Dizi bulunamadı');
 
@@ -32,20 +36,27 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                 return fetch(epUrl, { headers: HEADERS });
             })
             .then(function(res) {
+                // Eğer 404 ise HD1 varyasyonunu dene
                 if (res.status === 404) {
-                    // 404 ise alternatif (HD1) dene
-                    return fetch(res.url.replace(/\/$/, '') + '-hd1/', { headers: HEADERS });
+                    var altUrl = res.url.replace(/\/$/, '') + '-hd1/';
+                    return fetch(altUrl, { headers: HEADERS });
                 }
                 return res;
             })
             .then(function(res) { return res.text(); })
             .then(function(html) {
                 var streams = [];
-                // 4. Video kaynaklarını tara
+                // 3. Iframe/Embed kaynaklarını topla
                 var videoRegex = /src="([^"]*(?:vidmoly|moly|player|embed|ok\.ru)[^"]*)"/gi;
                 var match;
+                
                 while ((match = videoRegex.exec(html)) !== null) {
-                    var src = match[1].startsWith('//') ? 'https:' + match[1] : match[1];
+                    var src = match[1];
+                    if (src.startsWith('//')) src = 'https:' + src;
+                    
+                    // Reklamları filtrele
+                    if (src.includes('google') || src.includes('facebook')) continue;
+
                     streams.push({
                         name: '⌜ Dizigom ⌟ | ' + (src.includes('moly') ? 'Moly' : 'Kaynak'),
                         url: src,
@@ -53,7 +64,8 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                         headers: { 'Referer': BASE_URL + '/' }
                     });
                 }
-                console.log('[Dizigom] Bitti. Link Sayısı: ' + streams.length);
+                
+                console.log('[Dizigom] Bitti. Link: ' + streams.length);
                 resolve(streams);
             })
             .catch(function(err) {
@@ -63,6 +75,6 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
     });
 }
 
-// Export
+// Global Tanımlama (Her iki sistem için de)
 if (typeof module !== 'undefined') { module.exports = { getStreams: getStreams }; }
 globalThis.getStreams = getStreams;
