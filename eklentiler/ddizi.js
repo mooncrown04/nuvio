@@ -1,72 +1,69 @@
 /**
- * Provider: DDizi (v59 - Deep Regex & Redirect Hunter)
+ * Provider: DDizi (v60 - The Surgeon)
  */
 (function() {
     const getStreams = async (tmdbId, mediaType, seasonNum, episodeNum) => {
         const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36";
-        const mainUrl = "https://www.ddizi.im";
-        
-        // Loglardaki spesifik player ID'si üzerinden gidiyoruz
-        const playerBase = "https://www.ddizi.im/player/oynat/f827901dcad74c34ebf7541c2bcb1377";
+        const playerUrl = "https://www.ddizi.im/player/oynat/f827901dcad74c34ebf7541c2bcb1377";
 
         try {
-            const response = await fetch(playerBase, {
+            const response = await fetch(playerUrl, {
                 headers: {
                     "User-Agent": UA,
-                    "Referer": "https://www.ddizi.im/",
-                    "X-Requested-With": "XMLHttpRequest"
+                    "Referer": "https://www.ddizi.im/izle/72226/dark-3-sezon-8-bolum-izle.htm"
                 }
             });
 
             const html = await response.text();
             let streams = [];
 
-            // 1. Agresif Iframe Tarama (Vidmoly, Uqload, Moly, vb.)
-            const frames = html.match(/iframe[^>]+src=["']([^"']+)["']/gi) || [];
-            frames.forEach(f => {
-                let src = f.match(/src=["']([^"']+)["']/i)[1];
-                if (src.startsWith('//')) src = 'https:' + src;
-                
-                if (src.includes('vidmoly') || src.includes('moly') || src.includes('uqload')) {
-                    streams.push({ name: "DDizi (External Server)", url: src, quality: "720p" });
+            // 1. JSON veya Script içine gömülü linkleri yakala
+            // (En çok m3u8 veya mp4 içeren uzun stringleri hedefler)
+            const regex = /["'](https?[^"']+\.(?:m3u8|mp4)[^"']*)["']/gi;
+            let match;
+            while ((match = regex.exec(html)) !== null) {
+                let foundUrl = match[1].replace(/\\/g, ''); // Backslash temizliği
+                if (!foundUrl.includes('google') && !foundUrl.includes('analytics')) {
+                    streams.push({ 
+                        name: "DDizi HD Server", 
+                        url: foundUrl, 
+                        quality: foundUrl.includes('1080') ? "1080p" : "720p" 
+                    });
                 }
-            });
-
-            // 2. Gizli 'eval' veya JSON Verisi İçindeki Linkleri Yakala
-            // Bu regex, tırnak içindeki her türlü m3u8 veya mp4 linkini bulur
-            const deepLinks = html.match(/https?:\/\/[^"']+\.(?:m3u8|mp4)[^"']*/gi) || [];
-            deepLinks.forEach(link => {
-                if (!link.includes('google-analytics') && !link.includes('schema.org')) {
-                    streams.push({ name: "DDizi HD Source", url: link, quality: "1080p" });
-                }
-            });
-
-            // 3. Base64 veya Paketlenmiş Link Kontrolü
-            if (html.includes('base64') || html.includes('atob')) {
-                const b64Matches = html.match(/["']([A-Za-z0-9+/=]{50,})["']/g) || [];
-                b64Matches.forEach(b => {
-                    try {
-                        const decoded = atob(b.replace(/["']/g, ''));
-                        if (decoded.includes('http')) {
-                            const foundUrl = decoded.match(/https?:\/\/[^"']+/)[0];
-                            streams.push({ name: "DDizi Cloud", url: foundUrl, quality: "720p" });
-                        }
-                    } catch(e) {}
-                });
             }
 
-            // Sonuçları temizle ve header ekle
+            // 2. Iframe / Vidmoly / Moly yakalayıcı (Alternatif)
+            const iframeRegex = /iframe[^>]+src=["']([^"']+)["']/gi;
+            let iMatch;
+            while ((iMatch = iframeRegex.exec(html)) !== null) {
+                let s = iMatch[1];
+                if (s.startsWith('//')) s = 'https:' + s;
+                if (s.includes('moly') || s.includes('vid') || s.includes('play')) {
+                    streams.push({ name: "DDizi (External)", url: s, quality: "720p" });
+                }
+            }
+
+            // 3. Eğer hiçbir şey bulunamadıysa DDizi'nin kullandığı 'id' parametresini dene
+            if (streams.length === 0) {
+                // Sayfada 'id:' veya 'videoID:' gibi bir şey varsa
+                const idMatch = html.match(/(?:id|file|source)\s*[:=]\s*["']([^"']+)["']/i);
+                if (idMatch && idMatch[1].length > 10) {
+                    // Bu bir id ise bazen api üzerinden çekmek gerekebilir, 
+                    // ama şimdilik doğrudan linkleri taramak daha sağlıklı.
+                }
+            }
+
+            // Temizlik ve Header Basma
             return streams.map(s => ({
                 ...s,
                 headers: {
                     "User-Agent": UA,
-                    "Referer": playerBase,
-                    "Origin": mainUrl
+                    "Referer": playerUrl,
+                    "Origin": "https://www.ddizi.im"
                 }
             }));
 
         } catch (e) {
-            console.log("DDizi Error: " + e.message);
             return [];
         }
     };
