@@ -1,30 +1,31 @@
-// [DZB-FIX] Diziyou to Dizibox Bridge
-console.log('[DZB-LOG] Eklenti Yuklendi: Diziyou -> Dizibox');
+// [DZB-FIX] Diziyou Bridge - Legacy Version
+console.log('[DZB-LOG] Eklenti Baslatiliyor (Legacy Mod)...');
 
-const scraper = {
-    // Uygulama arama yaptığında bu fonksiyon çalışır
-    async search(query) {
+var scraper = {
+    search: function(query) {
         console.log('[DZB-LOG] Aranan Kelime: ' + query);
         
-        // Dizibox'ın güncel arama URL'si
-        const searchUrl = `https://www.dizibox.tv/?s=${encodeURIComponent(query)}`;
+        var searchUrl = 'https://www.dizibox.tv/?s=' + encodeURIComponent(query);
         
+        // Bu motor büyük ihtimalle 'fetch' yerine uygulamanın kendi 'http' kütüphanesini bekliyor olabilir.
+        // Ama önce fetch deneyelim:
         try {
-            const response = await fetch(searchUrl);
-            const html = await response.text();
-            
-            // Eğer buraya kadar geldiyse bağlantı başarılıdır
-            console.log('[DZB-LOG] Sayfa Alindi, Uzunluk: ' + html.length);
-            
-            // Önemli: Uygulamanın orijinal parse mantığı burada olmalı.
-            // Şimdilik bağlantıyı test etmek için boş dönüyoruz.
-            return []; 
-        } catch (e) {
-            console.log('[DZB-LOG] Baglanti Hatasi: ' + e.message);
-            return [];
+            fetch(searchUrl)
+                .then(function(res) { return res.text(); })
+                .then(function(html) {
+                    console.log('[DZB-LOG] Sayfa Alindi. Uzunluk: ' + html.length);
+                })
+                .catch(function(e) {
+                    console.log('[DZB-LOG] Istek Hatasi: ' + e.message);
+                });
+        } catch (err) {
+            console.log('[DZB-LOG] Genel Hata: ' + err.message);
         }
+        
+        return [];
     }
 };
 
-// QuickJS motoru için eklentiyi dışa aktar (Export)
-export default scraper;
+// Uygulama 'export' tanımadığı için nesneyi doğrudan tanımlıyoruz.
+// Eğer uygulama eklentiyi bu isimle çağırıyorsa bu çalışacaktır.
+scraper;
