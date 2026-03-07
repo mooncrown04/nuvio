@@ -1,71 +1,80 @@
+/**
+ * DiziBox Scraper - Amazon FireTV & Android TV Optimized
+ * Path: eklentiler/dizibox.js
+ */
+
 var BASE_URL = 'https://www.dizibox.live';
 
 function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
     return new Promise(function(resolve) {
-        if (mediaType !== 'tv') return resolve([]);
+        console.log('[DZB-LOG] Tetiklendi. ID: ' + tmdbId + ' S:' + seasonNum + ' E:' + episodeNum);
 
-        console.log('[DZB-LOG] 1. İslem Basladi. TMDB ID:', tmdbId);
+        if (mediaType !== 'tv') {
+            console.log('[DZB-LOG] Sadece diziler destekleniyor.');
+            return resolve([]);
+        }
 
+        // 1. TMDB'den isim çek
         var tmdbUrl = 'https://api.themoviedb.org/3/tv/' + tmdbId + '?api_key=4ef0d7355d9ffb5151e987764708ce96';
 
         fetch(tmdbUrl)
-            .then(function(res) { 
-                console.log('[DZB-LOG] 2. TMDB Yanit Kodu:', res.status);
-                return res.json(); 
-            })
+            .then(function(res) { return res.json(); })
             .then(function(data) {
                 var query = data.name || data.original_name;
-                console.log('[DZB-LOG] 3. Dizi Adi:', query);
+                console.log('[DZB-LOG] Aranacak Dizi: ' + query);
                 
                 var searchUrl = BASE_URL + '/?s=' + encodeURIComponent(query);
-                console.log('[DZB-LOG] 4. Arama Yapiliyor:', searchUrl);
-
                 return fetch(searchUrl, { headers: { 'User-Agent': 'Mozilla/5.0' } });
             })
-            .then(function(res) { 
-                console.log('[DZB-LOG] 5. Arama Sayfasi Geldi:', res.status);
-                return res.text(); 
-            })
+            .then(function(res) { return res.text(); })
             .then(function(html) {
-                var linkMatch = html.match(/href="https:\/\/www\.dizibox\.live\/dizi\/([^/"]+)/);
+                // Arama sonuçlarından dizi linkini regex ile çek
+                var linkMatch = html.match(/href="(https:\/\/www\.dizibox\.live\/dizi\/[^"]+)"/);
                 if (!linkMatch) {
-                    console.log('[DZB-LOG] HATA: Arama sonucunda dizi linki bulunamadi!');
+                    console.log('[DZB-LOG] Dizi bulunamadı.');
                     return resolve([]);
                 }
 
-                var slug = linkMatch[1];
+                var slug = linkMatch[1].split('/dizi/')[1].replace(/\//g, '');
+                // DiziBox URL yapısı: dizi-adi-sezon-X-bolum-Y-hd-1-izle/
                 var targetUrl = BASE_URL + '/' + slug + '-' + seasonNum + '-sezon-' + episodeNum + '-bolum-hd-1-izle/';
-                console.log('[DZB-LOG] 6. Bolum Sayfasina Gidiliyor:', targetUrl);
+                console.log('[DZB-LOG] Hedef URL: ' + targetUrl);
 
                 return fetch(targetUrl, { headers: { 'Referer': BASE_URL } });
             })
-            .then(function(res) { 
-                console.log('[DZB-LOG] 7. Bolum Sayfasi Yaniti:', res.status);
-                return res.text(); 
-            })
+            .then(function(res) { return res.text(); })
             .then(function(html) {
+                // Iframe yakalama (Player linki)
                 var iframeMatch = html.match(/<iframe[^>]+src="([^"]+)"/i);
-                if (iframeMatch) {
-                    var src = iframeMatch[1];
-                    if (src.startsWith('//')) src = 'https:' + src;
-                    console.log('[DZB-LOG] BASARI: Iframe Bulundu:', src);
+                
+                if (iframeMatch && iframeMatch[1]) {
+                    var videoUrl = iframeMatch[1];
+                    if (videoUrl.startsWith('//')) videoUrl = 'https:' + videoUrl;
+                    
+                    console.log('[DZB-LOG] Video bulundu: ' + videoUrl);
                     
                     resolve([{
                         name: "DiziBox",
-                        url: src,
+                        title: "1080p | Kaynak 1",
+                        url: videoUrl,
                         quality: "1080p",
-                        headers: { 'Referer': BASE_URL }
+                        headers: { 'Referer': BASE_URL, 'User-Agent': 'Mozilla/5.0' }
                     }]);
                 } else {
-                    console.log('[DZB-LOG] HATA: Sayfada Iframe bulunamadi.');
+                    console.log('[DZB-LOG] Video oynatıcısı bulunamadı.');
                     resolve([]);
                 }
             })
             .catch(function(err) {
-                console.log('[DZB-LOG] KRITIK HATA:', err.message);
+                console.log('[DZB-LOG] HATA: ' + err.message);
                 resolve([]);
             });
     });
 }
 
-if (typeof module !== 'undefined') module.exports = { getStreams };
+// Export tanımı (Uygulamanın tanıması için kritik)
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = { getStreams: getStreams };
+} else {
+    global.getStreams = getStreams;
+}
