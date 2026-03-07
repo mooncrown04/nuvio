@@ -1,5 +1,5 @@
 /**
- * Provider: DDizi (v51 - Cloudstream Deep Linker)
+ * Provider: DDizi (v52 - Anti-Trap & Matcher)
  */
 (function() {
     const getStreams = async (tmdbId, mediaType, seasonNum, episodeNum) => {
@@ -9,12 +9,11 @@
         try {
             if (mediaType !== 'tv') return [];
 
-            // 1. TMDB'den dizi ismini al
             const tmdbRes = await fetch(`https://api.themoviedb.org/3/tv/${tmdbId}?api_key=4ef0d7355d9ffb5151e987764708ce96&language=tr-TR`);
             const tmdbData = await tmdbRes.json();
             const originalName = tmdbData.name || tmdbData.original_name;
+            const searchSlug = originalName.toLowerCase().trim();
 
-            // 2. Arama yaparak ANA DİZİ SAYFASINI bul (/diziler/...)
             const searchRes = await fetch(`${mainUrl}/arama/`, {
                 method: "POST",
                 headers: { "Content-Type": "application/x-www-form-urlencoded", "User-Agent": UA, "Referer": mainUrl },
@@ -22,23 +21,35 @@
             });
             const searchHtml = await searchRes.text();
 
-            // Sadece /diziler/ formatındaki linkleri ara (Dizi ana sayfası)
-            const seriesMatch = searchHtml.match(new RegExp(`href="([^"]*/diziler/[^"]*)"`, 'i'));
-            if (!seriesMatch) return [];
-            const seriesUrl = seriesMatch[1].startsWith('http') ? seriesMatch[1] : mainUrl + seriesMatch[1];
+            // 1. Popüler dizi tuzağından kurtulmak için sadece 'dizi-list' veya sonuç alanına odaklan
+            // Arama sonuçları genellikle bir liste içindedir. Linkleri dizi ismiyle doğrula.
+            const links = searchHtml.match(/href="([^"]*\/diziler\/[^"]*)"/gi) || [];
+            let seriesUrl = "";
 
-            // 3. Ana Dizi Sayfasına git ve BÖLÜM LİNKİNİ bul (/izle/...)
+            for (let link of links) {
+                const cleanLink = link.match(/href="([^"]*)"/i)[1];
+                // Eğer link aradığımız dizinin ismini içeriyorsa (Örn: /dark-hd)
+                if (cleanLink.toLowerCase().includes(searchSlug.replace(/\s+/g, '-'))) {
+                    seriesUrl = cleanLink.startsWith('http') ? cleanLink : mainUrl + cleanLink;
+                    break;
+                }
+            }
+
+            if (!seriesUrl) return [];
+
+            // 2. Dizi Sayfasına git
             const seriesRes = await fetch(seriesUrl, { headers: { "User-Agent": UA, "Referer": mainUrl } });
             const seriesPageHtml = await seriesRes.text();
 
-            // Bölüm numarasını içeren linki nokta atışı ara
+            // 3. Bölüm Linkini bul (Nokta atışı: Sezon ve Bölüm kontrolü)
+            // Örn: "1. Sezon 5. Bölüm" veya sadece "5. Bölüm"
             const episodeRegex = new RegExp(`href="([^"]*/izle/[^"]*${episodeNum}-(?:bolum|Bölüm)[^"]*)"`, 'i');
             const epMatch = seriesPageHtml.match(episodeRegex);
             
             if (!epMatch) return [];
             const epUrl = epMatch[1].startsWith('http') ? epMatch[1] : mainUrl + epMatch[1];
 
-            // 4. Bölüm Sayfasından PLAYER'ı al
+            // 4. Player ve Video Dosyası
             const epRes = await fetch(epUrl, { headers: { "User-Agent": UA, "Referer": seriesUrl } });
             const epHtml = await epRes.text();
             
@@ -46,7 +57,6 @@
             if (!playerMatch) return [];
             const playerUrl = mainUrl + playerMatch[0];
 
-            // 5. Player Sayfası ve Video Dosyası
             const pRes = await fetch(playerUrl, { headers: { "User-Agent": UA, "Referer": epUrl } });
             const pHtml = await pRes.text();
             
@@ -57,15 +67,13 @@
             if (videoUrl.startsWith('//')) videoUrl = 'https:' + videoUrl;
 
             return [{
-                name: "DDizi (v51 CloudLogic)",
+                name: "DDizi (v52 Matcher)",
                 url: videoUrl,
                 quality: "1080p",
                 headers: {
                     "User-Agent": UA,
                     "Referer": playerUrl,
-                    "Origin": mainUrl,
-                    "Accept": "*/*",
-                    "Sec-Fetch-Mode": "no-cors"
+                    "Origin": mainUrl
                 }
             }];
 
