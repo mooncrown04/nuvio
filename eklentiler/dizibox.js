@@ -1,5 +1,5 @@
 /**
- * Provider: DDizi (v29 - Search & Extract)
+ * Provider: DDizi (v30 - URL & Search Fix)
  */
 function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
     var mainUrl = "https://www.ddizi.im";
@@ -8,14 +8,12 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
     return new Promise(function(resolve) {
         if (mediaType !== 'tv') return resolve([]);
 
-        // 1. ADIM: TMDB'den dizi adını al
         fetch(tmdbUrl).then(function(res) { return res.json(); }).then(function(data) {
             var name = data.name || data.original_name || "";
-            if (!name) return resolve([]);
+            // Sadece ilk kelimeyi al (Arama başarısını artırmak için)
+            var shortName = name.split(' ')[0]; 
 
-            // 2. ADIM: DDizi'de gerçek bir arama yap (POST)
             var searchData = "arama=" + encodeURIComponent(name);
-            
             return fetch(mainUrl + "/arama/", {
                 method: "POST",
                 headers: { 
@@ -26,19 +24,23 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                 body: searchData
             });
         }).then(function(res) { return res.text(); }).then(function(searchHtml) {
-            // 3. ADIM: Arama sonuçlarından doğru sezon/bölüm linkini yakala
-            // Örn: arafta-68-bolum-izle
-            var searchPattern = new RegExp('href="([^"]*' + seasonNum + '-sezon-' + episodeNum + '-bolum[^"]*)"', 'i');
-            var match = searchHtml.match(searchPattern);
-            
-            // Eğer sezon/bölüm spesifik link yoksa, genel bölüm linkini ara
-            if (!match) {
-                var altPattern = new RegExp('href="([^"]*' + episodeNum + '-bolum-izle[^"]*)"', 'i');
-                match = searchHtml.match(altPattern);
+            if (!searchHtml) return null;
+
+            // Bölüm linkini bulma (Hem sezonlu hem sezonsuz kontrol)
+            var patterns = [
+                new RegExp('href="([^"]*' + seasonNum + '-sezon-' + episodeNum + '-bolum[^"]*)"', 'i'),
+                new RegExp('href="([^"]*' + episodeNum + '-bolum-izle[^"]*)"', 'i')
+            ];
+
+            var match = null;
+            for (var i = 0; i < patterns.length; i++) {
+                match = searchHtml.match(patterns[i]);
+                if (match) break;
             }
 
             if (match && match[1]) {
-                var targetUrl = match[1].indexOf('http') === 0 ? match[1] : mainUrl + match[1];
+                var targetUrl = match[1].trim(); // Boşlukları temizle (Malformed URL Fix)
+                if (targetUrl.indexOf('http') !== 0) targetUrl = mainUrl + targetUrl;
                 return fetch(targetUrl, { headers: { "Referer": mainUrl } });
             }
             return null;
@@ -49,15 +51,18 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
             if (!html) return resolve([]);
 
             var streams = [];
-            // 4. ADIM: Video Kaynaklarını Ayıkla
             var ogMatch = html.match(/property="og:video" content="([^"]+)"/i);
             var iframeMatch = html.match(/iframe[^>]*src="([^"]+)"/i);
 
+            // Linkleri eklerken mutlaka trim() ve protokol kontrolü yapıyoruz
             if (ogMatch && ogMatch[1]) {
-                streams.push({ name: "DDizi - Ana", url: ogMatch[1], quality: "1080p" });
+                var streamUrl = ogMatch[1].trim();
+                streams.push({ name: "DDizi - Ana", url: streamUrl, quality: "1080p" });
             }
+
             if (iframeMatch && iframeMatch[1] && iframeMatch[1].indexOf('youtube') === -1) {
-                var iUrl = iframeMatch[1].indexOf('//') === 0 ? 'https:' + iframeMatch[1] : iframeMatch[1];
+                var iUrl = iframeMatch[1].trim();
+                if (iUrl.indexOf('//') === 0) iUrl = 'https:' + iUrl;
                 streams.push({ name: "DDizi - Kaynak 2", url: iUrl, quality: "720p" });
             }
 
