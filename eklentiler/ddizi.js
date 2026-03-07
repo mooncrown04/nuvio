@@ -1,66 +1,79 @@
 /**
- * Provider: DDizi (v66 - The Architect)
+ * Provider: DDizi (v68 - Dedicated Fix)
  */
 (function() {
     const getStreams = async (tmdbId, mediaType, seasonNum, episodeNum) => {
         const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
         
         try {
-            // 1. ADIM: Önce dizi ismini bulup DDizi'de arama yapmamız gerekir 
-            // Ama pratik çözüm için doğrudan player sayfasındaki şifreyi çözelim.
-            // NOT: targetUrl kısmını dinamik yapmak için dizi sayfasından ID çekilmelidir.
-            // Şimdilik senin loglardaki adresten ilerliyoruz:
-            const targetUrl = "https://www.ddizi.im/player/oynat/f827901dcad74c34ebf7541c2bcb1377";
+            // 1. TMDB'den dizi adını alıp DDizi'de aratıyoruz (ID'yi dinamik bulmak için)
+            const tmdbRes = await fetch(`https://api.themoviedb.org/3/${mediaType}/${tmdbId}?language=tr-TR&api_key=4ef0d7355d9ffb5151e987764708ce96`);
+            const tmdbData = await tmdbRes.json();
+            const query = tmdbData.name || tmdbData.title;
 
-            const res = await fetch(targetUrl, {
-                headers: {
+            // DDizi Arama
+            const searchUrl = `https://www.ddizi.im/arama/?q=${encodeURIComponent(query)}`;
+            const sRes = await fetch(searchUrl, { headers: { "User-Agent": UA } });
+            const sHtml = await sRes.text();
+
+            // Dizi ana sayfasını bul
+            const diziLinkMatch = sHtml.match(/class="dizi-kutu">[^>]+href="([^"]+)"/i);
+            if (!diziLinkMatch) return [];
+
+            // Bölüm sayfasını oluştur (DDizi standart yapısı: dizi-adi-sezon-X-bolum-Y.html)
+            const episodeUrl = `${diziLinkMatch[1]}-${seasonNum}-sezon-${episodeNum}-bolum.html`;
+            const epRes = await fetch(episodeUrl, { headers: { "User-Agent": UA } });
+            const epHtml = await epRes.text();
+
+            // 2. Player sayfasının ID'sini çek (Loglardaki f827... gibi olan ID)
+            const playerIdMatch = epHtml.match(/player\/oynat\/([a-f0-9]+)/i);
+            if (!playerIdMatch) return [];
+
+            const playerUrl = `https://www.ddizi.im/player/oynat/${playerIdMatch[1]}`;
+            
+            // 3. Şifreli player sayfasını oku
+            const pRes = await fetch(playerUrl, { 
+                headers: { 
                     "User-Agent": UA,
-                    "Referer": "https://www.ddizi.im/",
+                    "Referer": episodeUrl,
                     "X-Requested-With": "XMLHttpRequest"
-                }
+                } 
             });
+            const pHtml = await pRes.text();
 
-            const html = await res.text();
             let streams = [];
 
-            // 2. ADIM: DDizi'nin meşhur 'atob' şifrelemesini kırıyoruz
-            // Loglarda gördüğümüz <sc... kısmındaki gizli base64'ü bulur
-            const base64Regex = /atob\(["']([^"']{20,})["']\)/g;
-            let b;
-            while ((b = base64Regex.exec(html)) !== null) {
+            // 4. ŞİFRE ÇÖZÜCÜ (atob/Base64 Kırma)
+            // DDizi linki 'atob("YmFzZTY0...")' şeklinde saklar.
+            const b64Regex = /atob\(["']([^"']{20,})["']\)/g;
+            let match;
+            while ((match = b64Regex.exec(pHtml)) !== null) {
                 try {
-                    const decoded = atob(b[1]);
-                    if (decoded.includes("http")) {
-                        // Eğer decode edilen şey bir iframe src ise:
-                        const finalUrl = decoded.match(/src=["']([^"']+)["']/i)?.[1] || decoded;
+                    const decoded = atob(match[1]); // Şifreyi burada kırıyoruz
+                    
+                    // Decode edilen metin genelde bir <iframe src="..."> bloğudur
+                    const finalUrlMatch = decoded.match(/src=["']([^"']+)["']/i);
+                    const finalUrl = finalUrlMatch ? finalUrlMatch[1] : (decoded.includes('http') ? decoded : null);
+
+                    if (finalUrl) {
+                        let streamUrl = finalUrl.startsWith('//') ? 'https:' + finalUrl : finalUrl;
                         
                         streams.push({
-                            name: "DDizi - " + (finalUrl.includes('moly') ? "Vidmoly" : "Cloud"),
-                            url: finalUrl.startsWith('//') ? 'https:' + finalUrl : finalUrl,
-                            quality: "1080p"
+                            name: "DDizi " + (streamUrl.includes('vidmoly') ? "Vidmoly" : "Moly"),
+                            url: streamUrl,
+                            quality: "1080p",
+                            headers: {
+                                "Referer": "https://www.ddizi.im/",
+                                "User-Agent": UA
+                            }
                         });
                     }
-                } catch(e) {}
-            }
-
-            // 3. ADIM: Standart Iframe Taraması (Yedek)
-            const iframeRegex = /iframe[^>]+src=["']([^"']*(?:vidmoly|moly|uqload)[^"']*)["']/gi;
-            let m;
-            while ((m = iframeRegex.exec(html)) !== null) {
-                let u = m[1].startsWith('//') ? 'https:' + m[1] : m[1];
-                streams.push({ name: "DDizi Player", url: u, quality: "720p" });
-            }
-
-            // 4. ADIM: Player'ın patlamaması için Header'ları ekle
-            return streams.map(s => ({
-                ...s,
-                headers: {
-                    "User-Agent": UA,
-                    "Referer": targetUrl,
-                    "Origin": "https://www.ddizi.im",
-                    "Accept": "*/*"
+                } catch (e) {
+                    console.error("Decode hatası:", e);
                 }
-            }));
+            }
+
+            return streams;
 
         } catch (e) {
             return [];
