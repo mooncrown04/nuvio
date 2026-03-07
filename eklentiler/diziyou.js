@@ -1,53 +1,46 @@
-// DiziYou üzerinden DiziBox testi
-console.log('[DZB-LOG] TRUVA ATI CALISTI - DIZIBOX BASLATILIYOR');
+console.log('[DZB-LOG] DIZIYOU DOSYASI ICINDEN DIZIBOX TETIKLENDI');
 
-var getStreams = function(tmdbId, mediaType, seasonNum, episodeNum) {
-    return new Promise(function(resolve) {
-        console.log('[DZB-LOG] ID: ' + tmdbId + ' S:' + seasonNum + ' E:' + episodeNum);
+async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
+    console.log('[DZB-LOG] Gelen Talep -> ID: ' + tmdbId);
+    try {
+        // TMDB'den isim al
+        const tmdbRes = await fetch('https://api.themoviedb.org/3/tv/' + tmdbId + '?api_key=4ef0d7355d9ffb5151e987764708ce96');
+        const tmdbData = await tmdbRes.json();
+        const query = tmdbData.name || tmdbData.original_name;
         
-        var BASE_URL = 'https://www.dizibox.live';
-        var tmdbUrl = 'https://api.themoviedb.org/3/tv/' + tmdbId + '?api_key=4ef0d7355d9ffb5151e987764708ce96';
+        console.log('[DZB-LOG] Aranan Dizi: ' + query);
 
-        fetch(tmdbUrl)
-            .then(function(res) { return res.json(); })
-            .then(function(data) {
-                var query = data.name || data.original_name;
-                console.log('[DZB-LOG] Aranan: ' + query);
-                return fetch(BASE_URL + '/?s=' + encodeURIComponent(query));
-            })
-            .then(function(res) { return res.text(); })
-            .then(function(html) {
-                var linkMatch = html.match(/href="(https:\/\/www\.dizibox\.live\/dizi\/[^"]+)"/);
-                if (!linkMatch) throw new Error('Dizi bulunamadi');
+        // DiziBox Arama
+        const searchRes = await fetch('https://www.dizibox.live/?s=' + encodeURIComponent(query));
+        const searchHtml = await searchRes.text();
+        
+        const slugMatch = searchHtml.match(/href="https:\/\/www\.dizibox\.live\/dizi\/([^/"]+)/);
+        if (!slugMatch) {
+            console.log('[DZB-LOG] DiziBox üzerinde bulunamadı.');
+            return [];
+        }
 
-                var slug = linkMatch[1].split('/dizi/')[1].replace(/\//g, '');
-                var targetUrl = BASE_URL + '/' + slug + '-' + seasonNum + '-sezon-' + episodeNum + '-bolum-hd-1-izle/';
-                console.log('[DZB-LOG] Hedef: ' + targetUrl);
+        const targetUrl = 'https://www.dizibox.live/' + slugMatch[1] + '-' + seasonNum + '-sezon-' + episodeNum + '-bolum-hd-1-izle/';
+        console.log('[DZB-LOG] Hedef Sayfa: ' + targetUrl);
 
-                return fetch(targetUrl);
-            })
-            .then(function(res) { return res.text(); })
-            .then(function(html) {
-                var iframeMatch = html.match(/<iframe[^>]+src="([^"]+)"/i);
-                if (iframeMatch) {
-                    var vUrl = iframeMatch[1].startsWith('//') ? 'https:' + iframeMatch[1] : iframeMatch[1];
-                    console.log('[DZB-LOG] Link Bulundu: ' + vUrl);
-                    
-                    resolve([{
-                        name: "DiziBox (Truva)",
-                        url: vUrl,
-                        quality: "1080p",
-                        headers: { 'Referer': BASE_URL }
-                    }]);
-                } else {
-                    resolve([]);
-                }
-            })
-            .catch(function(err) {
-                console.log('[DZB-LOG] Hata: ' + err.message);
-                resolve([]);
-            });
-    });
-};
+        const pageRes = await fetch(targetUrl);
+        const pageHtml = await pageRes.text();
+        
+        const iframeMatch = pageHtml.match(/<iframe[^>]+src="([^"]+)"/i);
+        if (iframeMatch) {
+            let streamUrl = iframeMatch[1];
+            if (streamUrl.startsWith('//')) streamUrl = 'https:' + streamUrl;
+            
+            return [{
+                name: "DiziBox (Redirect)",
+                url: streamUrl,
+                quality: "1080p"
+            }];
+        }
+    } catch (e) {
+        console.log('[DZB-LOG] HATA: ' + e.message);
+    }
+    return [];
+}
 
 if (typeof module !== 'undefined') module.exports = { getStreams: getStreams };
