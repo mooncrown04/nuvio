@@ -20,43 +20,55 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                     .replace(/[^a-z0-9]+/g, '-')
                     .replace(/^-+|-+$/g, '');
 
+                // Dizigom'un muhtemel URL varyasyonlarını sırayla deneyeceğiz
                 var epUrl = BASE_URL + '/dizi/' + slug + '-' + seasonNum + '-sezon-' + episodeNum + '-bolum/';
-                console.log('[Dizigom] Hedef:', epUrl);
+                console.log('[Dizigom] Sayfa Analiz Ediliyor: ' + epUrl);
 
                 return fetch(epUrl, { headers: HEADERS });
+            })
+            .then(function(res) { 
+                if(res.status === 404) {
+                    // Eğer 404 ise bir de sonuna -hd1 ekleyip dene (Breaking Bad örneğindeki gibi)
+                    return fetch(res.url.replace(/\/$/, '') + '-hd1/', { headers: HEADERS });
+                }
+                return res;
             })
             .then(function(res) { return res.text(); })
             .then(function(html) {
                 var streams = [];
                 
-                // 2. Yöntem: Iframe SRC Yakalama
-                var iframeMatch = html.match(/<iframe[^>]+src="([^"]+)"/i);
-                if (iframeMatch) {
-                    var src = iframeMatch[1].startsWith('//') ? 'https:' + iframeMatch[1] : iframeMatch[1];
-                    streams.push({
-                        name: '⌜ Dizigom ⌟ | Ana Kaynak',
-                        url: src,
-                        quality: '1080p',
-                        headers: { 'Referer': BASE_URL + '/' }
-                    });
+                // 1. Yöntem: Standart Iframe Yakalama (Vidmoly, Moly vb.)
+                var iframeRegex = /src="([^"]*(?:vidmoly|moly|player|embed|ok\.ru)[^"]*)"/gi;
+                var match;
+                while ((match = iframeRegex.exec(html)) !== null) {
+                    var src = match[1].startsWith('//') ? 'https:' + match[1] : match[1];
+                    if (!streams.find(s => s.url === src)) {
+                        streams.push({
+                            name: '⌜ Dizigom ⌟ | Kaynak',
+                            url: src,
+                            quality: '1080p',
+                            headers: { 'Referer': BASE_URL + '/' }
+                        });
+                    }
                 }
 
-                // 3. Yöntem: Gizli Video ID Yakalama (Diziyou benzeri)
-                var itemIdMatch = html.match(/data-id="(\d+)"/i) || html.match(/post_id\s*=\s*(\d+)/i);
-                if (itemIdMatch) {
-                    console.log('[Dizigom] Video ID Bulundu:', itemIdMatch[1]);
-                    // Bazı altyapılarda doğrudan Moly/Vidmoly linki bu ID ile oluşur
+                // 2. Yöntem: Sayfa içindeki gizli ID'yi yakala (DiziYou mantığı)
+                var idMatch = html.match(/data-id="(\d+)"/i) || html.match(/post_id\s*[:=]\s*(\d+)/i);
+                if (idMatch && streams.length === 0) {
+                    console.log('[Dizigom] Gizli ID bulundu: ' + idMatch[1]);
+                    // Gelecekte bu ID ile doğrudan API isteği atılabilir
                 }
 
+                console.log('[Dizigom] İşlem bitti. Bulunan link: ' + streams.length);
                 resolve(streams);
             })
             .catch(function(err) {
-                console.error('[Dizigom] Kritik Hata:', err.message);
+                console.error('[Dizigom] Hata: ' + err.message);
                 resolve([]);
             });
     });
 }
 
-// Global Export
+// Global Export (Nuvio / SineWix Uyumluluğu)
 if (typeof module !== 'undefined') { module.exports = { getStreams: getStreams }; }
 globalThis.getStreams = getStreams;
