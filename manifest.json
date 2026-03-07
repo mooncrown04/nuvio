@@ -13,21 +13,7 @@
   "enabled": true,
   "formats": ["mp4", "mkv", "hls", "m3u8"],
   "contentLanguage": ["tr"]
-},
-	 
-    {
-      "id": "dizipal",
-      "name": "DiziPal",
-      "description": "En yeni dizileri güvenli ve hızlı şekilde sunar.",
-      "version": "1.0.4",
-      "author": "kerimmkirac",
-      "supportedTypes": ["movie", "tv"],
-      "filename": "eklentiler/dizipal.js",
-      "enabled": true,
-      "formats": ["m3u8"],
-      "logo": "https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://dizipal1206.com&size=128",
-      "contentLanguage": ["tr"]
-    }
+}
 
   ]
 }
