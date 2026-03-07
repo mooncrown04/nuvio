@@ -1,80 +1,108 @@
-var cheerio = require("cheerio-without-node-native");
+(function() {
+    var cheerio = require("cheerio-without-node-native");
 
-var BASE_URL = 'https://www.dizibox.tv'; 
+    // Protokol gereği: Fire Stick Lite için HTTP öncelikli
+    var BASE_URL = 'http://www.dizibox.tv'; 
+    var TMDB_KEY = '4ef0d7355d9ffb5151e987764708ce96';
 
-// OG ve Sosyal Medya Botu Taklidi
-var HEADERS = {
-    'User-Agent': 'facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)', // Facebook Bot taklidi
-    'Referer': BASE_URL + '/',
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-    'Accept-Language': 'tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7',
-    'X-Requested-With': 'com.facebook.orca' // Reklam sistemlerini şaşırtmak için app-id simülasyonu
-};
+    async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
+        console.log(`[Dizibox] Başlatıldı: ID=${tmdbId}, S=${seasonNum}, E=${episodeNum}`);
+        
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 12000); // 12 saniye limit
 
-function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 10000); 
+        try {
+            if (mediaType !== 'tv') {
+                console.log("[Dizibox] Sadece TV dizileri destekleniyor.");
+                return [];
+            }
 
-    return new Promise(function(resolve, reject) {
-        if (mediaType !== 'tv') return resolve([]);
+            // 1. ADIM: TMDB üzerinden isim çekme
+            console.log("[Dizibox] TMDB bilgisi alınıyor...");
+            const tmdbUrl = `https://api.themoviedb.org/3/tv/${tmdbId}?language=tr-TR&api_key=${TMDB_KEY}`;
+            const tmdbRes = await fetch(tmdbUrl, { signal: controller.signal });
+            const tmdbData = await tmdbRes.json();
+            const query = tmdbData.name || tmdbData.original_name;
 
-        var tmdbUrl = 'https://api.themoviedb.org/3/tv/' + tmdbId + '?language=tr-TR&api_key=4ef0d7355d9ffb5151e987764708ce96';
+            if (!query) throw new Error("TMDB'den isim alınamadı.");
+            console.log(`[Dizibox] Arama sorgusu: ${query}`);
 
-        fetch(tmdbUrl, { signal: controller.signal })
-            .then(res => res.json())
-            .then(data => {
-                var query = data.name || '';
-                var searchUrl = BASE_URL + '/?s=' + encodeURIComponent(query);
-                
-                // İlk istekte OG etiketlerini kontrol ederek gerçek linki bulma
-                return fetch(searchUrl, { headers: HEADERS, signal: controller.signal });
-            })
-            .then(res => res.text())
-            .then(html => {
-                var $ = cheerio.load(html);
-                
-                // OG Etiketi Kontrolü: Eğer sayfada og:url varsa, reklam yönlendirmesini atlamışız demektir.
-                var ogUrl = $('meta[property="og:url"]').attr('content');
-                var firstMatch = ogUrl || $('.post-title a').first().attr('href');
-                
-                if (!firstMatch) throw new Error('Dizi/OG verisi bulunamadı');
-
-                var cleanBase = firstMatch.endsWith('/') ? firstMatch.slice(0, -1) : firstMatch;
-                var epUrl = cleanBase + '-sezon-' + seasonNum + '-bolum-' + episodeNum + '-izle/';
-                
-                return fetch(epUrl, { headers: HEADERS, signal: controller.signal });
-            })
-            .then(res => res.text())
-            .then(epHtml => {
-                clearTimeout(timeoutId);
-                var $ = cheerio.load(epHtml);
-                var streams = [];
-
-                // Reklam Katmanlarını Filtrele (Ads skipping)
-                $('iframe').each(function() {
-                    var src = $(this).attr('src') || '';
-                    
-                    // Reklam içeren veya şüpheli iframe'leri filtrele
-                    var isAds = /ads|popunder|click|doubleclick/i.test(src);
-                    
-                    if (!isAds && (src.includes('vidmoly') || src.includes('dizibox') || src.includes('moly'))) {
-                        var finalUrl = src.startsWith('//') ? 'https:' + src : src;
-                        
-                        streams.push({
-                            name: 'Dizibox - ' + (src.includes('vidmoly') ? 'Vidmoly' : 'Player'),
-                            url: finalUrl,
-                            quality: 'HD',
-                            headers: { 'Referer': BASE_URL }
-                        });
-                    }
-                });
-
-                resolve(streams);
-            })
-            .catch(err => {
-                clearTimeout(timeoutId);
-                console.error('[Dizibox-OG] Hata:', err.message);
-                resolve([]);
+            // 2. ADIM: Dizibox Arama (HTTP üzerinden SSL hatasını aşmak için)
+            const searchUrl = `${BASE_URL}/?s=${encodeURIComponent(query)}`;
+            console.log(`[Dizibox] Arama yapılıyor: ${searchUrl}`);
+            
+            const searchRes = await fetch(searchUrl, {
+                headers: { 'User-Agent': 'facebookexternalhit/1.1' },
+                signal: controller.signal
             });
-    });
-}
+            const searchHtml = await searchRes.text();
+
+            let $ = cheerio.load(searchHtml);
+            const firstMatch = $('.post-title a').first().attr('href');
+            $ = null; // Belleği boşalt
+
+            if (!firstMatch) {
+                console.log("[Dizibox] Arama sonucu boş.");
+                return [];
+            }
+            console.log(`[Dizibox] Dizi bulundu: ${firstMatch}`);
+
+            // 3. ADIM: Bölüm Sayfasına Git
+            const cleanUrl = firstMatch.endsWith('/') ? firstMatch.slice(0, -1) : firstMatch;
+            const epUrl = `${cleanUrl}-sezon-${seasonNum}-bolum-${episodeNum}-izle/`.replace('https://', 'http://');
+            console.log(`[Dizibox] Bölüm isteği: ${epUrl}`);
+
+            const epRes = await fetch(epUrl, { signal: controller.signal });
+            const epHtml = await epRes.text();
+
+            // 4. ADIM: Iframe/Video Linklerini Ayıkla
+            const streams = [];
+            let $ep = cheerio.load(epHtml);
+
+            // OG kontrolü (Log için)
+            const ogUrl = $ep('meta[property="og:url"]').attr('content');
+            if (ogUrl) console.log(`[Dizibox] OG Doğrulanmış URL: ${ogUrl}`);
+
+            $ep('iframe').each((i, el) => {
+                let src = $ep(el).attr('src') || '';
+                if (src.includes('vidmoly') || src.includes('dizibox') || src.includes('moly')) {
+                    const finalUrl = src.startsWith('//') ? 'https:' + src : src;
+                    streams.push({
+                        name: "Dizibox - Kaynak " + (i + 1),
+                        url: finalUrl,
+                        quality: '720p',
+                        headers: { 'Referer': BASE_URL }
+                    });
+                }
+            });
+
+            $ep = null; // Belleği boşalt
+            clearTimeout(timeoutId);
+
+            console.log(`[Dizibox] Bitti. Bulunan kaynak sayısı: ${streams.length}`);
+            return streams;
+
+        } catch (err) {
+            clearTimeout(timeoutId);
+            if (err.name === 'AbortError') {
+                console.error("[Dizibox] Hata: Cihaz performansı nedeniyle zaman aşımı.");
+            } else {
+                console.error(`[Dizibox] Kritik Hata: ${err.message}`);
+            }
+            return [];
+        }
+    }
+
+    // --- SİSTEM ENTEGRASYONU (Loglardaki "not found" hatası çözümü) ---
+    const exportObject = { getStreams: getStreams };
+
+    if (typeof module !== 'undefined' && module.exports) {
+        module.exports = exportObject;
+    }
+    
+    // Bazı plugin sistemleri sadece global nesneye bakar
+    globalThis.getStreams = getStreams;
+    
+    console.log("[Dizibox] Plugin başarıyla yüklendi ve globalThis.getStreams tanımlandı.");
+
+})();
