@@ -1,4 +1,3 @@
-// Cheerio bağımlılığını kaldırdık (Binder hatasını önlemek için)
 const HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
 };
@@ -7,7 +6,6 @@ async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
     if (mediaType !== 'tv') return [];
 
     try {
-        // 1. TMDB'den isim çek
         const tmdbRes = await fetch(`https://api.themoviedb.org/3/tv/${tmdbId}?api_key=4ef0d7355d9ffb5151e987764708ce96&language=tr-TR`);
         const tmdbData = await tmdbRes.json();
         
@@ -16,7 +14,6 @@ async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
             .replace(/\s+/g, '-')
             .replace(/[^\w-]+/g, '');
 
-        // 2. Senin tarayıcıda açtığın çalışan link yapısı
         const epUrl = `https://www.dizibox.live/${slug}-${seasonNum}-sezon-${episodeNum}-bolum-hd-izle/`;
         console.log(`[Dizibox] Sayfa Cekiliyor: ${epUrl}`);
 
@@ -25,28 +22,35 @@ async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
 
         const streams = [];
         
-        // 3. Iframe/Player Ayıklama (Regex ile - Binder hatası vermez)
-        // Dizibox genelde 'video-area' div'i içinde iframe kullanır.
-        const iframeRegex = /<iframe[^>]+src="([^"]*(?:player|king|vidmoly|moly|ok\.ru)[^"]*)"/gi;
-        let match;
+        // 1. Standart Iframe ve Data-Src taraması
+        const regexList = [
+            /iframe[^>]+src=["']([^"']*(?:player|king|vidmoly|moly|ok\.ru|mail\.ru|dizibox)[^"']*)["']/gi,
+            /data-src=["']([^"']*(?:player|king|vidmoly|moly|ok\.ru|mail\.ru|dizibox)[^"']*)["']/gi,
+            /file:\s*["']([^"']*\.m3u8[^"']*)["']/gi  // Doğrudan video dosyası varsa
+        ];
 
-        while ((match = iframeRegex.exec(mainHtml)) !== null) {
-            let src = match[1];
-            if (src.startsWith('//')) src = 'https:' + src;
-
-            // Moly veya King player ise ekle
-            streams.push({
-                name: "DiziBox | Player",
-                url: src,
-                quality: "1080p",
-                headers: { 
-                    'Referer': 'https://www.dizibox.live/',
-                    'User-Agent': HEADERS['User-Agent']
+        regexList.forEach(reg => {
+            let match;
+            while ((match = reg.exec(mainHtml)) !== null) {
+                let url = match[1];
+                if (url.startsWith('//')) url = 'https:' + url;
+                
+                // MolyStream adıyla listeye ekle
+                if (!streams.find(s => s.url === url)) {
+                    streams.push({
+                        name: "DiziBox | " + (url.includes('moly') ? "MolyStream" : "Alternatif"),
+                        url: url,
+                        quality: "1080p",
+                        headers: { 
+                            'Referer': 'https://www.dizibox.live/',
+                            'User-Agent': HEADERS['User-Agent']
+                        }
+                    });
                 }
-            });
-        }
+            }
+        });
 
-        console.log(`[Dizibox] Bitti. Bulunan kaynak: ${streams.length}`);
+        console.log(`[Dizibox] Tarama bitti. Bulunan kaynak: ${streams.length}`);
         return streams;
 
     } catch (err) {
