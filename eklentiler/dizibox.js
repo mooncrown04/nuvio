@@ -12,64 +12,68 @@ async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
         const slug = (tmdbData.original_name || tmdbData.name).toLowerCase().trim().replace(/\s+/g, '-').replace(/[^\w-]+/g, '');
 
         const epUrl = `https://www.dizibox.live/${slug}-${seasonNum}-sezon-${episodeNum}-bolum-hd-izle/`;
-        console.log(`[Dizibox] Analiz: ${epUrl}`);
-
         const mainRes = await fetch(epUrl, { headers: HEADERS });
         const html = await mainRes.text();
+        
         const streams = [];
 
-        // 1. King Player ID Yakalayıcı (Sayfada link olmasa bile ID'den oluşturur)
-        // Kotlin örneğindeki gibi regex ile ID ara
-        const idRegex = /"video_id"\s*:\s*"(\d+)"|video_id\s*=\s*'(\d+)'/i;
-        const idMatch = html.match(idRegex);
+        // 1. King Player ID'yi bul
+        const idMatch = html.match(/"video_id"\s*:\s*"(\d+)"|video_id\s*=\s*'(\d+)'/i);
         const videoId = idMatch ? (idMatch[1] || idMatch[2]) : null;
 
         if (videoId) {
-            streams.push({
-                name: "DiziBox | King Player (Hızlı)",
-                url: `https://www.dizibox.live/player/king.php?v=${videoId}`,
-                quality: "1080p",
-                headers: { 'Referer': epUrl }
-            });
+            const playerUrl = `https://www.dizibox.live/player/king.php?v=${videoId}`;
+            
+            // --- KRİTİK ADIM: Player Sayfasının İçine Gir ---
+            try {
+                const pRes = await fetch(playerUrl, { headers: { 'Referer': epUrl, ...HEADERS } });
+                const pHtml = await pRes.text();
+
+                // Sayfa içindeki asıl video linkini (mp4/m3u8) ara
+                // Genelde "file": "URL" veya sources: [...] şeklinde olur
+                const finalUrlMatch = pHtml.match(/["']?file["']?\s*[:=]\s*["']([^"']+\.(?:mp4|m3u8)[^"']*)["']/i);
+                
+                if (finalUrlMatch) {
+                    streams.push({
+                        name: "DiziBox | King HD",
+                        url: finalUrlMatch[1].replace(/\\/g, ''),
+                        quality: "1080p",
+                        headers: { 'Referer': playerUrl }
+                    });
+                } else {
+                    // Eğer doğrudan link yoksa, mecbur player sayfasını gönder (Bazı uygulamalar bunu içeride çözer)
+                    streams.push({
+                        name: "DiziBox | King Player",
+                        url: playerUrl,
+                        quality: "720p",
+                        headers: { 'Referer': epUrl }
+                    });
+                }
+            } catch (pErr) {
+                console.log("Player ic sayfa hatasi");
+            }
         }
 
-        // 2. Gizli Moly Linklerini Çöz (unescape yakalama)
-        const unescapeMatch = html.match(/unescape\("([^"]+)"\)/);
-        if (unescapeMatch) {
-            const decoded = decodeURIComponent(unescapeMatch[1]);
-            const molyMatch = decoded.match(/src="([^"]*moly[^"]*)"/i);
-            if (molyMatch) {
+        // 2. Alternatif (Moly) kontrolü
+        const molyMatch = html.match(/unescape\("([^"]+)"\)/);
+        if (molyMatch) {
+            const decoded = decodeURIComponent(molyMatch[1]);
+            const mSrc = decoded.match(/src="([^"]+)"/i);
+            if (mSrc) {
                 streams.push({
-                    name: "DiziBox | MolyStream",
-                    url: molyMatch[1].startsWith('//') ? 'https:' + molyMatch[1] : molyMatch[1],
-                    quality: "1080p",
+                    name: "DiziBox | VidMoly",
+                    url: mSrc[1].startsWith('//') ? 'https:' + mSrc[1] : mSrc[1],
+                    quality: "720p",
                     headers: { 'Referer': epUrl }
                 });
             }
         }
 
-        // 3. Genel Link Tarama (Eğer yukarıdakiler yemezse)
-        const allLinks = html.match(/https?:\/\/[^"']*(?:king|moly|vidmoly|ok\.ru)[^"']*/gi) || [];
-        allLinks.forEach(link => {
-            if (!streams.find(s => s.url === link)) {
-                streams.push({
-                    name: "DiziBox | Alternatif",
-                    url: link,
-                    quality: "1080p",
-                    headers: { 'Referer': epUrl }
-                });
-            }
-        });
-
-        console.log(`[Dizibox] Islem bitti. Bulunan: ${streams.length}`);
         return streams;
-
     } catch (err) {
-        console.error(`[Dizibox] Hata: ${err.message}`);
         return [];
     }
 }
 
-// Global Exportlar
 if (typeof exports !== 'undefined') exports.getStreams = getStreams;
 if (typeof globalThis !== 'undefined') globalThis.getStreams = getStreams;
