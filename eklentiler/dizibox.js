@@ -1,7 +1,11 @@
-var VER = '2.0.0-HYBRID';
-console.log('[Dizibox V' + VER + '] Baslatildi');
+var VER = '2.1.0-CORS';
+console.log('[Dizibox V' + VER + '] Yukleniyor...');
 
 var TMDB_KEY = '4ef0d7355d9ffb5151e987764708ce96';
+// Daha az bilinen ve Cloudflare bypass yetenegi olan bir proxy deniyoruz
+var PROXY = 'https://api.proxyscrape.com/v2/?request=displayproxies&protocol=http&timeout=10000&country=all&ssl=all&anonymity=all'; 
+// Not: Yukaridaki proxy listesi degil, asagidaki yapiyi kullanacagiz:
+var BYPASS = 'https://corsproxy.io/?';
 
 async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
     if (mediaType !== 'tv') return [];
@@ -10,38 +14,35 @@ async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
         const tmdbRes = await fetch(`https://api.themoviedb.org/3/tv/${tmdbId}?api_key=${TMDB_KEY}&language=tr-TR`);
         const tmdbData = await tmdbRes.json();
         
-        // Dizi adini URL formatina getir (Orn: Breaking Bad -> breaking-bad)
-        const slug = (tmdbData.original_name || tmdbData.name)
-            .toLowerCase()
+        // Isim temizleme (Slug)
+        const rawName = tmdbData.original_name || tmdbData.name;
+        const slug = rawName.toLowerCase()
             .replace(/[^\w\s-]/g, '')
-            .replace(/\s+/g, '-');
+            .replace(/\s+/g, '-')
+            .replace(/-+/g, '-');
 
-        // Arama yapmadan dogrudan bolum sayfasini tahmin et (Dizibox standardi)
-        // Format: dizibox.live/dizi-adi-1-sezon-1-bolum-izle/
-        const epUrl = `https://www.dizibox.live/${slug}-${seasonNum}-sezon-${episodeNum}-bolum-izle/`;
-        const tunnelUrl = `https://translate.google.com/translate?sl=auto&tl=en&u=${encodeURIComponent(epUrl)}`;
+        const targetUrl = `https://www.dizibox.live/${slug}-${seasonNum}-sezon-${episodeNum}-bolum-izle/`;
+        console.log(`[Dizibox] Hedef: ${targetUrl}`);
+
+        // corsproxy.io kullanarak Cloudflare'i asmaya calisiyoruz
+        const fetchUrl = BYPASS + encodeURIComponent(targetUrl);
         
-        console.log(`[Dizibox] Tahmini Bolum: ${epUrl}`);
-
-        const res = await fetch(tunnelUrl, {
-            headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' }
-        });
+        const res = await fetch(fetchUrl);
         const html = await res.text();
 
+        if (html.includes('Cloudflare') || html.length < 500) {
+            throw new Error('Proxy Cloudflare engelini asamadi.');
+        }
+
         const streams = [];
-        // Iframe regex'ini daha genis tutalim
         const iframeRegex = /<iframe[^>]+src="([^"]+)"/gi;
         let match;
 
         while ((match = iframeRegex.exec(html)) !== null) {
             let src = match[1];
-            // Google parametresini ayikla
-            if (src.includes('u=')) {
-                src = new URLSearchParams(src.split('?')[1]).get('u') || src;
-            }
-            if (src.includes('vidmoly') || src.includes('moly') || src.includes('player') || src.includes('king')) {
+            if (src.includes('vidmoly') || src.includes('player') || src.includes('moly')) {
                 streams.push({
-                    name: "Dizibox V2",
+                    name: "Dizibox (CORS-Proxy)",
                     url: src.startsWith('//') ? 'https:' + src : src,
                     quality: '1080p'
                 });
@@ -49,6 +50,7 @@ async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
         }
 
         return streams;
+
     } catch (err) {
         console.log(`[Dizibox] Hata: ${err.message}`);
         return [];
