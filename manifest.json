@@ -2,7 +2,20 @@
   "name": "MoOnCrOwN",
   "version": "1.0.0",
   "scrapers": [
-{
+  {
+      "id": "sinewix",
+      "name": "SineWix",
+      "description": "Türkçe film, dizi ve anime - 5000+ HD içerik, Türkçe altyazılı, anime arşivi",
+      "version": "1.0.0",
+      "author": "kerimmkirac",
+      "supportedTypes": ["movie", "tv"],
+      "filename": "eklentiler/sinewix.js",
+      "enabled": true,
+      "formats": ["mp4", "mkv"],
+      "logo": "https://play-lh.googleusercontent.com/brwGNmr7IjA_MKk_TTPs0va10hdKE_bD_a1lnKoiMuCayW98EHpRv55edA6aEoJlmwfX=w240-h480",
+      "contentLanguage": ["tr"]
+      },
+    {
       "id": "fullhd",
       "name": "FullHd",
       "description": "Streaming links from netmirror. Automatically disabled on iOS due to compatibility issues.",
