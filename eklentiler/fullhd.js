@@ -1,5 +1,4 @@
-/* --- YARDIMCI FONKSİYONLAR --- */
-
+/* --- GÜVENLİ ÇÖZÜCÜLER --- */
 function atobSafe(s) {
     try {
         var str = String(s).replace(/\s/g, '');
@@ -18,10 +17,10 @@ function atobSafe(s) {
 }
 
 function decodeRapidLink(encoded) {
+    if (!encoded) return null;
     try {
         var reversed = encoded.split('').reverse().join('');
         var step1 = atobSafe(reversed);
-        if (!step1) return null;
         var key = 'K9L';
         var output = '';
         for (var i = 0; i < step1.length; i++) {
@@ -33,89 +32,73 @@ function decodeRapidLink(encoded) {
     } catch (e) { return null; }
 }
 
-/* --- ANA EKLENTİ YAPISI --- */
-
+/* --- ANA YAPI --- */
 const FHD = {
     baseUrl: "https://www.fullhdfilmizlesene.tv",
-    headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        'Referer': "https://www.fullhdfilmizlesene.tv/"
-    },
-
-    // 1. ANA SAYFA (PHP sayfalama mantığı burada)
-    async home(page = 1) {
-        const url = `${this.baseUrl}/filmizle/turkce-dublaj-filmler-hd-izle/${page}`;
-        const html = await fetch(url, { headers: this.headers }).then(res => res.text());
-        const blocks = html.match(/<li\s+class="film"([\s\S]*?)<\/li>/g) || [];
-        
-        return blocks.map(block => {
-            const linkMatch = block.match(/href="https?:\/\/www\.fullhdfilmizlesene\.tv\/film\/([^"']+)"/);
-            const nameMatch = block.match(/class="tt"[^>]*>([\s\S]*?)<\/a>/);
-            const logoMatch = block.match(/data-srcset="([^"']+)"/) || block.match(/data-src="([^"']+)"/);
-            
-            let logo = logoMatch ? logoMatch[1].split(',')[0].trim().split(' ')[0] : "";
-            if (logo.startsWith('//')) logo = 'https:' + logo;
-
-            return {
-                name: nameMatch ? nameMatch[1].replace(/izle|İzle/gi, "").trim() : "Bilinmeyen Film",
-                url: linkMatch ? linkMatch[1] : "",
-                poster: logo
-            };
-        });
-    },
-
-    // 2. FİLM DETAY / SOURCE YÜKLEME
+    
     async loadSources(filmId) {
+        let streams = [];
         try {
-            // Film sayfasından vidid'yi çek
-            const filmPage = await fetch(`${this.baseUrl}/film/${filmId}/`, { headers: this.headers }).then(res => res.text());
-            const vidIdMatch = filmPage.match(/vidid = '(.*?)'/);
-            if (!vidIdMatch) return [];
-
+            // 1. ADIM: Film Sayfası
+            const filmUrl = this.baseUrl + "/film/" + filmId + "/";
+            const filmPage = await fetch(filmUrl).then(res => res.text());
+            
+            // vidid çekimi
+            const vidIdMatch = filmPage.match(/vidid\s*=\s*['"]([^'"]+)['"]/);
+            if (!vidIdMatch) return []; 
             const vidId = vidIdMatch[1];
-            let streams = [];
 
-            // --- ATOM (RAPIDVID) ÇÖZÜCÜ ---
-            const atomRes = await fetch(`${this.baseUrl}/player/api.php?id=${vidId}&type=t&name=atom&get=video&format=json`, { headers: this.headers }).then(res => res.json());
-            if (atomRes && atomRes.html) {
-                const atomEmbedUrl = atomRes.html.replace(/\\/g, '');
-                const atomHtml = await fetch(atomEmbedUrl, { headers: this.headers }).then(res => res.text());
-                const avMatch = atomHtml.match(/file":\s*av\(['"]([^'"]+)['"]\)/);
-                if (avMatch) {
-                    const finalUrl = decodeRapidLink(avMatch[1]);
-                    if (finalUrl) {
-                        streams.push({
-                            name: "RapidVid (Atom)",
-                            url: finalUrl,
-                            quality: "1080p",
-                            headers: { "Referer": "https://rapidvid.net/", "User-Agent": "okhttp/4.12.0" }
-                        });
+            // 2. ADIM: API Sorguları (Daha güvenli JSON işleme)
+            // Önce Atom/RapidVid deneyelim
+            try {
+                const atomApi = this.baseUrl + "/player/api.php?id=" + vidId + "&type=t&name=atom&get=video&format=json";
+                const atomResText = await fetch(atomApi).then(res => res.text());
+                // JSON içindeki ters eğik çizgileri temizleyip objeye çevirelim
+                const atomData = JSON.parse(atomResText.replace(/\\/g, ''));
+                
+                if (atomData && atomData.html) {
+                    const atomHtml = await fetch(atomData.html).then(res => res.text());
+                    const avMatch = atomHtml.match(/av\(['"]([^'"]+)['"]\)/);
+                    if (avMatch) {
+                        const finalUrl = decodeRapidLink(avMatch[1]);
+                        if (finalUrl) {
+                            streams.push({
+                                name: "RapidVid",
+                                url: finalUrl,
+                                quality: 1080,
+                                isM3u8: true
+                            });
+                        }
                     }
                 }
-            }
+            } catch (e) { /* Atom hatası */ }
 
-            // --- TURBO ÇÖZÜCÜ ---
-            const turboRes = await fetch(`${this.baseUrl}/player/api.php?id=${vidId}&type=t&name=advid&get=video&pno=tr&format=json`, { headers: this.headers }).then(res => res.json());
-            if (turboRes && turboRes.html) {
-                const turboSlugMatch = turboRes.html.match(/\/watch\/(.*?)"/);
-                if (turboSlugMatch) {
-                    const turboSlug = turboSlugMatch[1];
-                    const turboPage = await fetch(`https://turbo.imgz.me/play/${turboSlug}?autoplay=true`, { headers: this.headers }).then(res => res.text());
-                    const m3u8Match = turboPage.match(/file: "(.*?)"/);
-                    if (m3u8Match) {
-                        streams.push({
-                            name: "Turbo",
-                            url: m3u8Match[1],
-                            quality: "Auto",
-                            headers: { "Referer": "https://turbo.imgz.me/", "User-Agent": "okhttp/4.12.0" }
-                        });
+            // 3. ADIM: Turbo Kaynağı
+            try {
+                const turboApi = this.baseUrl + "/player/api.php?id=" + vidId + "&type=t&name=advid&get=video&pno=tr&format=json";
+                const turboResText = await fetch(turboApi).then(res => res.text());
+                const turboData = JSON.parse(turboResText.replace(/\\/g, ''));
+
+                if (turboData && turboData.html) {
+                    const turboSlugMatch = turboData.html.match(/\/watch\/([^"']+)/);
+                    if (turboSlugMatch) {
+                        const turboPage = await fetch("https://turbo.imgz.me/play/" + turboSlugMatch[1]).then(res => res.text());
+                        const m3u8Match = turboPage.match(/file:\s*"(https?[^"]+)"/);
+                        if (m3u8Match) {
+                            streams.push({
+                                name: "Turbo",
+                                url: m3u8Match[1],
+                                quality: 720,
+                                isM3u8: true
+                            });
+                        }
                     }
                 }
-            }
+            } catch (e) { /* Turbo hatası */ }
 
-            return streams;
-        } catch (e) {
+        } catch (globalError) {
             return [];
         }
+        return streams;
     }
 };
