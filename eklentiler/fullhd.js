@@ -1,15 +1,19 @@
-/* --- DERİN LOGLAMA VE GÜVENLİ OYNATMA --- */
 var FHD_BASE = 'https://www.fullhdfilmizlesene.live';
 
-// VLC ve ExoPlayer'ın reddedilmemesi için tarayıcı kimliği
+// Sunucuyu kandırmak için en güncel Chrome User-Agent'ı
 var FHD_STREAM_HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
     'Accept': '*/*',
     'Accept-Language': 'tr-TR,tr;q=0.9',
-    'Connection': 'keep-alive'
+    'Connection': 'keep-alive',
+    'Sec-Ch-Ua': '"Chromium";v="122", "Not(A:Brand";v="24", "Google Chrome";v="122"',
+    'Sec-Ch-Ua-Mobile': '?0',
+    'Sec-Ch-Ua-Platform': '"Windows"',
+    'Sec-Fetch-Dest': 'video',
+    'Sec-Fetch-Mode': 'no-cors',
+    'Sec-Fetch-Site': 'cross-site'
 };
 
-/* --- DECODER (PHP MANTIĞI) --- */
 function atobSafe(s) {
     try {
         var str = String(s).replace(/\s/g, '');
@@ -41,29 +45,27 @@ function decodeRapidLink(encoded) {
         }
         return atobSafe(output);
     } catch (e) { 
-        console.error('[FHD-Decode] Şifre çözme hatası:', e.message);
+        console.error('[FHD-ERROR] Şifre çözme başarısız:', e.message);
         return null; 
     }
 }
 
-/* --- ANA AKIŞ --- */
 function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
     return new Promise(function(resolve) {
         var tmdbType = mediaType === 'movie' ? 'movie' : 'tv';
         var tmdbUrl = 'https://api.themoviedb.org/3/' + tmdbType + '/' + tmdbId +
             '?language=tr-TR&api_key=4ef0d7355d9ffb5151e987764708ce96';
 
-        console.log('[FHD] TMDB aranıyor:', tmdbId);
+        console.log('[FHD] İstek Başladı:', title || tmdbId);
 
         fetch(tmdbUrl)
             .then(function(res) { return res.json(); })
             .then(function(data) {
                 var title = data.title || data.name || '';
                 if (!title) {
-                    console.error('[FHD] TMDB başlığı bulunamadı!');
+                    console.error('[FHD-ERROR] TMDB başlığı boş!');
                     return resolve([]);
                 }
-                
                 var searchUrl = FHD_BASE + '/arama/' + encodeURIComponent(title);
                 return fetch(searchUrl, { headers: { 'User-Agent': FHD_STREAM_HEADERS['User-Agent'] } });
             })
@@ -71,7 +73,7 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
             .then(function(html) {
                 var match = html.match(/href="(https?:\/\/www\.fullhdfilmizlesene\.live\/film\/[^"']+)"/);
                 if (!match) {
-                    console.error('[FHD] Sitede film eşleşmesi bulunamadı.');
+                    console.error('[FHD-ERROR] Film aramada bulunamadı.');
                     return resolve([]);
                 }
                 return fetchDetailAndSolve(match[1]);
@@ -80,80 +82,69 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                 resolve(streams || []);
             })
             .catch(function(err) {
-                console.error('[FHD-Global] Hata:', err.message);
+                console.error('[FHD-FATAL] Genel Hata:', err.message);
                 resolve([]);
             });
     });
 }
 
 function fetchDetailAndSolve(filmUrl) {
-    console.log('[FHD] Sayfa analiz ediliyor:', filmUrl);
     return fetch(filmUrl, { headers: { 'User-Agent': FHD_STREAM_HEADERS['User-Agent'] } })
         .then(function(res) { return res.text(); })
         .then(function(html) {
             var vidIdMatch = html.match(/vidid\s*=\s*['"]([^'"]+)['"]/);
             if (!vidIdMatch) {
-                console.error('[FHD] Sayfada vidid bulunamadı!');
+                console.error('[FHD-ERROR] vidid bulunamadı.');
                 return [];
             }
-            var vidId = vidIdMatch[1];
-
-            // 503 Hatasını önlemek için Referer ve User-Agent kritik
-            var api = FHD_BASE + '/player/api.php?id=' + vidId + '&type=t&name=atom&get=video&format=json';
+            
+            // RapidVid API isteği
+            var api = FHD_BASE + '/player/api.php?id=' + vidIdMatch[1] + '&type=t&name=atom&get=video&format=json';
             
             return fetch(api, { 
                 headers: { 
                     'User-Agent': FHD_STREAM_HEADERS['User-Agent'], 
                     'Referer': filmUrl,
-                    'X-Requested-With': 'XMLHttpRequest'
+                    'X-Requested-With': 'XMLHttpRequest' 
                 } 
-            })
-            .then(function(r) { return r.text(); })
-            .then(function(t) {
-                var data;
-                try {
-                    data = JSON.parse(t.replace(/\\/g, ''));
-                } catch(e) {
-                    console.error('[FHD] JSON Parse Hatası (Muhtemelen 503 döndü):', t.substring(0, 100));
-                    return [];
-                }
-                
-                if (!data.html) {
-                    console.error('[FHD] API html alanı boş döndü.');
-                    return [];
-                }
-                return fetch(data.html, { headers: { 'User-Agent': FHD_STREAM_HEADERS['User-Agent'] } });
-            })
-            .then(function(res) { return res.text(); })
-            .then(function(atomHtml) {
-                var av = atomHtml.match(/av\(['"]([^'"]+)['"]\)/);
-                if (av) {
-                    var decodedUrl = decodeRapidLink(av[1]);
-                    if (decodedUrl) {
-                        console.log('[FHD] Başarılı! Link çözüldü.');
-                        return [{
-                            name: 'FHD - Rapid (Loglu)',
-                            title: 'FullHD Film',
-                            url: decodedUrl,
-                            quality: '1080p',
-                            headers: Object.assign({}, FHD_STREAM_HEADERS, { 'Referer': 'https://rapidvid.net/' }),
-                            provider: 'fhd'
-                        }];
-                    }
-                }
-                console.error('[FHD] av() şifresi bulunamadı.');
-                return [];
             });
         })
+        .then(function(res) { return res.text(); })
+        .then(function(text) {
+            try {
+                var data = JSON.parse(text.replace(/\\/g, ''));
+                if (!data.html) throw new Error('HTML alanı boş');
+                return fetch(data.html, { headers: { 'User-Agent': FHD_STREAM_HEADERS['User-Agent'] } });
+            } catch(e) {
+                console.error('[FHD-ERROR] API JSON Hatası:', text.substring(0, 50));
+                return null;
+            }
+        })
+        .then(function(res) { return res ? res.text() : null; })
+        .then(function(atomHtml) {
+            if (!atomHtml) return [];
+            var av = atomHtml.match(/av\(['"]([^'"]+)['"]\)/);
+            if (av) {
+                var decodedUrl = decodeRapidLink(av[1]);
+                if (decodedUrl) {
+                    console.log('[FHD-SUCCESS] Link Çözüldü:', decodedUrl.substring(0, 30));
+                    return [{
+                        name: 'FHD - Rapid',
+                        url: decodedUrl,
+                        quality: '1080p',
+                        headers: {
+                            'User-Agent': FHD_STREAM_HEADERS['User-Agent'],
+                            'Referer': 'https://rapidvid.net/',
+                            'Origin': 'https://rapidvid.net'
+                        }
+                    }];
+                }
+            }
+            console.error('[FHD-ERROR] av() bulunamadı.');
+            return [];
+        })
         .catch(function(e) {
-            console.error('[FHD-Detail] Kritik Hata:', e.message);
+            console.error('[FHD-ERROR] fetchDetail hatası:', e.message);
             return [];
         });
-}
-
-// Export
-if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { getStreams };
-} else {
-    global.getStreams = getStreams;
 }
