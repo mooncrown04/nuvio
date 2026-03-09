@@ -1,160 +1,121 @@
-/**
- * FullHDFilmizlesene - Nuvio/QuickJS Uyumlu Versiyon
- */
+/* --- YARDIMCI FONKSİYONLAR --- */
 
-var cheerio = require("cheerio-without-node-native");
-
-var BASE_URL = 'https://www.fullhdfilmizlesene.live';
-var TMDB_API_KEY = '4ef0d7355d9ffb5151e987764708ce96';
-
-var HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-    'Accept-Language': 'tr-TR,tr;q=0.9'
-};
-
-// ROT13 Algoritması (Eklentinin kullandığı şifreleme)
-function rtt(s) {
-    if (!s) return '';
-    var result = '';
-    for (var i = 0; i < s.length; i++) {
-        var c = s.charCodeAt(i);
-        if (c >= 97 && c <= 122) {
-            result += String.fromCharCode(((c - 97 + 13) % 26) + 97);
-        } else if (c >= 65 && c <= 90) {
-            result += String.fromCharCode(((c - 65 + 13) % 26) + 65);
-        } else {
-            result += s.charAt(i);
-        }
-    }
-    return result;
-}
-
-// Nuvio/QuickJS uyumlu Base64 Çözücü
-function atob(s) {
-    if (!s) return '';
+function atobSafe(s) {
     try {
         var str = String(s).replace(/\s/g, '');
-        // Padding tamamlama (4'ün katı yapma)
-        while (str.length % 4 !== 0) {
-            str += '=';
-        }
-        
+        while (str.length % 4 !== 0) str += '=';
         var chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=';
         var output = '';
         var bc = 0, bs, buffer, idx = 0;
-        
         while (buffer = str.charAt(idx++)) {
             buffer = chars.indexOf(buffer);
             if (buffer === -1) continue;
             bs = bc % 4 ? bs * 64 + buffer : buffer;
-            if (bc++ % 4) {
-                output += String.fromCharCode(255 & bs >> (-2 * bc & 6));
-            }
+            if (bc++ % 4) output += String.fromCharCode(255 & bs >> (-2 * bc & 6));
         }
         return output;
-    } catch (e) {
-        console.error('[FHD] Base64 Hatası:', e.message);
-        return '';
-    }
+    } catch (e) { return ''; }
 }
 
-async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
-    console.error('[FHD] İşlem Başladı - TMDB ID:', tmdbId);
-    
+function decodeRapidLink(encoded) {
     try {
-        // 1. TMDB üzerinden isim bul
-        var tmdbType = mediaType === 'movie' ? 'movie' : 'tv';
-        var tmdbUrl = 'https://api.themoviedb.org/3/' + tmdbType + '/' + tmdbId + 
-            '?language=tr-TR&api_key=' + TMDB_API_KEY;
-        
-        var tmdbRes = await fetch(tmdbUrl);
-        var tmdbData = await tmdbRes.json();
-        var query = tmdbData.title || tmdbData.name;
-        
-        if (!query) return [];
-        console.error('[FHD] Aranan Film:', query);
-        
-        // 2. Sitede Arama Yap
-        var searchUrl = BASE_URL + '/arama/' + encodeURIComponent(query);
-        var searchRes = await fetch(searchUrl, { headers: HEADERS });
-        var html = await searchRes.text();
-        
-        var $ = cheerio.load(html);
-        var firstLink = $('li.film a').first().attr('href');
-        if (!firstLink) return [];
-        
-        var filmUrl = firstLink.startsWith('http') ? firstLink : BASE_URL + firstLink;
-        
-        // 3. Film Sayfasını Çek ve scx Verisini Ayıkla
-        var filmRes = await fetch(filmUrl, { headers: HEADERS });
-        var filmHtml = await filmRes.text();
-        
-        var scxMatch = filmHtml.match(/scx\s*=\s*(\{[\s\S]*?\});/);
-        if (!scxMatch) {
-            // Alternatif pattern dene
-            scxMatch = filmHtml.match(/var\s+scx\s*=\s*(\{[\s\S]*?\});/);
+        var reversed = encoded.split('').reverse().join('');
+        var step1 = atobSafe(reversed);
+        if (!step1) return null;
+        var key = 'K9L';
+        var output = '';
+        for (var i = 0; i < step1.length; i++) {
+            var r = key.charCodeAt(i % 3);
+            var n = step1.charCodeAt(i) - (r % 5 + 1);
+            output += String.fromCharCode(n);
         }
-        
-        if (!scxMatch) return [];
+        return atobSafe(output);
+    } catch (e) { return null; }
+}
 
-        // 4. scx JSON verisini temizle ve parse et
-        var scxData;
+/* --- ANA EKLENTİ YAPISI --- */
+
+const FHD = {
+    baseUrl: "https://www.fullhdfilmizlesene.tv",
+    headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Referer': "https://www.fullhdfilmizlesene.tv/"
+    },
+
+    // 1. ANA SAYFA (PHP sayfalama mantığı burada)
+    async home(page = 1) {
+        const url = `${this.baseUrl}/filmizle/turkce-dublaj-filmler-hd-izle/${page}`;
+        const html = await fetch(url, { headers: this.headers }).then(res => res.text());
+        const blocks = html.match(/<li\s+class="film"([\s\S]*?)<\/li>/g) || [];
+        
+        return blocks.map(block => {
+            const linkMatch = block.match(/href="https?:\/\/www\.fullhdfilmizlesene\.tv\/film\/([^"']+)"/);
+            const nameMatch = block.match(/class="tt"[^>]*>([\s\S]*?)<\/a>/);
+            const logoMatch = block.match(/data-srcset="([^"']+)"/) || block.match(/data-src="([^"']+)"/);
+            
+            let logo = logoMatch ? logoMatch[1].split(',')[0].trim().split(' ')[0] : "";
+            if (logo.startsWith('//')) logo = 'https:' + logo;
+
+            return {
+                name: nameMatch ? nameMatch[1].replace(/izle|İzle/gi, "").trim() : "Bilinmeyen Film",
+                url: linkMatch ? linkMatch[1] : "",
+                poster: logo
+            };
+        });
+    },
+
+    // 2. FİLM DETAY / SOURCE YÜKLEME
+    async loadSources(filmId) {
         try {
-            var rawJson = scxMatch[1]
-                .replace(/(\w+):/g, '"$1":') // Keyleri tırnak içine al
-                .replace(/'/g, '"')          // Tek tırnakları çift tırnak yap
-                .replace(/,\s*}/g, '}')      // Sondaki fazla virgülleri temizle
-                .replace(/,\s*\]/g, ']');
-            scxData = JSON.parse(rawJson);
-        } catch (e) {
-            console.error('[FHD] JSON Parse Hatası');
-            return [];
-        }
+            // Film sayfasından vidid'yi çek
+            const filmPage = await fetch(`${this.baseUrl}/film/${filmId}/`, { headers: this.headers }).then(res => res.text());
+            const vidIdMatch = filmPage.match(/vidid = '(.*?)'/);
+            if (!vidIdMatch) return [];
 
-        // 5. Kaynakları Çöz (Streamleri Topla)
-        var streams = [];
-        var sources = ['atom', 'advid', 'advidprox', 'proton', 'fast', 'fastly', 'tr', 'en'];
-        
-        sources.forEach(function(key) {
-            if (scxData[key] && scxData[key].sx && scxData[key].sx.t) {
-                var t = scxData[key].sx.t;
-                var encList = Array.isArray(t) ? t : [t];
-                
-                encList.forEach(function(enc) {
-                    if (typeof enc !== 'string') return;
-                    
-                    var decodedRot13 = rtt(enc);
-                    var finalUrl = atob(decodedRot13);
-                    
-                    if (finalUrl && finalUrl.startsWith('http')) {
+            const vidId = vidIdMatch[1];
+            let streams = [];
+
+            // --- ATOM (RAPIDVID) ÇÖZÜCÜ ---
+            const atomRes = await fetch(`${this.baseUrl}/player/api.php?id=${vidId}&type=t&name=atom&get=video&format=json`, { headers: this.headers }).then(res => res.json());
+            if (atomRes && atomRes.html) {
+                const atomEmbedUrl = atomRes.html.replace(/\\/g, '');
+                const atomHtml = await fetch(atomEmbedUrl, { headers: this.headers }).then(res => res.text());
+                const avMatch = atomHtml.match(/file":\s*av\(['"]([^'"]+)['"]\)/);
+                if (avMatch) {
+                    const finalUrl = decodeRapidLink(avMatch[1]);
+                    if (finalUrl) {
                         streams.push({
-                            name: '⌜ FHD ⌟ ' + key.toUpperCase(),
+                            name: "RapidVid (Atom)",
                             url: finalUrl,
-                            quality: '1080p',
-                            headers: {
-                                'User-Agent': 'Mozilla/5.0',
-                                'Referer': filmUrl, // Referer olarak film sayfasını veriyoruz
-                                'Origin': BASE_URL
-                            }
+                            quality: "1080p",
+                            headers: { "Referer": "https://rapidvid.net/", "User-Agent": "okhttp/4.12.0" }
                         });
                     }
-                });
+                }
             }
-        });
 
-        console.error('[FHD] Bulunan Toplam Kaynak:', streams.length);
-        return streams;
-        
-    } catch (err) {
-        console.error('[FHD] Hata:', err.message);
-        return [];
+            // --- TURBO ÇÖZÜCÜ ---
+            const turboRes = await fetch(`${this.baseUrl}/player/api.php?id=${vidId}&type=t&name=advid&get=video&pno=tr&format=json`, { headers: this.headers }).then(res => res.json());
+            if (turboRes && turboRes.html) {
+                const turboSlugMatch = turboRes.html.match(/\/watch\/(.*?)"/);
+                if (turboSlugMatch) {
+                    const turboSlug = turboSlugMatch[1];
+                    const turboPage = await fetch(`https://turbo.imgz.me/play/${turboSlug}?autoplay=true`, { headers: this.headers }).then(res => res.text());
+                    const m3u8Match = turboPage.match(/file: "(.*?)"/);
+                    if (m3u8Match) {
+                        streams.push({
+                            name: "Turbo",
+                            url: m3u8Match[1],
+                            quality: "Auto",
+                            headers: { "Referer": "https://turbo.imgz.me/", "User-Agent": "okhttp/4.12.0" }
+                        });
+                    }
+                }
+            }
+
+            return streams;
+        } catch (e) {
+            return [];
+        }
     }
-}
-
-// Nuvio/Cloudstream Export Ayarları
-module.exports = {
-    getStreams: getStreams,
-    default: { getStreams: getStreams }
 };
-
-if (typeof globalThis !== 'undefined') globalThis.getStreams = getStreams;
