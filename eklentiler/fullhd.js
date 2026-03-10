@@ -1,61 +1,5 @@
 /**
- * FullHDFilmizlesene - DEBUG TEST (console.error)
- */
-
-// EN BAŞTA - Plugin yüklenir yüklenmez çalışsın
-console.error("!!! FULLHD PLUGIN YUKLENIYOR !!!");
-console.error("typeof fetch: " + typeof fetch);
-console.error("typeof cheerio: " + typeof cheerio);
-console.error("typeof global: " + typeof global);
-console.error("typeof module: " + typeof module);
-
-// Hata yakalama
-try {
-    var cheerio = require("cheerio-without-node-native");
-    console.error("Cheerio yuklendi");
-} catch(e) {
-    console.error("Cheerio HATASI: " + e.message);
-}
-
-// Export testi
-function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
-    console.error("!!! GETSTREAMS CAGRILDI !!!");
-    console.error("Parametreler: " + JSON.stringify({tmdbId, mediaType, seasonNum, episodeNum}));
-    
-    return new Promise(function(resolve) {
-        console.error("Promise icindeyim");
-        
-        // Hemen test yanıtı dön
-        setTimeout(function() {
-            console.error("Test yanıtı donduruluyor");
-            resolve([{
-                name: "FullHD TEST",
-                title: "Test Stream",
-                url: "https://test-stream.mp4",
-                quality: "1080p",
-                provider: "fullhd"
-            }]);
-        }, 100);
-    });
-}
-
-// Export dene
-console.error("Export yapiliyor...");
-if (typeof module !== "undefined" && module.exports) {
-    module.exports = { getStreams: getStreams };
-    console.error("module.exports yapildi");
-} else {
-    global.getStreams = getStreams;
-    console.error("global.getStreams yapildi");
-}
-
-console.error("getStreams tipi: " + typeof getStreams);
-console.error("!!! PLUGIN YUKLEME TAMAMLANDI !!!");
-
-
-
-/**
- * FullHDFilmizlesene Nuvio Scraper - v6.0 (API Tabanlı)
+ * FullHDFilmizlesene Nuvio Scraper - v6.0 (Çalışan Versiyon)
  */
 
 var cheerio = require("cheerio-without-node-native");
@@ -75,7 +19,11 @@ function decodeLink(encodedLink) {
     var reversed = encodedLink.split("").reverse().join("");
     
     // 2. Base64 decode
-    var step1 = atob(reversed);
+    try {
+        var step1 = atob(reversed);
+    } catch(e) {
+        return null;
+    }
     
     // 3. XOR/Shift decode
     var key = "K9L";
@@ -95,20 +43,14 @@ function decodeLink(encodedLink) {
     }
 }
 
-function log(msg) {
-    console.log("[FullHD] " + msg);
-}
-
 function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
+    console.error("[FullHD] getStreams cagrildi: " + tmdbId);
+    
     return new Promise(function(resolve) {
         
-        log("Starting: " + tmdbId);
-
         var tmdbType = mediaType === "movie" ? "movie" : "tv";
         var tmdbUrl = "https://api.themoviedb.org/3/" + tmdbType + "/" + tmdbId + 
                       "?language=tr-TR&api_key=4ef0d7355d9ffb5151e987764708ce96";
-
-        var filmSlug = null; // Film slug'ini sakla
 
         fetch(tmdbUrl)
             .then(function(res) { 
@@ -119,11 +61,11 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                 var query = data ? (data.title || data.name || data.original_title || data.original_name) : "";
                 if (!query) throw new Error("Isim bulunamadi");
                 
-                log("Aranacak: " + query);
+                console.error("[FullHD] Aranacak: " + query);
                 
-                // Arama yap
+                // Arama URL - path tabanli
                 var searchUrl = BASE_URL + "/arama/" + encodeURIComponent(query);
-                log("Search: " + searchUrl);
+                console.error("[FullHD] Search: " + searchUrl);
                 
                 return fetch(searchUrl, { headers: HEADERS });
             })
@@ -132,45 +74,47 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                 return res.text(); 
             })
             .then(function(html) {
+                console.error("[FullHD] HTML uzunluk: " + html.length);
+                
                 var $ = cheerio.load(html);
                 var firstResult = $("a[href*=\"/film/\"]").first().attr("href");
                 
-                log("Bulunan: " + firstResult);
+                console.error("[FullHD] Bulunan link: " + firstResult);
                 
                 if (!firstResult) {
                     return resolve([]);
                 }
 
-                // Slug'i çıkar (/film/film-adi-izle/ -> film-adi-izle)
+                // Slug'i çıkar
                 var parts = firstResult.split("/");
-                filmSlug = parts[parts.length - 1] || parts[parts.length - 2];
+                var filmSlug = parts[parts.length - 1] || parts[parts.length - 2];
                 filmSlug = filmSlug.replace(/\/$/, "");
                 
                 var filmUrl = BASE_URL + "/film/" + filmSlug + "/";
-                log("Film URL: " + filmUrl);
+                console.error("[FullHD] Film URL: " + filmUrl);
                 
                 return fetch(filmUrl, { headers: HEADERS });
             })
             .then(function(res) {
-                if (!res.ok) throw new Error("Film sayfasi: " + res.status);
+                if (!res.ok) throw new Error("Film: " + res.status);
                 return res.text();
             })
             .then(function(filmHtml) {
-                // vidid çek - PHP'deki gibi
+                // vidid çek
                 var vididMatch = filmHtml.match(/vidid\s*=\s*['"]([^'"]+)['"]/);
                 if (!vididMatch) {
-                    log("vidid bulunamadi");
+                    console.error("[FullHD] vidid bulunamadi");
                     return resolve([]);
                 }
                 
                 var vidid = vididMatch[1];
-                log("vidid: " + vidid);
+                console.error("[FullHD] vidid: " + vidid);
                 
                 // API'den video bilgisi çek
                 var apiUrl = BASE_URL + "/player/api.php?id=" + vidid + 
                            "&type=t&name=atom&get=video&format=json";
                 
-                log("API: " + apiUrl);
+                console.error("[FullHD] API: " + apiUrl);
                 
                 return fetch(apiUrl, { headers: HEADERS });
             })
@@ -183,7 +127,7 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                 var cleanJson = apiResponse.replace(/\\/g, "");
                 var data = JSON.parse(cleanJson);
                 
-                log("API yaniti alindi");
+                console.error("[FullHD] API yaniti alindi");
                 
                 var streams = [];
                 
@@ -194,7 +138,7 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                         var encodedLink = atomMatch[1];
                         var decodedLink = decodeLink(encodedLink);
                         
-                        log("Atom decoded: " + (decodedLink ? "basarili" : "basarisiz"));
+                        console.error("[FullHD] Atom decoded: " + (decodedLink ? "OK" : "FAIL"));
                         
                         if (decodedLink) {
                             streams.push({
@@ -212,14 +156,11 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                     }
                 }
                 
-                // Turbo URL'si için ikinci API çağrısı
-                // (Opsiyonel - istersen eklenebilir)
-                
-                log("Toplam stream: " + streams.length);
+                console.error("[FullHD] Toplam stream: " + streams.length);
                 resolve(streams);
             })
             .catch(function(err) {
-                log("HATA: " + err.message);
+                console.error("[FullHD] HATA: " + err.message);
                 resolve([]); 
             });
     });
@@ -231,5 +172,4 @@ if (typeof module !== "undefined" && module.exports) {
     global.getStreams = getStreams;
 }
 
-log("Plugin yuklendi - v6.0 API Tabanli");
-
+console.error("[FullHD] Plugin yuklendi - v6.0");
