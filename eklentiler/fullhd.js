@@ -1,5 +1,5 @@
 /**
- * FullHDFilmizlesene - v6.2 (API Direkt URL)
+ * FullHDFilmizlesene - v6.3 (RapidVid Embed Çözümleme)
  */
 
 var cheerio = require("cheerio-without-node-native");
@@ -13,8 +13,12 @@ var HEADERS = {
     "Referer": BASE_URL + "/"
 };
 
+function log(msg) {
+    console.error("[FullHD] " + msg);
+}
+
 function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
-    console.error("[FullHD] getStreams: " + tmdbId);
+    log("getStreams: " + tmdbId);
     
     return new Promise(function(resolve) {
         
@@ -31,10 +35,10 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                 var query = data ? (data.title || data.name || data.original_title || data.original_name) : "";
                 if (!query) throw new Error("Isim bulunamadi");
                 
-                console.error("[FullHD] Aranacak: " + query);
+                log("Aranacak: " + query);
                 
                 var searchUrl = BASE_URL + "/arama/" + encodeURIComponent(query);
-                console.error("[FullHD] Search: " + searchUrl);
+                log("Search: " + searchUrl);
                 
                 return fetch(searchUrl, { headers: HEADERS });
             })
@@ -43,12 +47,12 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                 return res.text(); 
             })
             .then(function(html) {
-                console.error("[FullHD] HTML: " + html.length);
+                log("HTML: " + html.length);
                 
                 var $ = cheerio.load(html);
                 var firstResult = $("a[href*=\"/film/\"]").first().attr("href");
                 
-                console.error("[FullHD] Link: " + firstResult);
+                log("Link: " + firstResult);
                 
                 if (!firstResult) {
                     return resolve([]);
@@ -59,7 +63,7 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                 filmSlug = filmSlug.replace(/\/$/, "");
                 
                 var filmUrl = BASE_URL + "/film/" + filmSlug + "/";
-                console.error("[FullHD] Film: " + filmUrl);
+                log("Film: " + filmUrl);
                 
                 return fetch(filmUrl, { headers: HEADERS });
             })
@@ -70,18 +74,17 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
             .then(function(filmHtml) {
                 var vididMatch = filmHtml.match(/vidid\s*=\s*['"]([^'"]+)['"]/);
                 if (!vididMatch) {
-                    console.error("[FullHD] vidid yok");
+                    log("vidid yok");
                     return resolve([]);
                 }
                 
                 var vidid = vididMatch[1];
-                console.error("[FullHD] vidid: " + vidid);
+                log("vidid: " + vidid);
                 
-                // Atom API
                 var apiUrl = BASE_URL + "/player/api.php?id=" + vidid + 
                            "&type=t&name=atom&get=video&format=json";
                 
-                console.error("[FullHD] API: " + apiUrl);
+                log("API: " + apiUrl);
                 
                 return fetch(apiUrl, { headers: HEADERS });
             })
@@ -90,53 +93,134 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                 return res.text();
             })
             .then(function(apiResponse) {
-                console.error("[FullHD] API RAW: " + apiResponse.substring(0, 200));
+                log("API RAW: " + apiResponse.substring(0, 200));
                 
                 var data;
                 try {
                     data = JSON.parse(apiResponse);
                 } catch(e) {
-                    console.error("[FullHD] JSON HATASI: " + e.message);
+                    log("JSON HATASI: " + e.message);
                     return resolve([]);
                 }
                 
-                var streams = [];
-                
-                // YENI: API direkt URL donduruyor
-                if (data && data.html && data.html.length > 0) {
-                    var videoUrl = data.html.replace(/\\/g, ""); // Backslash'leri temizle
-                    
-                    console.error("[FullHD] Video URL: " + videoUrl);
-                    
-                    // RapidVid URL'si mi kontrol et
-                    if (videoUrl.indexOf("rapidvid.net") !== -1 || 
-                        videoUrl.indexOf("http") === 0) {
-                        
-                        streams.push({
-                            name: "FullHD RapidVid",
-                            title: "FullHD",
-                            url: videoUrl,
-                            quality: "Auto",
-                            headers: {
-                                "User-Agent": HEADERS["User-Agent"],
-                                "Referer": BASE_URL + "/"
-                            },
-                            provider: "fullhd"
-                        });
-                        
-                        console.error("[FullHD] Stream eklendi");
-                    }
-                } else {
-                    console.error("[FullHD] Bos API yanıtı");
+                if (!data || !data.html || data.html === "") {
+                    log("Bos API yanıtı");
+                    return resolve([]);
                 }
                 
-                console.error("[FullHD] Toplam: " + streams.length);
+                var embedUrl = data.html.replace(/\\/g, "");
+                log("Embed URL: " + embedUrl);
+                
+                // RapidVid embed sayfasını çözümle
+                if (embedUrl.indexOf("rapidvid.net") !== -1) {
+                    return resolveRapidVid(embedUrl);
+                }
+                
+                // Diğer embed URL'leri için direkt dön
+                return [{
+                    name: "FullHD Embed",
+                    title: "FullHD",
+                    url: embedUrl,
+                    quality: "Auto",
+                    headers: HEADERS,
+                    provider: "fullhd"
+                }];
+            })
+            .then(function(streams) {
+                log("Toplam: " + streams.length);
                 resolve(streams);
             })
             .catch(function(err) {
-                console.error("[FullHD] HATA: " + err.message);
+                log("HATA: " + err.message);
                 resolve([]); 
             });
+    });
+}
+
+// RapidVid embed sayfasından direkt video URL'si çek
+function resolveRapidVid(embedUrl) {
+    return new Promise(function(resolve) {
+        log("RapidVid cozumleniyor: " + embedUrl);
+        
+        fetch(embedUrl, {
+            headers: {
+                "User-Agent": HEADERS["User-Agent"],
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Referer": BASE_URL + "/"
+            }
+        })
+        .then(function(res) {
+            if (!res.ok) throw new Error("RapidVid HTTP: " + res.status);
+            return res.text();
+        })
+        .then(function(html) {
+            log("RapidVid HTML: " + html.length);
+            
+            // Pattern 1: file:"..." veya file:'...'
+            var fileMatch = html.match(/file\s*:\s*["']([^"']+\.m3u8[^"']*)["']/i) ||
+                           html.match(/file\s*:\s*["']([^"']+\.mp4[^"']*)["']/i);
+            
+            // Pattern 2: src="..." m3u8 veya mp4
+            var srcMatch = html.match(/src\s*=\s*["']([^"']+\.m3u8[^"']*)["']/i) ||
+                          html.match(/src\s*=\s*["']([^"']+\.mp4[^"']*)["']/i);
+            
+            // Pattern 3: data-url="..."
+            var dataMatch = html.match(/data-url\s*=\s*["']([^"']+)["']/i);
+            
+            // Pattern 4: var url = '...'
+            var varMatch = html.match(/var\s+url\s*=\s*["']([^"']+)["']/i);
+            
+            var videoUrl = (fileMatch && fileMatch[1]) || 
+                          (srcMatch && srcMatch[1]) || 
+                          (dataMatch && dataMatch[1]) ||
+                          (varMatch && varMatch[1]);
+            
+            if (videoUrl) {
+                log("Video URL bulundu: " + videoUrl.substring(0, 80));
+                
+                // URL'i düzelt
+                if (videoUrl.indexOf("//") === 0) {
+                    videoUrl = "https:" + videoUrl;
+                } else if (videoUrl.indexOf("http") !== 0) {
+                    videoUrl = "https://" + videoUrl;
+                }
+                
+                resolve([{
+                    name: "FullHD RapidVid",
+                    title: "FullHD",
+                    url: videoUrl,
+                    quality: "Auto",
+                    headers: {
+                        "User-Agent": HEADERS["User-Agent"],
+                        "Referer": embedUrl
+                    },
+                    provider: "fullhd"
+                }]);
+            } else {
+                log("Video URL bulunamadi, embed donduruluyor");
+                // Çözümleme başarısız olursa embed URL'yi direkt ver
+                resolve([{
+                    name: "FullHD Embed",
+                    title: "FullHD",
+                    url: embedUrl,
+                    quality: "Auto",
+                    headers: HEADERS,
+                    provider: "fullhd"
+                }]);
+            }
+        })
+        .catch(function(err) {
+            log("RapidVid HATASI: " + err.message);
+            // Hata durumunda embed URL'yi direkt ver
+            resolve([{
+                name: "FullHD Embed",
+                title: "FullHD",
+                url: embedUrl,
+                quality: "Auto",
+                headers: HEADERS,
+                provider: "fullhd"
+            }]);
+        });
     });
 }
 
@@ -146,4 +230,4 @@ if (typeof module !== "undefined" && module.exports) {
     global.getStreams = getStreams;
 }
 
-console.error("[FullHD] v6.2 yuklendi");
+log("v6.3 yuklendi");
