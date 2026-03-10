@@ -1,8 +1,8 @@
 /**
- * FullHDFilmizlesene - v8.9 (Export Fix & Timing Experiment)
+ * FullHDFilmizlesene - v9.0 (Standard JS Compatibility)
  */
 
-console.error("[FullHD] === v8.9 BAŞLADI - HEDEF: BYPASS & EXPORT FIX ===");
+console.error("[FullHD] === v9.0 BAŞLADI - AGRESSIVE BYPASS ===");
 
 var cheerio = require("cheerio-without-node-native");
 var BASE_URL = "https://www.fullhdfilmizlesene.live";
@@ -22,97 +22,101 @@ function decodeContentX(encodedData) {
     } catch (e) { return null; }
 }
 
-async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
-    try {
-        if (mediaType === "tv") return [];
+function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
+    return new Promise(function (resolve) {
+        if (mediaType === "tv") return resolve([]);
 
         var tmdbUrl = "https://api.themoviedb.org/3/movie/" + tmdbId + "?language=tr-TR&api_key=4ef0d7355d9ffb5151e987764708ce96";
         var userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36";
+        var sessionCookie = "";
+        var currentFilmUrl = "";
 
-        var tmdbRes = await fetch(tmdbUrl);
-        var tmdbData = await tmdbRes.json();
-        var query = tmdbData ? (tmdbData.title || tmdbData.original_title) : "";
-        console.error("[FullHD] Aranıyor: " + query);
+        fetch(tmdbUrl)
+            .then(function(res) { return res.json(); })
+            .then(function(data) {
+                var query = data ? (data.title || data.original_title) : "";
+                console.error("[FullHD] Aranıyor: " + query);
+                return fetch(BASE_URL + "/arama/" + encodeURIComponent(query), { 
+                    headers: { "User-Agent": userAgent } 
+                });
+            })
+            .then(function(res) { return res.text(); })
+            .then(function(html) {
+                var $ = cheerio.load(html);
+                var link = $(".film-listesi a").first().attr("href") || $("a[href*='/film/']").first().attr("href");
+                if (!link) throw new Error("Film Bulunamadı");
 
-        var searchRes = await fetch(BASE_URL + "/arama/" + encodeURIComponent(query), { 
-            headers: { "User-Agent": userAgent } 
-        });
-        var searchHtml = await searchRes.text();
-        
-        var $ = cheerio.load(searchHtml);
-        var link = $(".film-listesi a").first().attr("href") || $("a[href*='/film/']").first().attr("href");
-        if (!link) throw new Error("Film Bulunamadı");
+                currentFilmUrl = link.startsWith("http") ? link : BASE_URL + link;
+                console.error("[FullHD] Sayfa: " + currentFilmUrl);
 
-        var filmUrl = link.startsWith("http") ? link : BASE_URL + link;
-        console.error("[FullHD] Sayfa: " + filmUrl);
+                return fetch(currentFilmUrl, { headers: { "User-Agent": userAgent } });
+            })
+            .then(function(res) {
+                sessionCookie = res.headers.get('set-cookie') || "";
+                return res.text();
+            })
+            .then(function(filmHtml) {
+                var vididMatch = filmHtml.match(/vidid\s*[:=]\s*['"]?(\d+)['"]?/i);
+                if (!vididMatch) throw new Error("vidid bulunamadı");
+                
+                var vidid = vididMatch[1];
+                console.error("[FullHD] API'ye gidiliyor ID: " + vidid);
 
-        var filmPageRes = await fetch(filmUrl, { headers: { "User-Agent": userAgent } });
-        var cookies = filmPageRes.headers.get('set-cookie') || "";
-        var filmHtml = await filmPageRes.text();
+                return fetch(BASE_URL + "/player/api.php", {
+                    method: "POST",
+                    headers: {
+                        "Accept": "*/*",
+                        "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+                        "X-Requested-With": "XMLHttpRequest",
+                        "Referer": currentFilmUrl, // Tam film URL'si
+                        "Origin": BASE_URL,
+                        "Cookie": sessionCookie,
+                        "User-Agent": userAgent,
+                        "Sec-Fetch-Dest": "empty",
+                        "Sec-Fetch-Mode": "cors",
+                        "Sec-Fetch-Site": "same-origin"
+                    },
+                    body: "id=" + vidid + "&type=t&get=video"
+                });
+            })
+            .then(function(res) { return res.text(); })
+            .then(function(apiText) {
+                console.error("[FullHD] API Yanıtı: " + apiText.substring(0, 40));
+                if (apiText.includes("security_error")) throw new Error("Security Error Hala Devam Ediyor");
 
-        var vididMatch = filmHtml.match(/vidid\s*[:=]\s*['"]?(\d+)['"]?/i);
-        if (!vididMatch) throw new Error("vidid bulunamadı");
-        var vidid = vididMatch[1];
+                var urls = apiText.match(/https?:\/\/[^"'\s<>\\ ]+/g) || [];
+                var embedUrl = urls.find(function(u) { return u.indexOf("rapid") > -1 || u.indexOf("moly") > -1 || u.indexOf("player") > -1; }) || urls[0];
+                
+                if (!embedUrl) throw new Error("Embed yok");
+                embedUrl = embedUrl.replace(/\\/g, "");
 
-        // DENEY: 1.5 saniye bekle (Bot olmadığımızı kanıtlamak için)
-        console.error("[FullHD] Bekleniyor (1.5s)...");
-        await new Promise(r => setTimeout(r, 1500));
-
-        var apiUrl = BASE_URL + "/player/api.php";
-        var body = "id=" + vidid + "&type=t&get=video";
-
-        console.error("[FullHD] API'ye gidiliyor: " + vidid);
-
-        var apiRes = await fetch(apiUrl, {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
-                "X-Requested-With": "XMLHttpRequest",
-                "Referer": filmUrl, // Tam film linkini referer yapıyoruz
-                "Origin": BASE_URL,
-                "Cookie": cookies,
-                "User-Agent": userAgent
-            },
-            body: body
-        });
-
-        var apiText = await apiRes.text();
-        console.error("[FullHD] API Yanıtı: " + apiText.substring(0, 40));
-
-        if (apiText.includes("security_error")) throw new Error("Yine security_error!");
-
-        var urls = apiText.match(/https?:\/\/[^"'\s<>\\ ]+/g) || [];
-        var embedUrl = urls.find(u => u.includes("rapid") || u.includes("moly") || u.includes("player")) || urls[0];
-        
-        if (!embedUrl) throw new Error("Embed yok");
-        embedUrl = embedUrl.replace(/\\/g, "");
-
-        var embedRes = await fetch(embedUrl, { headers: { "Referer": BASE_URL + "/" } });
-        var embedHtml = await embedRes.text();
-
-        var avMatch = embedHtml.match(/av\(['"]([^'"]+)['"]\)/);
-        if (avMatch) {
-            var finalUrl = decodeContentX(avMatch[1]);
-            return [{
-                name: "FullHD Premium v8.9",
-                url: finalUrl.startsWith("//") ? "https:" + finalUrl : finalUrl,
-                quality: "1080p",
-                headers: { "Referer": "https://rapidvid.net/", "User-Agent": userAgent },
-                provider: "fullhd"
-            }];
-        }
-        
-        return [];
-    } catch (e) {
-        console.error("[FullHD] Hata: " + e.message);
-        return [];
-    }
+                return fetch(embedUrl, { headers: { "Referer": BASE_URL + "/" } });
+            })
+            .then(function(res) { return res.text(); })
+            .then(function(embedHtml) {
+                var avMatch = embedHtml.match(/av\(['"]([^'"]+)['"]\)/);
+                if (avMatch) {
+                    var finalUrl = decodeContentX(avMatch[1]);
+                    if (finalUrl) {
+                        resolve([{
+                            name: "FullHD Premium v9.0",
+                            url: finalUrl.indexOf("//") === 0 ? "https:" + finalUrl : finalUrl,
+                            quality: "1080p",
+                            headers: { "Referer": "https://rapidvid.net/", "User-Agent": userAgent },
+                            provider: "fullhd"
+                        }]);
+                        return;
+                    }
+                }
+                resolve([]);
+            })
+            .catch(function(err) {
+                console.error("[FullHD] Hata: " + err.message);
+                resolve([]);
+            });
+    });
 }
 
-// DIŞA AKTARMA (Export) - Kesin çözüm
-if (typeof module !== "undefined" && module.exports) {
-    module.exports = { getStreams: getStreams };
-}
-if (typeof globalThis !== "undefined") {
-    globalThis.getStreams = getStreams;
-}
+// Export Fix for Legacy Environments
+if (typeof module !== "undefined") { module.exports = { getStreams: getStreams }; }
+if (typeof globalThis !== "undefined") { globalThis.getStreams = getStreams; }
