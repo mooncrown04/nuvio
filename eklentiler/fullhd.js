@@ -1,21 +1,22 @@
 /**
- * FullHDFilmizlesene - v8.2 (Based on ContentXExtractor.kt)
+ * FullHDFilmizlesene - v8.3 (Embed Extraction Fix)
  */
 
-console.error("[FullHD] === v8.2 BAŞLADI ===");
+console.error("[FullHD] === v8.3 BAŞLADI ===");
 
 var cheerio = require("cheerio-without-node-native");
 var BASE_URL = "https://www.fullhdfilmizlesene.live";
 
-// Kotlin'deki ContentXExtractor mantığına göre uyarlanan deşifre
+// Kotlin ContentXExtractor.kt mantığı (Birebir uyarlama)
 function decodeContentX(encodedData) {
     try {
-        // Kotlin kodundaki reverse ve base64 işlemi
+        if (!encodedData) return null;
+        // 1. String Reverse
         var reversed = encodedData.split('').reverse().join('');
+        // 2. Base64 Decode
         var binary = atob(reversed.replace(/[^A-Za-z0-9+/=]/g, ""));
         
-        // Kotlin tarafında kullanılan anahtar: "K9L" 
-        // Oradaki döngü: (byte - ((key.charCodeAt(i % 3) % 5) + 1))
+        // 3. Key-based Byte Shift (Key: "K9L")
         var key = "K9L";
         var result = "";
         for (var i = 0; i < binary.length; i++) {
@@ -24,17 +25,16 @@ function decodeContentX(encodedData) {
             result += String.fromCharCode(charCode - shift);
         }
         
-        // Eğer sonuç hala base64 ise (Kotlin'de bazen çift katman olabiliyor)
-        if (result && !result.startsWith("http")) {
+        // 4. Çift katman kontrolü
+        if (result && !result.startsWith("http") && result.length > 20) {
             try {
-                var secondBinary = atob(result);
-                if (secondBinary.includes("http")) return secondBinary;
+                var secondPass = atob(result);
+                if (secondPass.includes("http")) return secondPass;
             } catch(e) {}
         }
-        
         return result;
     } catch (e) {
-        console.error("[FullHD] Deşifre Hatası:", e.message);
+        console.error("[FullHD] Decode Hatası:", e.message);
         return null;
     }
 }
@@ -49,6 +49,7 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
             .then(res => res.json())
             .then(data => {
                 var query = data ? (data.title || data.original_title) : "";
+                console.error("[FullHD] Arama:", query);
                 return fetch(BASE_URL + "/arama/" + encodeURIComponent(query), { 
                     headers: { "User-Agent": "Mozilla/5.0", "Referer": BASE_URL } 
                 });
@@ -58,38 +59,50 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                 var $ = cheerio.load(html);
                 var link = $(".film-listesi a").first().attr("href") || $("a[href*='/film/']").first().attr("href");
                 if (!link) throw new Error("Film bulunamadı");
-                return fetch(link.startsWith("http") ? link : BASE_URL + link);
+                var finalUrl = link.startsWith("http") ? link : BASE_URL + link;
+                return fetch(finalUrl, { headers: { "User-Agent": "Mozilla/5.0" } });
             })
             .then(res => res.text())
             .then(filmHtml => {
                 var vidid = filmHtml.match(/vidid\s*=\s*['"]([^'"]+)['"]/);
                 if (!vidid) throw new Error("vidid bulunamadı");
 
-                // API isteği (Kotlin tarafındaki get_video çağrısı)
-                return fetch(BASE_URL + "/player/api.php?id=" + vidid[1] + "&type=t&get=video", {
-                    headers: { "X-Requested-With": "XMLHttpRequest", "Referer": BASE_URL }
+                // API İsteği
+                var apiUrl = BASE_URL + "/player/api.php?id=" + vidid[1] + "&type=t&get=video";
+                return fetch(apiUrl, {
+                    headers: { "X-Requested-With": "XMLHttpRequest", "Referer": BASE_URL, "User-Agent": "Mozilla/5.0" }
                 });
             })
             .then(res => res.text())
             .then(apiText => {
-                // Ham metin içinden iframe src veya av() parametresini çekme
-                var embedUrlMatch = apiText.match(/src=["']([^"']+)["']/i);
-                var embedUrl = embedUrlMatch ? embedUrlMatch[1].replace(/\\/g, "") : null;
+                // HATA BURADAYDI: Regex'i daha agresif hale getirdik
+                // Hem iframe src'yi hem de çıplak linkleri yakalar
+                var embedUrlMatch = apiText.match(/src\s*=\s*["']([^"']+)["']/i) || 
+                                    apiText.match(/https?:\/\/[^"'\s\\]+/i);
                 
-                if (!embedUrl) throw new Error("Embed bulunamadı");
-                if (embedUrl.indexOf("//") === 0) embedUrl = "https:" + embedUrl;
+                if (!embedUrlMatch) {
+                    console.error("[FullHD] API Yanıtı örneği:", apiText.substring(0, 100));
+                    throw new Error("Embed bulunamadı");
+                }
 
-                return fetch(embedUrl, { headers: { "Referer": BASE_URL } });
+                var embedUrl = (embedUrlMatch[1] || embedUrlMatch[0]).replace(/\\/g, "");
+                if (embedUrl.indexOf("//") === 0) embedUrl = "https:" + embedUrl;
+                
+                console.error("[FullHD] Bulunan Embed:", embedUrl);
+                return fetch(embedUrl, { headers: { "Referer": BASE_URL, "User-Agent": "Mozilla/5.0" } });
             })
             .then(res => res.text())
             .then(embedHtml => {
-                // Kotlin'deki extractor'ın asıl vurduğu yer: av('...')
+                // Kotlin tarafındaki av('...') verisini yakalama
                 var avMatch = embedHtml.match(/av\(['"]([^'"]+)['"]\)/);
                 if (avMatch) {
                     var finalUrl = decodeContentX(avMatch[1]);
                     if (finalUrl) {
+                        if (finalUrl.indexOf("//") === 0) finalUrl = "https:" + finalUrl;
+                        console.error("[FullHD] Başarılı! Link çözüldü.");
+                        
                         return resolve([{
-                            name: "FullHD (Kotlin Style)",
+                            name: "FullHD Premium",
                             url: finalUrl,
                             quality: "1080p",
                             headers: { "Referer": "https://rapidvid.net/", "User-Agent": "Mozilla/5.0" },
@@ -97,7 +110,7 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                         }]);
                     }
                 }
-                resolve([]);
+                throw new Error("Video deşifre edilemedi");
             })
             .catch(err => {
                 console.error("[FullHD] Hata:", err.message);
