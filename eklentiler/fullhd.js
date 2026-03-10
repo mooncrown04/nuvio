@@ -1,19 +1,10 @@
 /**
- * FullHDFilmizlesene - v7.2 (Debug modu)
+ * FullHDFilmizlesene - v7.3 (TextDecoder hatası düzeltildi)
  */
 
-console.error("[FullHD] === v7.2 BAŞLADI ===");
+console.error("[FullHD] === v7.3 BAŞLADI ===");
 
-// Test 1: Buffer var mı?
-console.error("[FullHD] Buffer var mı:", typeof Buffer !== 'undefined');
-
-// Test 2: Cheerio var mı?
-try {
-  var cheerio = require("cheerio-without-node-native");
-  console.error("[FullHD] Cheerio yüklendi");
-} catch(e) {
-  console.error("[FullHD] Cheerio HATA:", e.message);
-}
+var cheerio = require("cheerio-without-node-native");
 
 var BASE_URL = "https://www.fullhdfilmizlesene.live";
 var HEADERS = {
@@ -21,11 +12,52 @@ var HEADERS = {
   "Referer": BASE_URL + "/"
 };
 
-// Platform bağımsız Base64
+// UTF-8 decode - TextDecoder olmadan
+function utf8Decode(bytes) {
+  try {
+    if (typeof Buffer !== 'undefined') {
+      return Buffer.from(bytes).toString('utf8');
+    }
+    // Manuel UTF-8 decode
+    var result = '';
+    var i = 0;
+    while (i < bytes.length) {
+      var byte1 = bytes[i++];
+      if (byte1 < 0x80) {
+        result += String.fromCharCode(byte1);
+      } else if (byte1 < 0xC0) {
+        // continuation byte - hata
+        result += String.fromCharCode(byte1);
+      } else if (byte1 < 0xE0) {
+        var byte2 = bytes[i++] & 0x3F;
+        result += String.fromCharCode(((byte1 & 0x1F) << 6) | byte2);
+      } else if (byte1 < 0xF0) {
+        var byte2 = bytes[i++] & 0x3F;
+        var byte3 = bytes[i++] & 0x3F;
+        result += String.fromCharCode(((byte1 & 0x0F) << 12) | (byte2 << 6) | byte3);
+      } else {
+        var byte2 = bytes[i++] & 0x3F;
+        var byte3 = bytes[i++] & 0x3F;
+        var byte4 = bytes[i++] & 0x3F;
+        var codepoint = ((byte1 & 0x07) << 18) | (byte2 << 12) | (byte3 << 6) | byte4;
+        result += String.fromCharCode((codepoint >> 10) + 0xD800, (codepoint & 0x3FF) + 0xDC00);
+      }
+    }
+    return result;
+  } catch(e) {
+    console.error("[FullHD] UTF8 decode hata:", e.message);
+    return null;
+  }
+}
+
+// Base64 decode
 function safeBase64Decode(str) {
   try {
     if (typeof Buffer !== 'undefined') {
-      return Buffer.from(str, 'base64');
+      var buf = Buffer.from(str, 'base64');
+      var arr = new Uint8Array(buf.length);
+      for (var i = 0; i < buf.length; i++) arr[i] = buf[i];
+      return arr;
     } else if (typeof atob !== 'undefined') {
       var binary = atob(str);
       var bytes = new Uint8Array(binary.length);
@@ -39,13 +71,14 @@ function safeBase64Decode(str) {
   }
 }
 
-// K9L decode
+// K9L decode - DÜZELTİLMİŞ
 function decodeAv(input) {
   try {
     console.error("[FullHD] decodeAv başladı, uzunluk:", input.length);
     
     // 1. Ters çevir
     var reversed = input.split('').reverse().join('');
+    console.error("[FullHD] Ters çevrildi");
     
     // 2. İlk Base64
     var firstPass = safeBase64Decode(reversed);
@@ -53,45 +86,45 @@ function decodeAv(input) {
       console.error("[FullHD] İlk Base64 başarısız");
       return null;
     }
+    console.error("[FullHD] İlk decode OK, bytes:", firstPass.length);
     
     // 3. K9L anahtarı
     var key = "K9L";
-    var adjusted;
-    if (typeof Buffer !== 'undefined') {
-      adjusted = Buffer.alloc(firstPass.length);
-      for (var i = 0; i < firstPass.length; i++) {
-        var byteVal = firstPass[i] & 0xFF;
-        var keyVal = (key.charCodeAt(i % 3) % 5) + 1;
-        adjusted[i] = (byteVal - keyVal) & 0xFF;
-      }
-    } else {
-      adjusted = new Uint8Array(firstPass.length);
-      for (var i = 0; i < firstPass.length; i++) {
-        var byteVal = firstPass[i] & 0xFF;
-        var keyVal = (key.charCodeAt(i % 3) % 5) + 1;
-        adjusted[i] = (byteVal - keyVal) & 0xFF;
-      }
+    var adjusted = new Uint8Array(firstPass.length);
+    for (var i = 0; i < firstPass.length; i++) {
+      var byteVal = firstPass[i] & 0xFF;
+      var keyVal = (key.charCodeAt(i % 3) % 5) + 1;
+      adjusted[i] = (byteVal - keyVal) & 0xFF;
     }
+    console.error("[FullHD] K9L düzeltmesi OK");
     
-    // 4. Binary string
+    // 4. Binary string oluştur (Base64 için)
     var binaryStr = '';
     for (var i = 0; i < adjusted.length; i++) {
-      binaryStr += String.fromCharCode(adjusted[i] & 0xFF);
+      binaryStr += String.fromCharCode(adjusted[i]);
     }
     
     // 5. İkinci Base64
-    var secondPass = safeBase64Decode(binaryStr);
+    var secondPass;
+    if (typeof Buffer !== 'undefined') {
+      // Node.js: önce binary'i base64'e çevir
+      var base64Str = Buffer.from(binaryStr, 'binary').toString('base64');
+      secondPass = safeBase64Decode(base64Str);
+    } else {
+      secondPass = safeBase64Decode(btoa(binaryStr));
+    }
+    
     if (!secondPass) {
       console.error("[FullHD] İkinci Base64 başarısız");
       return null;
     }
+    console.error("[FullHD] İkinci decode OK, bytes:", secondPass.length);
     
-    // 6. UTF-8
-    var result;
-    if (typeof Buffer !== 'undefined' && secondPass instanceof Buffer) {
-      result = secondPass.toString('utf8');
-    } else {
-      result = new TextDecoder('utf-8').decode(secondPass);
+    // 6. UTF-8 decode (TextDecoder olmadan)
+    var result = utf8Decode(secondPass);
+    if (!result) {
+      console.error("[FullHD] UTF8 decode başarısız");
+      return null;
     }
     
     console.error("[FullHD] decodeAv BAŞARILI:", result.substring(0, 60));
@@ -99,6 +132,7 @@ function decodeAv(input) {
     
   } catch(e) {
     console.error("[FullHD] decodeAv HATA:", e.message);
+    console.error("[FullHD] Stack:", e.stack || "yok");
     return null;
   }
 }
@@ -106,8 +140,10 @@ function decodeAv(input) {
 function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
   console.error("[FullHD] getStreams:", tmdbId, mediaType);
   
+  // SCOPE FIX: embedUrl'yi dışarıda tanımla
+  var embedUrl = null;
+  
   return new Promise(function(resolve) {
-    // Test TMDB API
     var tmdbType = mediaType === "movie" ? "movie" : "tv";
     var tmdbUrl = "https://api.themoviedb.org/3/" + tmdbType + "/" + tmdbId +
       "?language=tr-TR&api_key=4ef0d7355d9ffb5151e987764708ce96";
@@ -138,7 +174,6 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
       .then(function(html) {
         console.error("[FullHD] Arama HTML:", html.length);
         
-        var cheerio = require("cheerio-without-node-native");
         var $ = cheerio.load(html);
         var firstResult = $("a[href*=\"/film/\"]").first().attr("href");
         
@@ -192,7 +227,8 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
           return resolve([]);
         }
         
-        var embedUrl = data.html.replace(/\\/g, "");
+        // SCOPE FIX: dışarıdaki değişkeni güncelle
+        embedUrl = data.html.replace(/\\/g, "");
         console.error("[FullHD] Embed URL:", embedUrl);
         
         // RapidVid mi?
@@ -215,11 +251,17 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
         }});
       })
       .then(function(res) {
-        if (!res || !res.ok) return null;
+        if (!res || !res.ok) {
+          console.error("[FullHD] RapidVid fetch hata:", res ? res.status : "no res");
+          return null;
+        }
         return res.text();
       })
       .then(function(html) {
-        if (!html) return resolve([]);
+        if (!html) {
+          console.error("[FullHD] RapidVid HTML boş");
+          return resolve([]);
+        }
         
         console.error("[FullHD] RapidVid HTML:", html.length);
         
@@ -244,7 +286,7 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
               quality: "Auto",
               headers: {
                 "User-Agent": HEADERS["User-Agent"],
-                "Referer": embedUrl
+                "Referer": embedUrl  // SCOPE FIX: artık tanımlı
               },
               provider: "fullhd"
             }]);
@@ -269,7 +311,7 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
               quality: "Auto",
               headers: {
                 "User-Agent": HEADERS["User-Agent"],
-                "Referer": embedUrl
+                "Referer": embedUrl  // SCOPE FIX
               },
               provider: "fullhd"
             }]);
@@ -277,13 +319,12 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
         }
         
         console.error("[FullHD] Hiçbir pattern bulunamadı!");
-        console.error("[FullHD] HTML preview:", html.substring(0, 500));
         
-        // Fallback
+        // Fallback - SCOPE FIX: embedUrl artık tanımlı
         resolve([{
           name: "FullHD Embed",
           title: "FullHD",
-          url: embedUrl,
+          url: embedUrl || "https://rapidvid.net",  // null check
           quality: "Auto",
           headers: HEADERS,
           provider: "fullhd"
@@ -291,6 +332,7 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
       })
       .catch(function(err) {
         console.error("[FullHD] HATA:", err.message);
+        console.error("[FullHD] Stack:", err.stack || "yok");
         resolve([]);
       });
   });
@@ -302,4 +344,4 @@ if (typeof module !== "undefined" && module.exports) {
   global.getStreams = getStreams;
 }
 
-console.error("[FullHD] === v7.2 YÜKLENDİ ===");
+console.error("[FullHD] === v7.3 YÜKLENDİ ===");
