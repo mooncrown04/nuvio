@@ -1,5 +1,5 @@
 /**
- * FullHDFilmizlesene Nuvio Scraper - v6.0 (Çalışan Versiyon)
+ * FullHDFilmizlesene - v6.1 (Debug API)
  */
 
 var cheerio = require("cheerio-without-node-native");
@@ -13,19 +13,14 @@ var HEADERS = {
     "Referer": BASE_URL + "/"
 };
 
-// PHP'deki decodeLink fonksiyonunun JS versiyonu
 function decodeLink(encodedLink) {
-    // 1. Ters çevir
     var reversed = encodedLink.split("").reverse().join("");
-    
-    // 2. Base64 decode
     try {
         var step1 = atob(reversed);
     } catch(e) {
         return null;
     }
     
-    // 3. XOR/Shift decode
     var key = "K9L";
     var output = "";
     
@@ -35,7 +30,6 @@ function decodeLink(encodedLink) {
         output += String.fromCharCode(n);
     }
     
-    // 4. Son base64 decode
     try {
         return atob(output);
     } catch(e) {
@@ -44,7 +38,7 @@ function decodeLink(encodedLink) {
 }
 
 function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
-    console.error("[FullHD] getStreams cagrildi: " + tmdbId);
+    console.error("[FullHD] getStreams: " + tmdbId);
     
     return new Promise(function(resolve) {
         
@@ -63,7 +57,6 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                 
                 console.error("[FullHD] Aranacak: " + query);
                 
-                // Arama URL - path tabanli
                 var searchUrl = BASE_URL + "/arama/" + encodeURIComponent(query);
                 console.error("[FullHD] Search: " + searchUrl);
                 
@@ -74,24 +67,23 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                 return res.text(); 
             })
             .then(function(html) {
-                console.error("[FullHD] HTML uzunluk: " + html.length);
+                console.error("[FullHD] HTML: " + html.length);
                 
                 var $ = cheerio.load(html);
                 var firstResult = $("a[href*=\"/film/\"]").first().attr("href");
                 
-                console.error("[FullHD] Bulunan link: " + firstResult);
+                console.error("[FullHD] Link: " + firstResult);
                 
                 if (!firstResult) {
                     return resolve([]);
                 }
 
-                // Slug'i çıkar
                 var parts = firstResult.split("/");
                 var filmSlug = parts[parts.length - 1] || parts[parts.length - 2];
                 filmSlug = filmSlug.replace(/\/$/, "");
                 
                 var filmUrl = BASE_URL + "/film/" + filmSlug + "/";
-                console.error("[FullHD] Film URL: " + filmUrl);
+                console.error("[FullHD] Film: " + filmUrl);
                 
                 return fetch(filmUrl, { headers: HEADERS });
             })
@@ -100,17 +92,15 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                 return res.text();
             })
             .then(function(filmHtml) {
-                // vidid çek
                 var vididMatch = filmHtml.match(/vidid\s*=\s*['"]([^'"]+)['"]/);
                 if (!vididMatch) {
-                    console.error("[FullHD] vidid bulunamadi");
+                    console.error("[FullHD] vidid yok");
                     return resolve([]);
                 }
                 
                 var vidid = vididMatch[1];
                 console.error("[FullHD] vidid: " + vidid);
                 
-                // API'den video bilgisi çek
                 var apiUrl = BASE_URL + "/player/api.php?id=" + vidid + 
                            "&type=t&name=atom&get=video&format=json";
                 
@@ -123,23 +113,33 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                 return res.text();
             })
             .then(function(apiResponse) {
-                // JSON parse et (backslash'leri temizle)
-                var cleanJson = apiResponse.replace(/\\/g, "");
-                var data = JSON.parse(cleanJson);
+                // DEBUG: API yanıtını göster
+                console.error("[FullHD] API RAW: " + apiResponse.substring(0, 500));
                 
-                console.error("[FullHD] API yaniti alindi");
+                var cleanJson = apiResponse.replace(/\\/g, "");
+                console.error("[FullHD] CLEAN: " + cleanJson.substring(0, 500));
+                
+                var data;
+                try {
+                    data = JSON.parse(cleanJson);
+                } catch(e) {
+                    console.error("[FullHD] JSON HATASI: " + e.message);
+                    return resolve([]);
+                }
+                
+                console.error("[FullHD] DATA: " + JSON.stringify(data).substring(0, 500));
                 
                 var streams = [];
                 
-                // Atom URL'si
+                // Farklı patternler dene
                 if (data && data.html) {
+                    console.error("[FullHD] HTML var: " + data.html.substring(0, 200));
+                    
+                    // Pattern 1: av('...')
                     var atomMatch = data.html.match(/av\(['"]([^'"]+)['"]\)/);
                     if (atomMatch) {
-                        var encodedLink = atomMatch[1];
-                        var decodedLink = decodeLink(encodedLink);
-                        
-                        console.error("[FullHD] Atom decoded: " + (decodedLink ? "OK" : "FAIL"));
-                        
+                        console.error("[FullHD] Pattern 1 bulundu: " + atomMatch[1].substring(0, 50));
+                        var decodedLink = decodeLink(atomMatch[1]);
                         if (decodedLink) {
                             streams.push({
                                 name: "FullHD Atom",
@@ -153,10 +153,42 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                                 provider: "fullhd"
                             });
                         }
+                    } else {
+                        console.error("[FullHD] Pattern 1 bulunamadi");
                     }
+                    
+                    // Pattern 2: file:"..."
+                    var fileMatch = data.html.match(/file\s*:\s*["']([^"']+)["']/);
+                    if (fileMatch && streams.length === 0) {
+                        console.error("[FullHD] Pattern 2 bulundu: " + fileMatch[1]);
+                        streams.push({
+                            name: "FullHD Direct",
+                            title: "FullHD",
+                            url: fileMatch[1],
+                            quality: "Auto",
+                            headers: HEADERS,
+                            provider: "fullhd"
+                        });
+                    }
+                    
+                    // Pattern 3: src="..."
+                    var srcMatch = data.html.match(/src\s*=\s*["']([^"']+\.m3u8[^"']*)["']/);
+                    if (srcMatch && streams.length === 0) {
+                        console.error("[FullHD] Pattern 3 bulundu: " + srcMatch[1]);
+                        streams.push({
+                            name: "FullHD M3U8",
+                            title: "FullHD",
+                            url: srcMatch[1],
+                            quality: "Auto",
+                            headers: HEADERS,
+                            provider: "fullhd"
+                        });
+                    }
+                } else {
+                    console.error("[FullHD] data.html yok");
                 }
                 
-                console.error("[FullHD] Toplam stream: " + streams.length);
+                console.error("[FullHD] Stream sayisi: " + streams.length);
                 resolve(streams);
             })
             .catch(function(err) {
@@ -172,4 +204,4 @@ if (typeof module !== "undefined" && module.exports) {
     global.getStreams = getStreams;
 }
 
-console.error("[FullHD] Plugin yuklendi - v6.0");
+console.error("[FullHD] v6.1 yuklendi");
