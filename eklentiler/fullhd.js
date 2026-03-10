@@ -1,5 +1,5 @@
 /**
- * FullHDFilmizlesene Nuvio Scraper - v3.7 (Tam Stabil Versiyon)
+ * FullHDFilmizlesene Nuvio Scraper - v3.8 (Ultra Resilience)
  */
 
 var cheerio = require("cheerio-without-node-native");
@@ -7,9 +7,11 @@ var cheerio = require("cheerio-without-node-native");
 var CONFIG = {
     BASE_URL: 'https://www.fullhdfilmizlesene.live',
     HEADERS: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Referer': 'https://www.fullhdfilmizlesene.live/',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8'
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+        'Accept-Language': 'tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7',
+        'Cache-Control': 'no-cache',
+        'Pragma': 'no-cache'
     }
 };
 
@@ -19,37 +21,36 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
         var tmdbType = (mediaType === 'movie' ? 'movie' : 'tv');
         var tmdbUrl = 'https://api.themoviedb.org/3/' + tmdbType + '/' + tmdbId + '?language=tr-TR&api_key=4ef0d7355d9ffb5151e987764708ce96';
 
+        console.log('[FullHD] Baslatiliyor ID:', tmdbId);
+
         fetch(tmdbUrl)
             .then(function(res) { 
-                return (res && res.json) ? res.json() : null; 
+                if (!res || !res.json) throw new Error('TMDB Baglantisi Yok');
+                return res.json(); 
             })
             .then(function(data) {
                 var query = data ? (data.title || data.name) : '';
-                if (!query) throw new Error('TMDB Verisi Alinamadi');
+                if (!query) throw new Error('Isim bulunamadi');
                 
                 var searchUrl = CONFIG.BASE_URL + '/arama/' + encodeURIComponent(query);
-                console.log('[FullHD] Araniyor:', query);
                 return fetch(searchUrl, { headers: CONFIG.HEADERS });
             })
             .then(function(res) { 
-                return (res && res.text) ? res.text() : null; 
+                if (!res) throw new Error('Arama sayfasina ulasilamadi');
+                return res.text(); 
             })
             .then(function(html) {
-                if (!html) return resolve([]);
+                if (!html) throw new Error('Arama sonucu bos');
                 
                 var $ = cheerio.load(html);
                 var firstResult = $('.film-liste ul li a').first().attr('href');
                 
-                if (!firstResult) {
-                    console.log('[FullHD] Arama sonucu bulunamadi');
-                    return resolve([]);
-                }
+                if (!firstResult) return resolve([]);
 
                 var slug = firstResult.replace(CONFIG.BASE_URL, '').replace(/^\/+/, '').replace(/\/$/, '');
                 var targetUrl;
 
                 if (mediaType === 'tv') {
-                    // Dizi ismini temizle (gereksiz ekleri atar)
                     var seriesName = slug.replace('diziler/', '').split('-izle')[0].split('-bolum')[0];
                     targetUrl = CONFIG.BASE_URL + '/' + seriesName + '-' + seasonNum + '-sezon-' + episodeNum + '-bolum-izle';
                 } else {
@@ -60,57 +61,50 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                 return fetch(targetUrl, { headers: CONFIG.HEADERS });
             })
             .then(function(res) {
-                // HATA KONTROLÜ: res undefined ise burada yakalanır
-                if (!res) throw new Error('Ilk baglanti basarisiz');
+                if (!res) throw new Error('Icerik sayfasindan yanit yok');
 
-                // 404 Aldıysak (Özellikle dizilerde klasör yapısı değişebiliyor)
                 if (res.status === 404 && mediaType === 'tv') {
                     var altUrl = targetUrl.replace(CONFIG.BASE_URL + '/', CONFIG.BASE_URL + '/diziler/');
-                    console.log('[FullHD] 404 alindi, alternatif deneniyor:', altUrl);
+                    console.log('[FullHD] 404, Alternatif:', altUrl);
                     return fetch(altUrl, { headers: CONFIG.HEADERS });
                 }
                 return res;
             })
             .then(function(res) {
-                if (!res || !res.text) throw new Error('Icerik sayfasi bos');
+                if (!res || !res.text) throw new Error('Sayfa metni okunamadi');
                 return res.text();
             })
             .then(function(pageHtml) {
+                if (!pageHtml) return resolve([]);
+                
                 var $ = cheerio.load(pageHtml);
                 var streams = [];
 
-                // Sitedeki iframe kaynaklarını topla
                 $('iframe').each(function(i, elem) {
                     var src = $(elem).attr('src') || $(elem).attr('data-src');
                     if (src) {
-                        // Protokolü kontrol et (// ile başlıyorsa https ekle)
                         var finalUrl = src.startsWith('//') ? 'https:' + src : src;
-                        
-                        // Sadece video barındıran kaynakları filtrele (opsiyonel)
                         if (finalUrl.includes('fullhd') || finalUrl.includes('video') || finalUrl.includes('player')) {
                             streams.push({
                                 name: "FullHD Kaynak " + (i + 1),
                                 url: finalUrl,
                                 quality: "Auto",
                                 headers: { 'Referer': CONFIG.BASE_URL + '/' },
-                                provider: "fullhd-nuvio"
+                                provider: "fullhd-resilient"
                             });
                         }
                     }
                 });
 
-                console.log('[FullHD] Bulunan kaynak sayisi:', streams.length);
                 resolve(streams);
             })
             .catch(function(err) {
-                // Loglardaki "status of undefined" hatasını bu catch bloğu engeller
-                console.error('[FullHD] Scraper Hatasi:', err.message);
+                console.error('[FullHD] Hata:', err.message);
                 resolve([]); 
             });
     });
 }
 
-// Nuvio/SineWix Export yapısı
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = { getStreams: getStreams };
 }
