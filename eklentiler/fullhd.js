@@ -1,7 +1,6 @@
 /**
- * FullHDFilmizlesene Nuvio Scraper - v3.2
- * Güncel Adres: .live
- * Hata Giderme: Dinamik URL yapısı ve içerik sayfası yükleme kontrolü.
+ * FullHDFilmizlesene Nuvio Scraper - v3.4
+ * Fix: Dizi URL yolu ve link doğrulama iyileştirildi.
  */
 
 var cheerio = require("cheerio-without-node-native");
@@ -23,22 +22,16 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
         var tmdbUrl = 'https://api.themoviedb.org/3/' + tmdbType + '/' + tmdbId + '?language=tr-TR&api_key=4ef0d7355d9ffb5151e987764708ce96';
 
         fetch(tmdbUrl)
-            .then(function(res) { 
-                if (!res) throw new Error('TMDB Baglantisi Yok');
-                return res.json(); 
-            })
+            .then(function(res) { return res.json(); })
             .then(function(data) {
                 var query = data ? (data.title || data.name) : '';
-                if (!query) throw new Error('Isim Bulunamadi');
+                if (!query) throw new Error('İsim Bulunamadı');
                 
                 var searchUrl = CONFIG.BASE_URL + '/arama/' + encodeURIComponent(query);
                 console.log('[FullHD] Araniyor:', query);
                 return fetch(searchUrl, { headers: CONFIG.HEADERS });
             })
-            .then(function(res) { 
-                if (!res) throw new Error('Arama Yaniti Yok');
-                return res.text(); 
-            })
+            .then(function(res) { return res.text(); })
             .then(function(html) {
                 if (!html) return resolve([]);
                 
@@ -46,50 +39,42 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                 var firstResult = $('.film-liste ul li a').first().attr('href');
                 
                 if (!firstResult) {
-                    console.log('[FullHD] Sonuc Yok');
+                    console.log('[FullHD] Sonuc bulunamadi');
                     return resolve([]);
                 }
 
-                // URL Temizleme ve Birleştirme
-                var cleanPath = firstResult.replace(CONFIG.BASE_URL, '');
-                var targetUrl = CONFIG.BASE_URL + (cleanPath.startsWith('/') ? '' : '/') + cleanPath;
+                // URL Temizleme
+                var slug = firstResult.replace(CONFIG.BASE_URL, '').replace(/^\/+/, '');
+                var targetUrl = CONFIG.BASE_URL + '/' + slug;
 
-                // Dizi ise bölüm linkini oluştur
                 if (mediaType === 'tv') {
-                    // Site bazen /dizi-adi/1-sezon-1-bolum veya /dizi-adi/1-sezon-1-bolum-izle kullanıyor
-                    targetUrl = targetUrl.replace(/\/$/, '') + '/' + seasonNum + '-sezon-' + episodeNum + '-bolum-izle';
+                    // Örn: /diziler/breaking-bad/ -> breaking-bad-1-sezon-1-bolum-izle
+                    var cleanSlug = slug.replace('diziler/', '').replace(/\/$/, '');
+                    targetUrl = CONFIG.BASE_URL + '/' + cleanSlug + '-' + seasonNum + '-sezon-' + episodeNum + '-bolum-izle';
                 }
 
-                console.log('[FullHD] Hedef Sayfa:', targetUrl);
-                // "Icerik sayfasi yuklenemedi" hatasini engellemek icin ek kontrol
+                console.log('[FullHD] Deneniyor:', targetUrl);
                 return fetch(targetUrl, { headers: CONFIG.HEADERS });
             })
-            .then(function(res) { 
-                if (!res || !res.ok) {
-                    // Eğer -izle ekiyle bulunamadıysa bir de eksiz dene (Opsiyonel Güvenlik)
-                    throw new Error('Icerik sayfasi yuklenemedi');
-                }
-                return res.text(); 
+            .then(function(res) {
+                if (!res || res.status === 404) throw new Error('Sayfa bulunamadi');
+                return res.text();
             })
             .then(function(pageHtml) {
-                if (!pageHtml) return resolve([]);
-                
                 var $ = cheerio.load(pageHtml);
                 var streams = [];
 
-                // Video iframe taraması
-                $('.video-player iframe, #video-player iframe, .player-container iframe, iframe[src*="iframe"]').each(function(i, elem) {
+                // Player iframe'lerini yakala
+                $('.video-player iframe, #video-player iframe, iframe[src*="fullhd"]').each(function(i, elem) {
                     var src = $(elem).attr('src') || $(elem).attr('data-src');
                     if (src) {
                         var finalSrc = src.startsWith('//') ? 'https:' + src : src;
-                        
                         streams.push({
                             name: "FullHD - Kaynak " + (i + 1),
-                            title: "FullHD Video", 
                             url: finalSrc,
                             quality: "Auto",
                             headers: { 'Referer': CONFIG.BASE_URL + '/' },
-                            provider: "fullhd-nuvio"
+                            provider: "fullhd-scraper"
                         });
                     }
                 });
@@ -105,6 +90,4 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
 
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = { getStreams: getStreams };
-} else {
-    global.getStreams = getStreams;
 }
