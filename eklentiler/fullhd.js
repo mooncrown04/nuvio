@@ -1,8 +1,8 @@
 /**
- * FullHDFilmizlesene - v8.5 (Aggressive Extraction)
+ * FullHDFilmizlesene - v8.6 (Bypass security_error)
  */
 
-console.error("[FullHD] === v8.5 BAŞLADI ===");
+console.error("[FullHD] === v8.6 BAŞLADI ===");
 
 var cheerio = require("cheerio-without-node-native");
 var BASE_URL = "https://www.fullhdfilmizlesene.live";
@@ -27,14 +27,15 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
         if (mediaType === "tv") return resolve([]);
 
         var tmdbUrl = "https://api.themoviedb.org/3/movie/" + tmdbId + "?language=tr-TR&api_key=4ef0d7355d9ffb5151e987764708ce96";
+        var sessionCookie = "";
 
         fetch(tmdbUrl)
             .then(res => res.json())
             .then(data => {
                 var query = data ? (data.title || data.original_title) : "";
-                console.error("[FullHD] Arama Yapılıyor: " + query);
+                console.error("[FullHD] Arama: " + query);
                 return fetch(BASE_URL + "/arama/" + encodeURIComponent(query), { 
-                    headers: { "User-Agent": "Mozilla/5.0", "Referer": BASE_URL } 
+                    headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" } 
                 });
             })
             .then(res => res.text())
@@ -42,51 +43,61 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                 var $ = cheerio.load(html);
                 var link = $(".film-listesi a").first().attr("href") || $("a[href*='/film/']").first().attr("href");
                 if (!link) throw new Error("Film bulunamadı");
-                return fetch(link.startsWith("http") ? link : BASE_URL + link);
+                
+                var finalUrl = link.startsWith("http") ? link : BASE_URL + link;
+                // Film sayfasını açarken Cookie alıyoruz
+                return fetch(finalUrl, { headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" } });
             })
-            .then(res => res.text())
+            .then(res => {
+                // Çerezleri sakla
+                sessionCookie = res.headers.get('set-cookie') || "";
+                return res.text();
+            })
             .then(filmHtml => {
                 var vidid = filmHtml.match(/vidid\s*=\s*['"]([^'"]+)['"]/);
                 if (!vidid) throw new Error("vidid bulunamadı");
 
+                // --- GÜVENLİK BYPASS: POST DATA ---
                 var apiUrl = BASE_URL + "/player/api.php";
+                // Bazı durumlarda 'type' değeri 't' yerine '1' veya '0' olabilir, loglardan '3446' gelmişti.
                 var params = "id=" + vidid[1] + "&type=t&get=video";
+
+                console.error("[FullHD] API'ye gidiliyor ID: " + vidid[1]);
 
                 return fetch(apiUrl, {
                     method: "POST",
                     headers: {
                         "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
                         "X-Requested-With": "XMLHttpRequest",
-                        "Referer": BASE_URL,
-                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+                        "Referer": BASE_URL + "/",
+                        "Origin": BASE_URL,
+                        "Cookie": sessionCookie,
+                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
                     },
                     body: params
                 });
             })
             .then(res => res.text())
             .then(apiText => {
-                // Link Ayıklama Mantığını Değiştirdik
-                // apiText içindeki tüm tırnak içindeki linkleri bul
+                if (apiText.includes("security_error")) {
+                    console.error("[FullHD] Güvenlik hatası aşılamadı!");
+                    throw new Error("Security Error");
+                }
+
                 var urls = apiText.match(/https?:\/\/[^"'\s<>\\ ]+/g) || [];
-                var embedUrl = null;
+                var embedUrl = urls.find(u => u.includes("rapid") || u.includes("moly") || u.includes("player")) || urls[0];
+                
+                if (!embedUrl) throw new Error("Link yok");
+                
+                embedUrl = embedUrl.replace(/\\/g, "");
+                console.error("[FullHD] Embed: " + embedUrl);
 
-                for (var i = 0; i < urls.length; i++) {
-                    var u = urls[i].replace(/\\/g, "");
-                    // Sitenin kullandığı yaygın player/iframe adreslerini filtrele
-                    if (u.includes("rapid") || u.includes("moly") || u.includes("player") || u.includes("embed")) {
-                        embedUrl = u;
-                        break;
-                    }
-                }
-
-                if (!embedUrl && urls.length > 0) embedUrl = urls[0];
-                if (!embedUrl) {
-                    console.error("[FullHD] API Yanıtı Link İçermiyor: " + apiText.substring(0, 100));
-                    throw new Error("Link Bulunamadı");
-                }
-
-                console.error("[FullHD] Embed Yakalandı: " + embedUrl);
-                return fetch(embedUrl, { headers: { "Referer": BASE_URL } });
+                return fetch(embedUrl, { 
+                    headers: { 
+                        "Referer": BASE_URL + "/",
+                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+                    } 
+                });
             })
             .then(res => res.text())
             .then(embedHtml => {
@@ -96,7 +107,7 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                     if (finalUrl) {
                         if (finalUrl.indexOf("//") === 0) finalUrl = "https:" + finalUrl;
                         return resolve([{
-                            name: "FullHD v8.5",
+                            name: "FullHD Premium",
                             url: finalUrl,
                             quality: "1080p",
                             headers: { "Referer": "https://rapidvid.net/", "User-Agent": "Mozilla/5.0" },
@@ -104,8 +115,7 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                         }]);
                     }
                 }
-                // Link çözülemezse bile iframe'i ver ki uygulama player'da açmayı denesin
-                resolve([{ name: "FullHD (Embed)", url: embedUrl, quality: "Auto", provider: "fullhd" }]);
+                resolve([]);
             })
             .catch(err => {
                 console.error("[FullHD] Hata: " + err.message);
