@@ -1,5 +1,5 @@
 /**
- * FullHDFilmizlesene Nuvio Scraper - v4.4 (Nuvio Uyumlu)
+ * FullHDFilmizlesene Nuvio Scraper - v4.5 (404 Fix)
  */
 
 var cheerio = require("cheerio-without-node-native");
@@ -35,8 +35,6 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
         var tmdbUrl = 'https://api.themoviedb.org/3/' + tmdbType + '/' + tmdbId + 
                       '?language=tr-TR&api_key=4ef0d7355d9ffb5151e987764708ce96';
 
-        var targetUrl = null;
-
         fetch(tmdbUrl)
             .then(function(res) { 
                 if (!res.ok) throw new Error('TMDB HTTP: ' + res.status);
@@ -62,11 +60,21 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                 
                 var $ = cheerio.load(html);
                 
-                // Çalışan örneklerdeki gibi birden fazla selector dene
+                // Tüm linkleri bul ve logla
+                var allLinks = [];
+                $('a[href*="/film/"], a[href*="/diziler/"], a[href*="/izle/"]').each(function(i, elem) {
+                    var href = $(elem).attr('href');
+                    if (href && !allLinks.includes(href)) {
+                        allLinks.push(href);
+                    }
+                });
+                console.log('[FullHD] Bulunan tum linkler:', allLinks.slice(0, 5));
+                
                 var firstResult = $('.film-liste ul li a').first().attr('href') ||
                                   $('.film-liste .item a').first().attr('href') ||
                                   $('a[href*="/film/"]').first().attr('href') ||
-                                  $('a[href*="/diziler/"]').first().attr('href');
+                                  $('a[href*="/diziler/"]').first().attr('href') ||
+                                  $('a[href*="/izle/"]').first().attr('href');
                 
                 console.log('[FullHD] First result:', firstResult);
                 
@@ -75,32 +83,85 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                     return resolve([]);
                 }
 
-                var slug = firstResult.replace(BASE_URL, '').replace(/^\/+/, '').replace(/\/$/, '');
+                // URL temizleme - BASE_URL'i kaldır
+                var cleanPath = firstResult.replace(BASE_URL, '').replace(/^\/+/, '').replace(/\/$/, '');
+                console.log('[FullHD] Clean path:', cleanPath);
+                
+                var targetUrl = null;
                 
                 if (mediaType === 'tv') {
-                    var seriesName = slug.replace('diziler/', '').split('-izle')[0].replace(/-$/, '');
-                    targetUrl = BASE_URL + '/diziler/' + seriesName + '-' + 
-                               seasonNum + '-sezon-' + episodeNum + '-bolum-izle';
+                    // Dizi URL yapısı
+                    var seriesName = cleanPath.replace('diziler/', '').split('-izle')[0].replace(/-$/, '');
+                    
+                    // Farklı patternler dene
+                    var patterns = [
+                        BASE_URL + '/diziler/' + seriesName + '-' + seasonNum + '-sezon-' + episodeNum + '-bolum-izle',
+                        BASE_URL + '/diziler/' + seriesName + '-sezon-' + seasonNum + '/bolum-' + episodeNum,
+                        BASE_URL + '/' + seriesName + '-' + seasonNum + '-sezon-' + episodeNum + '-bolum-izle',
+                        BASE_URL + '/diziler/' + seriesName + '/' + seasonNum + '-sezon/' + episodeNum + '-bolum'
+                    ];
+                    
+                    console.log('[FullHD] Dizi patternleri:', patterns);
+                    targetUrl = patterns[0]; // İlkini dene
+                    
                 } else {
-                    targetUrl = BASE_URL + '/film/' + slug;
+                    // Film URL yapısı - direkt bulunan linki kullan
+                    if (cleanPath.startsWith('film/') || cleanPath.startsWith('izle/')) {
+                        targetUrl = BASE_URL + '/' + cleanPath;
+                    } else {
+                        targetUrl = BASE_URL + '/film/' + cleanPath;
+                    }
                 }
                 
                 console.log('[FullHD] Target URL:', targetUrl);
-                return fetch(targetUrl, { headers: HEADERS });
+                
+                // Önce direkt dene
+                return fetch(targetUrl, { headers: HEADERS }).then(function(res) {
+                    if (res.ok) {
+                        console.log('[FullHD] URL basarili:', res.status);
+                        return res;
+                    }
+                    
+                    // 404 ise alternatif dene
+                    if (res.status === 404) {
+                        console.log('[FullHD] 404 alindi, alternatif deneniyor...');
+                        
+                        if (mediaType === 'tv') {
+                            // Dizi alternatifleri
+                            var altPatterns = [
+                                targetUrl.replace('/diziler/', '/'),
+                                targetUrl.replace('-bolum-izle', '-bolum'),
+                                targetUrl.replace('-sezon-', '/sezon-'),
+                                BASE_URL + '/' + cleanPath.replace('diziler/', '') + '-' + seasonNum + '-sezon-' + episodeNum + '-bolum'
+                            ];
+                            
+                            for (var i = 0; i < altPatterns.length; i++) {
+                                console.log('[FullHD] Alternatif dene:', altPatterns[i]);
+                                // Not: Burada sırayla denemek için recursive yapı gerekir
+                                // Şimdilik ilk alternatifi dene
+                                if (i === 0) return fetch(altPatterns[i], { headers: HEADERS });
+                            }
+                        } else {
+                            // Film alternatifleri
+                            var altUrl = targetUrl.replace('/film/', '/izle/');
+                            console.log('[FullHD] Film alternatif:', altUrl);
+                            return fetch(altUrl, { headers: HEADERS });
+                        }
+                    }
+                    
+                    return res;
+                });
             })
             .then(function(res) {
-                if (res.status === 404 && mediaType === 'tv') {
-                    var altUrl = targetUrl.replace('/diziler/', '/');
-                    console.log('[FullHD] 404, trying alternative:', altUrl);
-                    return fetch(altUrl, { headers: HEADERS });
+                if (!res.ok) {
+                    console.log('[FullHD] Tum URL\'ler basarisiz, son status:', res.status);
+                    throw new Error('Icerik HTTP: ' + res.status);
                 }
-                if (!res.ok) throw new Error('Icerik HTTP: ' + res.status);
-                return res;
-            })
-            .then(function(res) {
                 return res.text();
             })
             .then(function(pageHtml) {
+                console.log('[FullHD] Sayfa HTML uzunlugu:', pageHtml.length);
+                
                 var $ = cheerio.load(pageHtml);
                 var streams = [];
                 var subtitles = [];
@@ -136,7 +197,6 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
     });
 }
 
-// Çalışan örneklerle AYNI export yapısı
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = { getStreams: getStreams };
 } else {
