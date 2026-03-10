@@ -1,20 +1,16 @@
 /**
- * FullHDFilmizlesene Nuvio Scraper - v10.0
- * Kısıtlamalar: async/await YOK, Promise ZORUNLU.
+ * FullHDFilmizlesene Nuvio Scraper - v10.1
+ * Değişiklik: API isteği POST'tan GET'e çevrildi + Headerlar sadeleştirildi.
  */
 
 var cheerio = require("cheerio-without-node-native");
 var BASE_URL = "https://www.fullhdfilmizlesene.live";
 
-// Nuvio için optimize edilmiş header seti
 var NUVIO_HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-    'Accept': '*/*',
+    'Accept': 'application/json, text/javascript, */*; q=0.01',
     'Accept-Language': 'tr-TR,tr;q=0.9',
     'X-Requested-With': 'XMLHttpRequest',
-    'Sec-Fetch-Dest': 'empty',
-    'Sec-Fetch-Mode': 'cors',
-    'Sec-Fetch-Site': 'same-origin',
     'DNT': '1'
 };
 
@@ -43,8 +39,8 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
             .then(function(res) { return res.json(); })
             .then(function(data) {
                 var query = data.title || data.original_title;
-                console.error("[FullHD] v10 Başladı: " + query);
-                return fetch(BASE_URL + '/arama/' + encodeURIComponent(query), { headers: NUVIO_HEADERS });
+                console.error("[FullHD] v10.1 Başladı: " + query);
+                return fetch(BASE_URL + '/arama/' + encodeURIComponent(query), { headers: { 'User-Agent': NUVIO_HEADERS['User-Agent'] } });
             })
             .then(function(res) { return res.text(); })
             .then(function(html) {
@@ -53,10 +49,9 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                 if (!link) throw new Error("Film Bulunamadı");
 
                 var filmUrl = link.indexOf('http') === 0 ? link : BASE_URL + link;
-                return fetch(filmUrl, { headers: NUVIO_HEADERS });
+                return fetch(filmUrl, { headers: { 'User-Agent': NUVIO_HEADERS['User-Agent'] } });
             })
             .then(function(res) {
-                // Çerezleri sakla ve Referer'ı güncelle
                 var setCookie = res.headers.get('set-cookie');
                 if (setCookie) NUVIO_HEADERS['Cookie'] = setCookie.split(';')[0];
                 return res.text();
@@ -66,31 +61,32 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                 if (!vididMatch) throw new Error("vidid eksik");
                 
                 var vidid = vididMatch[1];
-                var apiUrl = BASE_URL + "/player/api.php";
                 
-                // DENEY: Body yerine URL parametresi olarak gönderiyoruz (Bazı WAF'lar body sevmez)
-                var finalApiUrl = apiUrl + "?id=" + vidid + "&type=t&get=video";
+                // --- STRATEJİ DEĞİŞİKLİĞİ ---
+                // POST yerine sadece GET kullanarak JSON yanıtı zorluyoruz.
+                // Eğer site hala HTML dönüyorsa, 'type' değerini '1' veya '3' olarak deneyeceğiz.
+                var finalApiUrl = BASE_URL + "/player/api.php?id=" + vidid + "&type=t&get=video";
                 
-                console.error("[FullHD] API Sorgusu ID: " + vidid);
+                console.error("[FullHD] API GET Sorgusu: " + vidid);
 
                 return fetch(finalApiUrl, {
-                    method: "POST", // Hem POST hem URL params hibrit deneme
-                    headers: NUVIO_HEADERS,
-                    body: "id=" + vidid + "&type=t&get=video" 
+                    method: "GET",
+                    headers: NUVIO_HEADERS
                 });
             })
             .then(function(res) { return res.text(); })
             .then(function(apiText) {
-                console.error("[FullHD] Yanıt: " + apiText.substring(0, 30));
+                // Eğer hala HTML geliyorsa, logda içeriği daha fazla görmek için:
+                console.error("[FullHD] Yanıt (İlk 100): " + apiText.substring(0, 100));
                 
-                if (apiText.indexOf("security_error") > -1) {
-                    throw new Error("Guvenlik Engelini Gecemedik");
+                if (apiText.indexOf("<html") > -1) {
+                    throw new Error("API hala HTML donuyor, JSON bekleniyor");
                 }
 
                 var urls = apiText.match(/https?:\/\/[^"'\s<>\\ ]+/g) || [];
                 var embedUrl = urls.find(function(u) { return u.indexOf("rapid") > -1 || u.indexOf("moly") > -1; }) || urls[0];
                 
-                if (!embedUrl) throw new Error("Embed yok");
+                if (!embedUrl) throw new Error("Embed bulunamadı");
                 return fetch(embedUrl.replace(/\\/g, ""), { headers: { 'Referer': BASE_URL + '/' } });
             })
             .then(function(res) { return res.text(); })
@@ -100,8 +96,8 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                     var decrypted = decodeContentX(avMatch[1]);
                     if (decrypted) {
                         resolve([{
-                            name: "FullHD v10 Premium",
-                            title: "FullHD (1080p)",
+                            name: "FullHD v10.1 Fix",
+                            title: "FullHD Premium",
                             url: decrypted.indexOf("//") === 0 ? "https:" + decrypted : decrypted,
                             quality: "1080p",
                             headers: { 'Referer': 'https://rapidvid.net/', 'User-Agent': NUVIO_HEADERS['User-Agent'] },
@@ -119,7 +115,6 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
     });
 }
 
-// Nuvio / React Native Export
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = { getStreams: getStreams };
 } else {
