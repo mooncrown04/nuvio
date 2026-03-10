@@ -1,14 +1,14 @@
 /**
- * FullHDFilmizlesene - v7.5 (MIME Type & Header Fix)
+ * FullHDFilmizlesene - v7.6 (Enhanced Header & Debug)
  */
 
-console.error("[FullHD] === v7.5 BAŞLADI ===");
+console.error("[FullHD] === v7.6 BAŞLADI ===");
 
 var cheerio = require("cheerio-without-node-native");
 
 var BASE_URL = "https://www.fullhdfilmizlesene.live";
 var HEADERS = {
-  "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+  "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
   "Referer": BASE_URL + "/"
 };
 
@@ -33,7 +33,7 @@ function utf8Decode(bytes) {
 function safeBase64Decode(str) {
   try {
     if (typeof atob !== 'undefined') {
-      var binary = atob(str.replace(/\s/g, ''));
+      var binary = atob(str.replace(/[^A-Za-z0-9+/=]/g, ""));
       var bytes = new Uint8Array(binary.length);
       for (var i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
       return bytes;
@@ -55,8 +55,8 @@ function decodeAv(input) {
     }
     
     var result = utf8Decode(adjusted);
-    // Double Base64 Check
-    if (result && !result.startsWith("http")) {
+    // Double Base64 check (Link hala şifreliyse)
+    if (result && !result.startsWith("http") && result.length > 10) {
         var secondPass = safeBase64Decode(result);
         if (secondPass) result = utf8Decode(secondPass);
     }
@@ -73,19 +73,21 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
       .then(function(res) { return res.json(); })
       .then(function(data) {
         var query = data ? (data.title || data.name || data.original_title) : "";
+        console.error("[FullHD] Aranan:", query);
         return fetch(BASE_URL + "/arama/" + encodeURIComponent(query), { headers: HEADERS });
       })
       .then(function(res) { return res.text(); })
       .then(function(html) {
         var $ = cheerio.load(html);
         var link = $("a[href*=\"/film/\"]").first().attr("href");
-        if (!link) throw new Error("Link bulunamadı");
+        if (!link) throw new Error("Film bulunamadı");
         return fetch(link, { headers: HEADERS });
       })
       .then(function(res) { return res.text(); })
       .then(function(filmHtml) {
         var vidid = filmHtml.match(/vidid\s*=\s*['"]([^'"]+)['"]/);
-        if (!vidid) throw new Error("vidid yok");
+        if (!vidid) throw new Error("vidid bulunamadı");
+        
         var apiUrl = BASE_URL + "/player/api.php?id=" + vidid[1] + "&type=t&get=video&format=json";
         return fetch(apiUrl, { headers: HEADERS });
       })
@@ -93,6 +95,7 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
       .then(function(data) {
         if (!data || !data.html) return resolve([]);
         var embedUrl = data.html.replace(/\\/g, "");
+        console.error("[FullHD] Embed URL:", embedUrl);
         
         return fetch(embedUrl, { headers: HEADERS })
           .then(function(res) { return res.text(); })
@@ -103,10 +106,10 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
               if (finalUrl) {
                 if (finalUrl.indexOf("//") === 0) finalUrl = "https:" + finalUrl;
                 
-                // M3U8 kontrolü ve Header ekleme
-                var isM3u8 = finalUrl.includes(".m3u8");
+                console.error("[FullHD] Çözülen Link:", finalUrl.substring(0, 50) + "...");
+                
                 return resolve([{
-                  name: isM3u8 ? "FullHD (HLS)" : "FullHD (MP4)",
+                  name: "FullHD Premium",
                   url: finalUrl,
                   quality: "1080p",
                   headers: { 
@@ -118,12 +121,18 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                 }]);
               }
             }
-            // Fallback
-            resolve([{ name: "FullHD Embed", url: embedUrl, quality: "Auto", provider: "fullhd" }]);
+            
+            // Alternatif m3u8 arama
+            var m3u8Match = html.match(/file["']?\s*:\s*["'](https?:\/\/[^"']+\.m3u8[^"']*)["']/i);
+            if (m3u8Match) {
+                return resolve([{ name: "FullHD Auto", url: m3u8Match[1], quality: "Auto", provider: "fullhd" }]);
+            }
+
+            resolve([{ name: "FullHD Player", url: embedUrl, quality: "Auto", provider: "fullhd" }]);
           });
       })
       .catch(function(err) {
-        console.error("[FullHD] Scraper Hatası:", err.message);
+        console.error("[FullHD] HATA:", err.message);
         resolve([]);
       });
   });
