@@ -1,4 +1,60 @@
 /**
+ * FullHDFilmizlesene - DEBUG TEST (console.error)
+ */
+
+// EN BAŞTA - Plugin yüklenir yüklenmez çalışsın
+console.error("!!! FULLHD PLUGIN YUKLENIYOR !!!");
+console.error("typeof fetch: " + typeof fetch);
+console.error("typeof cheerio: " + typeof cheerio);
+console.error("typeof global: " + typeof global);
+console.error("typeof module: " + typeof module);
+
+// Hata yakalama
+try {
+    var cheerio = require("cheerio-without-node-native");
+    console.error("Cheerio yuklendi");
+} catch(e) {
+    console.error("Cheerio HATASI: " + e.message);
+}
+
+// Export testi
+function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
+    console.error("!!! GETSTREAMS CAGRILDI !!!");
+    console.error("Parametreler: " + JSON.stringify({tmdbId, mediaType, seasonNum, episodeNum}));
+    
+    return new Promise(function(resolve) {
+        console.error("Promise icindeyim");
+        
+        // Hemen test yanıtı dön
+        setTimeout(function() {
+            console.error("Test yanıtı donduruluyor");
+            resolve([{
+                name: "FullHD TEST",
+                title: "Test Stream",
+                url: "https://test-stream.mp4",
+                quality: "1080p",
+                provider: "fullhd"
+            }]);
+        }, 100);
+    });
+}
+
+// Export dene
+console.error("Export yapiliyor...");
+if (typeof module !== "undefined" && module.exports) {
+    module.exports = { getStreams: getStreams };
+    console.error("module.exports yapildi");
+} else {
+    global.getStreams = getStreams;
+    console.error("global.getStreams yapildi");
+}
+
+console.error("getStreams tipi: " + typeof getStreams);
+console.error("!!! PLUGIN YUKLEME TAMAMLANDI !!!");
+
+
+
+/**
  * FullHDFilmizlesene Nuvio Scraper - v6.0 (API Tabanlı)
  */
 
@@ -176,3 +232,4 @@ if (typeof module !== "undefined" && module.exports) {
 }
 
 log("Plugin yuklendi - v6.0 API Tabanli");
+
