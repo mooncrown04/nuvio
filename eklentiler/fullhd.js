@@ -1,6 +1,5 @@
 /**
- * FullHDFilmizlesene Nuvio Scraper - v3.4
- * Fix: Dizi URL yolu ve link doğrulama iyileştirildi.
+ * FullHDFilmizlesene Nuvio Scraper - v3.5 (Dirençli Versiyon)
  */
 
 var cheerio = require("cheerio-without-node-native");
@@ -9,9 +8,7 @@ var CONFIG = {
     BASE_URL: 'https://www.fullhdfilmizlesene.live',
     HEADERS: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-        'Referer': 'https://www.fullhdfilmizlesene.live/',
-        'Accept-Language': 'tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7'
+        'Referer': 'https://www.fullhdfilmizlesene.live/'
     }
 };
 
@@ -25,10 +22,10 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
             .then(function(res) { return res.json(); })
             .then(function(data) {
                 var query = data ? (data.title || data.name) : '';
-                if (!query) throw new Error('İsim Bulunamadı');
+                if (!query) throw new Error('Isim Bulunamadi');
                 
+                // Arama yaparken dizi ise sonuna "izle" ekleyerek aramayı daraltabiliriz
                 var searchUrl = CONFIG.BASE_URL + '/arama/' + encodeURIComponent(query);
-                console.log('[FullHD] Araniyor:', query);
                 return fetch(searchUrl, { headers: CONFIG.HEADERS });
             })
             .then(function(res) { return res.text(); })
@@ -38,43 +35,50 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                 var $ = cheerio.load(html);
                 var firstResult = $('.film-liste ul li a').first().attr('href');
                 
-                if (!firstResult) {
-                    console.log('[FullHD] Sonuc bulunamadi');
-                    return resolve([]);
-                }
+                if (!firstResult) return resolve([]);
 
-                // URL Temizleme
-                var slug = firstResult.replace(CONFIG.BASE_URL, '').replace(/^\/+/, '');
-                var targetUrl = CONFIG.BASE_URL + '/' + slug;
+                // URL formatını temizle
+                var slug = firstResult.replace(CONFIG.BASE_URL, '').replace(/^\/+/, '').replace(/\/$/, '');
+                var targetUrl;
 
                 if (mediaType === 'tv') {
-                    // Örn: /diziler/breaking-bad/ -> breaking-bad-1-sezon-1-bolum-izle
-                    var cleanSlug = slug.replace('diziler/', '').replace(/\/$/, '');
-                    targetUrl = CONFIG.BASE_URL + '/' + cleanSlug + '-' + seasonNum + '-sezon-' + episodeNum + '-bolum-izle';
+                    // Dizi adını temizle (diziler/ kısmını ve sondaki izle/ gibi ekleri at)
+                    var seriesName = slug.replace('diziler/', '').split('-izle')[0].split('-bolum')[0];
+                    
+                    // Standart Format: site.com/dizi-adi-S-sezon-E-bolum-izle
+                    targetUrl = CONFIG.BASE_URL + '/' + seriesName + '-' + seasonNum + '-sezon-' + episodeNum + '-bolum-izle';
+                } else {
+                    targetUrl = CONFIG.BASE_URL + '/' + slug;
                 }
 
-                console.log('[FullHD] Deneniyor:', targetUrl);
+                console.log('[FullHD] Deneniyor URL:', targetUrl);
                 return fetch(targetUrl, { headers: CONFIG.HEADERS });
             })
             .then(function(res) {
-                if (!res || res.status === 404) throw new Error('Sayfa bulunamadi');
-                return res.text();
+                // Eğer sayfa 404 ise, alternatif olarak /diziler/ ön ekini deneyelim
+                if (res.status === 404 && mediaType === 'tv') {
+                     // URL'yi tekrar oluştur (Alternatif yapı)
+                     // Bazı diziler sadece ana dizinde değil /diziler/ klasöründe barınır
+                     var alternativeUrl = targetUrl.replace(CONFIG.BASE_URL + '/', CONFIG.BASE_URL + '/diziler/');
+                     console.log('[FullHD] 404 Alındı, Alternatif Deneniyor:', alternativeUrl);
+                     return fetch(alternativeUrl, { headers: CONFIG.HEADERS });
+                }
+                return res;
             })
+            .then(function(res) { return res.text(); })
             .then(function(pageHtml) {
                 var $ = cheerio.load(pageHtml);
                 var streams = [];
 
-                // Player iframe'lerini yakala
-                $('.video-player iframe, #video-player iframe, iframe[src*="fullhd"]').each(function(i, elem) {
+                $('iframe').each(function(i, elem) {
                     var src = $(elem).attr('src') || $(elem).attr('data-src');
-                    if (src) {
-                        var finalSrc = src.startsWith('//') ? 'https:' + src : src;
+                    if (src && (src.includes('fullhd') || src.includes('video'))) {
                         streams.push({
-                            name: "FullHD - Kaynak " + (i + 1),
-                            url: finalSrc,
-                            quality: "Auto",
+                            name: "FullHD Kaynak " + (i + 1),
+                            url: src.startsWith('//') ? 'https:' + src : src,
+                            quality: "1080p",
                             headers: { 'Referer': CONFIG.BASE_URL + '/' },
-                            provider: "fullhd-scraper"
+                            provider: "fullhd-v3.5"
                         });
                     }
                 });
