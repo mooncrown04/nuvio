@@ -1,16 +1,43 @@
 /**
- * FullHDFilmizlesene - v8.0 (Final API Fix)
+ * FullHDFilmizlesene - v8.2 (Based on ContentXExtractor.kt)
  */
 
-console.error("[FullHD] === v8.0 BAŞLADI ===");
+console.error("[FullHD] === v8.2 BAŞLADI ===");
 
 var cheerio = require("cheerio-without-node-native");
 var BASE_URL = "https://www.fullhdfilmizlesene.live";
 
-// Yardımcı fonksiyonlar (Base64/UTF8) v7.9 ile aynı kalsın...
-function utf8Decode(bytes) { try { var result = ''; var i = 0; while (i < bytes.length) { var byte1 = bytes[i++]; if (byte1 < 0x80) result += String.fromCharCode(byte1); else if (byte1 < 0xE0) result += String.fromCharCode(((byte1 & 0x1F) << 6) | (bytes[i++] & 0x3F)); else if (byte1 < 0xF0) result += String.fromCharCode(((byte1 & 0x0F) << 12) | ((bytes[i++] & 0x3F) << 6) | (bytes[i++] & 0x3F)); else { var cp = ((byte1 & 0x07) << 18) | ((bytes[i++] & 0x3F) << 12) | ((bytes[i++] & 0x3F) << 6) | (bytes[i++] & 0x3F); result += String.fromCharCode(((cp - 0x10000) >> 10) + 0xD800, ((cp - 0x10000) & 0x3FF) + 0xDC00); } } return result; } catch (e) { return null; } }
-function safeBase64Decode(str) { try { var binary = atob(str.replace(/[^A-Za-z0-9+/=]/g, "")); var bytes = new Uint8Array(binary.length); for (var i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i); return bytes; } catch (e) { return null; } }
-function decodeAv(input) { try { var reversed = input.split('').reverse().join(''); var decodedBytes = safeBase64Decode(reversed); if (!decodedBytes) return null; var key = "K9L"; var adjusted = new Uint8Array(decodedBytes.length); for (var i = 0; i < decodedBytes.length; i++) { adjusted[i] = (decodedBytes[i] - ((key.charCodeAt(i % 3) % 5) + 1)) & 0xFF; } var result = utf8Decode(adjusted); if (result && !result.startsWith("http")) { var secondPass = safeBase64Decode(result); if (secondPass) result = utf8Decode(secondPass); } return result; } catch (e) { return null; } }
+// Kotlin'deki ContentXExtractor mantığına göre uyarlanan deşifre
+function decodeContentX(encodedData) {
+    try {
+        // Kotlin kodundaki reverse ve base64 işlemi
+        var reversed = encodedData.split('').reverse().join('');
+        var binary = atob(reversed.replace(/[^A-Za-z0-9+/=]/g, ""));
+        
+        // Kotlin tarafında kullanılan anahtar: "K9L" 
+        // Oradaki döngü: (byte - ((key.charCodeAt(i % 3) % 5) + 1))
+        var key = "K9L";
+        var result = "";
+        for (var i = 0; i < binary.length; i++) {
+            var charCode = binary.charCodeAt(i);
+            var shift = (key.charCodeAt(i % key.length) % 5) + 1;
+            result += String.fromCharCode(charCode - shift);
+        }
+        
+        // Eğer sonuç hala base64 ise (Kotlin'de bazen çift katman olabiliyor)
+        if (result && !result.startsWith("http")) {
+            try {
+                var secondBinary = atob(result);
+                if (secondBinary.includes("http")) return secondBinary;
+            } catch(e) {}
+        }
+        
+        return result;
+    } catch (e) {
+        console.error("[FullHD] Deşifre Hatası:", e.message);
+        return null;
+    }
+}
 
 function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
     return new Promise(function (resolve) {
@@ -19,86 +46,61 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
         var tmdbUrl = "https://api.themoviedb.org/3/movie/" + tmdbId + "?language=tr-TR&api_key=4ef0d7355d9ffb5151e987764708ce96";
 
         fetch(tmdbUrl)
-            .then(function (res) { return res.json(); })
-            .then(function (data) {
+            .then(res => res.json())
+            .then(data => {
                 var query = data ? (data.title || data.original_title) : "";
-                console.error("[FullHD] Film Aranıyor:", query);
-                // Arama Header'larını güçlendirdik
                 return fetch(BASE_URL + "/arama/" + encodeURIComponent(query), { 
-                    headers: { 
-                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                        "Referer": BASE_URL
-                    } 
+                    headers: { "User-Agent": "Mozilla/5.0", "Referer": BASE_URL } 
                 });
             })
-            .then(function (res) { return res.text(); })
-            .then(function (html) {
+            .then(res => res.text())
+            .then(html => {
                 var $ = cheerio.load(html);
                 var link = $(".film-listesi a").first().attr("href") || $("a[href*='/film/']").first().attr("href");
                 if (!link) throw new Error("Film bulunamadı");
-
-                var finalUrl = link.startsWith("http") ? link : BASE_URL + link;
-                return fetch(finalUrl, { headers: { "User-Agent": "Mozilla/5.0" } });
+                return fetch(link.startsWith("http") ? link : BASE_URL + link);
             })
-            .then(function (res) { return res.text(); })
-            .then(function (filmHtml) {
+            .then(res => res.text())
+            .then(filmHtml => {
                 var vidid = filmHtml.match(/vidid\s*=\s*['"]([^'"]+)['"]/);
                 if (!vidid) throw new Error("vidid bulunamadı");
 
-                // API İSTEĞİ - KRİTİK NOKTA
-                // Format parametresini kaldırdık veya düzelttik
-                var apiUrl = BASE_URL + "/player/api.php?id=" + vidid[1] + "&type=t&get=video";
-                
-                return fetch(apiUrl, { 
-                    headers: { 
-                        "User-Agent": "Mozilla/5.0",
-                        "X-Requested-With": "XMLHttpRequest", // AJAX isteği olduğunu belirtmek şart
-                        "Referer": BASE_URL
-                    } 
+                // API isteği (Kotlin tarafındaki get_video çağrısı)
+                return fetch(BASE_URL + "/player/api.php?id=" + vidid[1] + "&type=t&get=video", {
+                    headers: { "X-Requested-With": "XMLHttpRequest", "Referer": BASE_URL }
                 });
             })
-            .then(function (res) {
-                // Yanıtın JSON olduğundan emin olalım, değilse manuel parse edelim
-                var contentType = res.headers.get("content-type");
-                if (contentType && contentType.indexOf("application/json") !== -1) {
-                    return res.json();
-                } else {
-                    return res.text().then(t => {
-                        // Eğer HTML döndüyse içindeki JSON objesini ayıkla
-                        var jsonMatch = t.match(/({.*})/);
-                        return jsonMatch ? JSON.parse(jsonMatch[1]) : { html: "" };
-                    });
-                }
-            })
-            .then(function (data) {
-                if (!data || !data.html) throw new Error("Video verisi alınamadı");
-                var embedUrl = data.html.replace(/\\/g, "");
+            .then(res => res.text())
+            .then(apiText => {
+                // Ham metin içinden iframe src veya av() parametresini çekme
+                var embedUrlMatch = apiText.match(/src=["']([^"']+)["']/i);
+                var embedUrl = embedUrlMatch ? embedUrlMatch[1].replace(/\\/g, "") : null;
+                
+                if (!embedUrl) throw new Error("Embed bulunamadı");
                 if (embedUrl.indexOf("//") === 0) embedUrl = "https:" + embedUrl;
 
-                console.error("[FullHD] Embed URL Yakalandı:", embedUrl);
-
-                return fetch(embedUrl, { headers: { "User-Agent": "Mozilla/5.0", "Referer": BASE_URL } })
-                    .then(function (res) { return res.text(); })
-                    .then(function (html) {
-                        var avMatch = html.match(/av\(['"]([^'"]+)['"]\)/);
-                        if (avMatch) {
-                            var streamUrl = decodeAv(avMatch[1]);
-                            if (streamUrl) {
-                                if (streamUrl.indexOf("//") === 0) streamUrl = "https:" + streamUrl;
-                                return resolve([{
-                                    name: "FullHD 1080p",
-                                    url: streamUrl,
-                                    quality: "1080p",
-                                    headers: { "User-Agent": "Mozilla/5.0", "Referer": "https://rapidvid.net/" },
-                                    provider: "fullhd"
-                                }]);
-                            }
-                        }
-                        resolve([{ name: "FullHD Alternatif", url: embedUrl, quality: "Auto", provider: "fullhd" }]);
-                    });
+                return fetch(embedUrl, { headers: { "Referer": BASE_URL } });
             })
-            .catch(function (err) {
-                console.error("[FullHD] Hata Mesajı:", err.message);
+            .then(res => res.text())
+            .then(embedHtml => {
+                // Kotlin'deki extractor'ın asıl vurduğu yer: av('...')
+                var avMatch = embedHtml.match(/av\(['"]([^'"]+)['"]\)/);
+                if (avMatch) {
+                    var finalUrl = decodeContentX(avMatch[1]);
+                    if (finalUrl) {
+                        return resolve([{
+                            name: "FullHD (Kotlin Style)",
+                            url: finalUrl,
+                            quality: "1080p",
+                            headers: { "Referer": "https://rapidvid.net/", "User-Agent": "Mozilla/5.0" },
+                            provider: "fullhd"
+                        }]);
+                    }
+                }
+                resolve([]);
+            })
+            .catch(err => {
+                console.error("[FullHD] Hata:", err.message);
                 resolve([]);
             });
     });
