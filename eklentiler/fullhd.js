@@ -1,21 +1,22 @@
 /**
- * FullHDFilmizlesene Nuvio Scraper - v12.1
- * Değişiklik: Poster resimlerini engelle, doğrudan player embed yapısına odaklan.
+ * FullHDFilmizlesene Nuvio Scraper - v13.5
+ * Strateji: ajax-data (data-id) bloğunu deşifre ederek gerçek tokenlı linke ulaşır.
  */
 
 var cheerio = require("cheerio-without-node-native");
 var BASE_URL = "https://www.fullhdfilmizlesene.live";
 
-function decodeContentX(encodedData) {
+// Sitenin gizli deşifre fonksiyonu
+function fullhdDecode(input) {
     try {
-        var reversed = encodedData.split('').reverse().join('');
-        var binary = atob(reversed.replace(/[^A-Za-z0-9+/=]/g, ""));
-        var key = "K9L";
+        // 1. Adım: Metni ters çevir
+        var reversed = input.split('').reverse().join('');
+        // 2. Adım: Base64 decode (Atob)
+        var decoded = atob(reversed);
+        // 3. Adım: Karakter kaydırma simülasyonu
         var result = "";
-        for (var i = 0; i < binary.length; i++) {
-            var charCode = binary.charCodeAt(i);
-            var shift = (key.charCodeAt(i % key.length) % 5) + 1;
-            result += String.fromCharCode(charCode - shift);
+        for (var i = 0; i < decoded.length; i++) {
+            result += String.fromCharCode(decoded.charCodeAt(i) - 1);
         }
         return result;
     } catch (e) { return null; }
@@ -32,7 +33,7 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
             .then(function(res) { return res.json(); })
             .then(function(data) {
                 var query = data.title || data.original_title;
-                console.error("[FullHD] v12.1 Başladı: " + query);
+                console.error("[FullHD] v13.5 Anahtar Avcısı: " + query);
                 return fetch(BASE_URL + '/arama/' + encodeURIComponent(query), { headers: { 'User-Agent': userAgent } });
             })
             .then(function(res) { return res.text(); })
@@ -46,32 +47,51 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
             })
             .then(function(res) { return res.text(); })
             .then(function(filmHtml) {
+                var $ = cheerio.load(filmHtml);
+                
+                // Paylaştığın o kritik div'i yakalıyoruz
+                var encryptedData = $(".ajax-data").attr("data-id");
                 var vididMatch = filmHtml.match(/vidid\s*[:=]\s*['"]?(\d+)['"]?/i);
-                if (!vididMatch) throw new Error("vidid bulunamadı");
                 
-                var vidid = vididMatch[1];
-                console.error("[FullHD] Kesin ID: " + vidid);
-
-                // Poster (.jpg) içermeyen ve video/player odaklı olan linkleri seç
-                var targetUrl = "https://rapidvid.net/e/" + vidid;
-                
-                console.error("[FullHD] Embed Hedefi: " + targetUrl);
-                return fetch(targetUrl, { headers: { 'Referer': BASE_URL + '/', 'User-Agent': userAgent } });
+                if (encryptedData) {
+                    console.error("[FullHD] ajax-data yakalandı, kilit açılıyor...");
+                    
+                    // Sitenin yeni nesil embed yapısı (Token içerebilir)
+                    var embedUrl = "https://rapidvid.net/e/" + (vididMatch ? vididMatch[1] : "");
+                    
+                    // ÖNEMLİ: Referer burada hayat kurtarır
+                    return fetch(embedUrl, { 
+                        headers: { 
+                            'Referer': BASE_URL + '/', 
+                            'User-Agent': userAgent,
+                            'X-Requested-With': 'XMLHttpRequest'
+                        } 
+                    });
+                } else {
+                    throw new Error("ajax-data bulunamadı (Kalkan aktif)");
+                }
             })
             .then(function(res) { return res.text(); })
             .then(function(embedHtml) {
-                // Rapidvid/Moly içindeki şifreli linki bul
+                // Rapidvid içindeki video linkini çözen kısım (atob + key-shift)
                 var avMatch = embedHtml.match(/av\(['"]([^'"]+)['"]\)/);
                 if (avMatch) {
-                    var decrypted = decodeContentX(avMatch[1]);
-                    if (decrypted) {
-                        var finalStream = decrypted.indexOf("//") === 0 ? "https:" + decrypted : decrypted;
-                        console.error("[FullHD] BAŞARILI! Stream URL Hazır.");
-                        
+                    var encodedData = avMatch[1];
+                    var reversed = encodedData.split('').reverse().join('');
+                    var binary = atob(reversed.replace(/[^A-Za-z0-9+/=]/g, ""));
+                    var key = "K9L";
+                    var result = "";
+                    for (var i = 0; i < binary.length; i++) {
+                        var charCode = binary.charCodeAt(i);
+                        var shift = (key.charCodeAt(i % key.length) % 5) + 1;
+                        result += String.fromCharCode(charCode - shift);
+                    }
+
+                    if (result) {
+                        console.error("[FullHD] ZAFER: Video linki deşifre edildi.");
                         resolve([{
-                            name: "FullHD Premium v12.1",
-                            title: "FullHD (1080p)",
-                            url: finalStream,
+                            name: "FullHD v13.5 (Decrypted)",
+                            url: result.indexOf("//") === 0 ? "https:" + result : result,
                             quality: "1080p",
                             headers: { 'Referer': 'https://rapidvid.net/', 'User-Agent': userAgent },
                             provider: "fullhd_scraper"
@@ -79,7 +99,7 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                         return;
                     }
                 }
-                throw new Error("Video cozulemedi (av bulunamadi)");
+                throw new Error("Video linki hala saklı (av bulunamadı)");
             })
             .catch(function(err) {
                 console.error("[FullHD] Hata: " + err.message);
