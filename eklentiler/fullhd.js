@@ -1,12 +1,10 @@
 /**
- * FullHDFilmizlesene - v8.1 (Donanım/Sertifika Hataları İçin Optimize Edildi)
+ * FullHDFilmizlesene - v8.2 (SSL & Certificate Bypass Fix)
  */
 
 var cheerio = require("cheerio-without-node-native");
 var BASE_URL = "https://www.fullhdfilmizlesene.live";
-
-// En az dikkat çeken standart header
-var HEADERS = { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/110.0.0.0" };
+var HEADERS = { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" };
 
 function decodeRapid(input) {
   try {
@@ -18,7 +16,8 @@ function decodeRapid(input) {
       s2 += String.fromCharCode(s1.charCodeAt(i) - shift);
     }
     var final = s2.includes("http") ? s2 : atob(s2.replace(/[^A-Za-z0-9+/=]/g, ""));
-    return final.replace(/\\/g, "").trim().startsWith("//") ? "https:" + final.replace(/\\/g, "").trim() : final.replace(/\\/g, "").trim();
+    final = final.replace(/\\/g, "").trim();
+    return final.startsWith("//") ? "https:" + final : final;
   } catch (e) { return null; }
 }
 
@@ -36,19 +35,22 @@ function getStreams(tmdbId, mediaType) {
         return fetch(filmUrl.startsWith('http') ? filmUrl : BASE_URL + filmUrl, { headers: HEADERS });
     }).then(function(res) { return res.text(); }).then(function(filmHtml) {
         var vidid = filmHtml.match(/vidid\s*=\s*['"]([^'"]+)['"]/);
-        // RapidVid'in kendi API'sini kullanmak yerine direkt embed'e gidiyoruz (Sertifika hatası almamak için)
         return fetch("https://rapidvid.net/e/" + vidid[1], { headers: HEADERS });
     }).then(function(res) { return res.text(); }).then(function(embedHtml) {
         var av = embedHtml.match(/av\(['"]([^'"]+)['"]\)/);
         if (av && av[1]) {
             var finalUrl = decodeRapid(av[1]);
             if (finalUrl) {
-                // Sadece Nuvio'nun zorunlu kıldığı alanlar
+                // ÖNEMLİ: Linki Nuvio'ya en basit haliyle gönderiyoruz. 
+                // Header kalabalığı sertifika hatasını tetikliyor olabilir.
                 resolve([{
-                    name: "FullHD (v8.1)",
+                    name: "FullHD (v8.2)",
                     url: finalUrl,
                     quality: "1080p",
-                    headers: { "Referer": "https://rapidvid.net/" } 
+                    headers: { 
+                        "Referer": "https://rapidvid.net/",
+                        "Origin": "https://rapidvid.net" 
+                    } 
                 }]);
             } else { resolve([]); }
         } else { resolve([]); }
