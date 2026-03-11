@@ -1,5 +1,5 @@
 /**
- * FullHDFilmizlesene - v8.3 (Hardware Decoder & Memory Fix)
+ * FullHDFilmizlesene - v8.4 (Donanım Uyumluluk Fix)
  */
 
 var cheerio = require("cheerio-without-node-native");
@@ -40,14 +40,15 @@ function getStreams(tmdbId, mediaType) {
         if (av && av[1]) {
             var finalUrl = decodeRapid(av[1]);
             if (finalUrl) {
-                // Sadece en temel veriyi yolluyoruz
+                // DONANIM HATASINI AŞMAK İÇİN: 
+                // Header'ları minimuma indirdik ve cache engelleyici ekledik.
                 resolve([{
-                    name: "FullHD (Donanım Dostu)",
-                    url: finalUrl,
+                    name: "FullHD (Hızlandırılmış)",
+                    url: finalUrl + (finalUrl.includes('?') ? '&' : '?') + "nocache=" + Date.now(),
                     quality: "1080p",
                     headers: { 
-                        "User-Agent": "Mozilla/5.0", 
-                        "Referer": "https://rapidvid.net/" 
+                        "User-Agent": "ExoPlayer/2.18.5 (Linux;Android 11)", // Player'ı kandırmak için
+                        "Referer": "https://rapidvid.net/"
                     } 
                 }]);
             } else { resolve([]); }
