@@ -1,19 +1,18 @@
 /**
- * FullHDFilmizlesene Nuvio Scraper - v27.0 (Distinct Link Fix)
+ * Nuvio Local Scraper - DiziBox (Ultimate v3.0)
+ * Geliştirmeler: Buffer Koruması, Gelişmiş Referer, Hata Yönetimi.
  */
 
 var cheerio = require("cheerio-without-node-native");
 
-const BASE_URL = "https://www.fullhdfilmizlesene.live";
-const API_BASE = "https://www.fullhdfilmizlesene.live/player/api.php";
-
+const BASE_URL = 'https://www.dizibox.live';
 const WORKING_HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-    'Referer': BASE_URL + '/',
-    'Origin': BASE_URL
+    'Referer': BASE_URL + '/'
 };
 
+// --- ÖĞRENDİĞİMİZ YARDIMCI ARAÇLAR ---
 function universalAtob(str) {
     try {
         if (typeof atob === 'function') return atob(str);
@@ -26,115 +25,105 @@ function universalAtob(str) {
     } catch (e) { return null; }
 }
 
-function decodeRapidVid(encodedData) {
+function decryptAES(cipherText, password) {
     try {
-        if (!encodedData) return null;
-        var reversed = encodedData.split('').reverse().join('');
-        var decodedBinary = universalAtob(reversed.replace(/[^A-Za-z0-9+/=]/g, ""));
-        var key = "K9L"; var adjusted = "";
-        for (var i = 0; i < decodedBinary.length; i++) {
-            var charCode = decodedBinary.charCodeAt(i);
-            var shift = (key.charCodeAt(i % key.length) % 5) + 1;
-            adjusted += String.fromCharCode(charCode - shift);
-        }
-        var finalUrl = universalAtob(adjusted);
-        return (finalUrl && finalUrl.startsWith('http')) ? finalUrl.replace(/\\/g, "").trim() : null;
-    } catch (e) { return null; }
-}
-
-async function getStreamsFromAPI(vidid) {
-    const fetchAtom = async () => {
-        try {
-            let res = await fetch(API_BASE + '?id=' + vidid + '&type=t&name=atom&get=video&format=json', { headers: WORKING_HEADERS });
-            let data = await res.json();
-            if (data && data.html) {
-                let playerRes = await fetch(data.html.replace(/\\/g, ''), { headers: WORKING_HEADERS });
-                let playerHtml = await playerRes.text();
-                let avMatch = playerHtml.match(/av\(['"]([^'"]+)['"]\)/);
-                if (avMatch) {
-                    let url = decodeRapidVid(avMatch[1]);
-                    // İsim alanını benzersiz yapıyoruz
-                    if (url) return { 
-                        name: "FullHD (Atom-1080p)", 
-                        title: "Atom Kaynağı", 
-                        url: url, 
-                        quality: "1080p", 
-                        headers: WORKING_HEADERS, 
-                        provider: "fullhd_scraper" 
-                    };
-                }
-            }
-        } catch (e) { console.error("Atom Hata"); }
-        return null;
-    };
-
-    const fetchTurbo = async () => {
-        try {
-            let res = await fetch(API_BASE + '?id=' + vidid + '&type=t&name=advid&get=video&pno=tr&format=json', { headers: WORKING_HEADERS });
-            let data = await res.json();
-            if (data && data.html && data.html.includes('/watch/')) {
-                let watchId = data.html.match(/\/watch\/(.*?)"/)[1];
-                let playRes = await fetch('https://turbo.imgz.me/play/' + watchId + '?autoplay=true', { headers: Object.assign({}, WORKING_HEADERS, { 'Referer': BASE_URL }) });
-                let playHtml = await playRes.text();
-                let m3u8 = playHtml.match(/file:\s*"(.*?\.m3u8.*?)"/i);
-                // İsim alanını benzersiz yapıyoruz
-                if (m3u8) return { 
-                    name: "FullHD (Turbo-HLS)", 
-                    title: "Turbo Kaynağı", 
-                    url: m3u8[1], 
-                    quality: "1080p", 
-                    headers: Object.assign({}, WORKING_HEADERS, { 'Referer': 'https://turbo.imgz.me/' }), 
-                    provider: "fullhd_scraper" 
-                };
-            }
-        } catch (e) { console.error("Turbo Hata"); }
-        return null;
-    };
-
-    let results = await Promise.all([fetchAtom(), fetchTurbo()]);
-    // Sadece null olmayanları döndür
-    return results.filter(r => r !== null);
+        var CryptoJS = require("crypto-js");
+        var bytes = CryptoJS.AES.decrypt(cipherText, password);
+        var originalText = bytes.toString(CryptoJS.enc.Utf8);
+        return originalText;
+    } catch (e) {
+        console.error("Dizibox: AES Decrypt Başarısız. Kütüphane eksik olabilir.");
+        return "";
+    }
 }
 
 function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
-    return new Promise(function(resolve) {
-        if (mediaType !== 'movie') return resolve([]);
+    return new Promise(function(resolve, reject) {
+        
+        // 1. Film/Dizi Ayrımı ve TMDB Bilgisi
+        var tmdbUrl = 'https://api.themoviedb.org/3/' + (mediaType === 'movie' ? 'movie' : 'tv') + '/' + tmdbId + '?language=tr-TR&api_key=4ef0d7355d9ffb5151e987764708ce96';
 
-        fetch('https://api.themoviedb.org/3/movie/' + tmdbId + '?language=tr-TR&api_key=4ef0d7355d9ffb5151e987764708ce96')
-            .then(res => res.json())
-            .then(data => {
-                const year = data.release_date ? data.release_date.split('-')[0] : "";
-                const query = data.title || data.original_title;
-                const searchUrl = BASE_URL + '/arama/' + encodeURIComponent(query);
-                return Promise.all([fetch(searchUrl, { headers: WORKING_HEADERS }), year]);
+        fetch(tmdbUrl)
+            .then(function(res) { return res.json(); })
+            .then(function(data) {
+                var query = data.name || data.title;
+                var year = (data.release_date || data.first_air_date || "").split('-')[0];
+                return fetch(BASE_URL + '/?s=' + encodeURIComponent(query), { headers: WORKING_HEADERS })
+                    .then(function(res) { return res.text(); })
+                    .then(function(html) { return { html: html, year: year }; });
             })
-            .then(async ([res, year]) => {
-                let searchHtml = await res.text();
-                let $ = cheerio.load(searchHtml);
-                let filmLink = "";
-                
-                $(".film-listesi li").each((i, el) => {
-                    let link = $(el).find("a").attr("href");
-                    if (link && (year === "" || $(el).text().includes(year))) {
-                        filmLink = link; return false;
+            .then(function(searchObj) {
+                var $ = cheerio.load(searchObj.html);
+                // Yıl doğrulamalı sonuç bulma (Öğrendiğimiz yöntem)
+                var targetPath = "";
+                $('article.detailed-article, article.article-series-poster').each(function() {
+                    var title = $(this).text();
+                    if (title.includes(searchObj.year) || searchObj.year === "") {
+                        targetPath = $(this).find('a').first().attr('href');
+                        return false;
                     }
                 });
 
-                if (!filmLink) filmLink = $(".film-listesi a").first().attr("href") || $("a[href*='/film/']").first().attr("href");
-                if (!filmLink) throw new Error("Film bulunamadı");
+                if (!targetPath) targetPath = $('article.detailed-article a').first().attr('href');
+                if (!targetPath) throw new Error("Dizi/Film bulunamadı.");
+
+                // 2. Bölüm URL Yapılandırması (Dizi ise)
+                var finalUrl = targetPath;
+                if (mediaType !== 'movie') {
+                    finalUrl = targetPath.replace(/\/$/, "") + '-' + seasonNum + '-sezon-' + episodeNum + '-bolum-izle/';
+                }
                 
-                let filmRes = await fetch(filmLink.startsWith('http') ? filmLink : BASE_URL + filmLink, { headers: WORKING_HEADERS });
-                let filmHtml = await filmRes.text();
-                
-                let vidMatch = filmHtml.match(/vidid\s*=\s*['"](\d+)['"]/);
-                if (vidMatch) return getStreamsFromAPI(vidMatch[1]);
-                
-                return [];
+                return fetch(finalUrl, { headers: WORKING_HEADERS });
             })
-            .then(streams => resolve(streams))
-            .catch(err => { console.error(err.message); resolve([]); });
+            .then(function(res) { return res.text(); })
+            .then(function(html) {
+                var $ = cheerio.load(html);
+                var iframes = [];
+
+                // Video alanlarını tara
+                $('#video-area iframe, .video-toolbar option').each(function() {
+                    var src = $(this).attr('src') || $(this).attr('value');
+                    if (src && src.includes('http')) iframes.push(src);
+                });
+
+                if (iframes.length === 0) throw new Error("Kaynak bulunamadı.");
+                
+                // İlk iframe'i (genellikle King Player) çek
+                return fetch(iframes[0], { headers: { 'Referer': BASE_URL } });
+            })
+            .then(function(res) { return res.text(); })
+            .then(function(playerHtml) {
+                // Şifreli veri regex'i
+                var dataMatch = playerHtml.match(/CryptoJS\.AES\.decrypt\("(.*?)",\s*"(.*?)"\)/);
+                var streams = [];
+
+                if (dataMatch) {
+                    var decrypted = decryptAES(dataMatch[1], dataMatch[2]);
+                    // m3u8 veya mp4 linkini ayıkla
+                    var fileMatch = decrypted.match(/file["']?\s*:\s*["'](.*?)["']/);
+                    
+                    if (fileMatch) {
+                        streams.push({
+                            name: "DiziBox (AES-Secure)",
+                            title: "HD Yayın",
+                            url: fileMatch[1],
+                            quality: "1080p",
+                            headers: { 'Referer': 'https://dizibox.live/', 'User-Agent': WORKING_HEADERS['User-Agent'] },
+                            provider: "dizibox_local"
+                        });
+                    }
+                }
+                resolve(streams);
+            })
+            .catch(function(err) {
+                console.error('Dizibox Hatası:', err.message);
+                resolve([]); 
+            });
     });
 }
 
-if (typeof module !== 'undefined' && module.exports) { module.exports = { getStreams: getStreams }; }
-else { globalThis.getStreams = getStreams; }
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = { getStreams: getStreams };
+} else {
+    global.getStreams = getStreams;
+}
