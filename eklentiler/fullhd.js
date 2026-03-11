@@ -1,5 +1,5 @@
 /**
- * FullHDFilmizlesene - v8.4 (Donanım Uyumluluk Fix)
+ * FullHDFilmizlesene - v8.5 (Memory & Sync Fix)
  */
 
 var cheerio = require("cheerio-without-node-native");
@@ -25,33 +25,23 @@ function getStreams(tmdbId, mediaType) {
     var tmdbUrl = "https://api.themoviedb.org/3/movie/" + tmdbId + "?language=tr-TR&api_key=4ef0d7355d9ffb5151e987764708ce96";
 
     fetch(tmdbUrl).then(function(res) { return res.json(); }).then(function(data) {
-        var query = data.title || data.original_title;
-        return fetch(BASE_URL + "/arama/" + encodeURIComponent(query));
+        return fetch(BASE_URL + "/arama/" + encodeURIComponent(data.title || data.original_title));
     }).then(function(res) { return res.text(); }).then(function(html) {
-        var $ = cheerio.load(html);
-        var filmUrl = $("a[href*='/film/']").first().attr("href");
-        if (!filmUrl) throw new Error("404");
+        var filmUrl = cheerio.load(html)("a[href*='/film/']").first().attr("href");
         return fetch(filmUrl.startsWith('http') ? filmUrl : BASE_URL + filmUrl);
     }).then(function(res) { return res.text(); }).then(function(filmHtml) {
         var vidid = filmHtml.match(/vidid\s*=\s*['"]([^'"]+)['"]/);
         return fetch("https://rapidvid.net/e/" + vidid[1]);
     }).then(function(res) { return res.text(); }).then(function(embedHtml) {
         var av = embedHtml.match(/av\(['"]([^'"]+)['"]\)/);
-        if (av && av[1]) {
-            var finalUrl = decodeRapid(av[1]);
-            if (finalUrl) {
-                // DONANIM HATASINI AŞMAK İÇİN: 
-                // Header'ları minimuma indirdik ve cache engelleyici ekledik.
-                resolve([{
-                    name: "FullHD (Hızlandırılmış)",
-                    url: finalUrl + (finalUrl.includes('?') ? '&' : '?') + "nocache=" + Date.now(),
-                    quality: "1080p",
-                    headers: { 
-                        "User-Agent": "ExoPlayer/2.18.5 (Linux;Android 11)", // Player'ı kandırmak için
-                        "Referer": "https://rapidvid.net/"
-                    } 
-                }]);
-            } else { resolve([]); }
+        var finalUrl = decodeRapid(av[1]);
+        if (finalUrl) {
+            resolve([{
+                name: "FullHD (Stabil)",
+                url: finalUrl,
+                quality: "1080p",
+                headers: { "User-Agent": "Mozilla/5.0" } // Minimum header
+            }]);
         } else { resolve([]); }
     }).catch(function() { resolve([]); });
   });
