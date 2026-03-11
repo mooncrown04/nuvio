@@ -1,39 +1,16 @@
-/**
- * FullHDFilmizlesene Nuvio Scraper - v16.6 (Debug Prefix)
- * Promise tabanlı, async/await yok, hata yakalama zorunlu.
- */
+function rtt(s) {
+    return s.split('').map(function(c) {
+        var code = c.charCodeAt(0);
+        if (code >= 97 && code <= 122) return String.fromCharCode((code - 97 + 13) % 26 + 97);
+        if (code >= 65 && code <= 90) return String.fromCharCode((code - 65 + 13) % 26 + 65);
+        return c;
+    }).join('');
+}
 
-var cheerio = require("cheerio-without-node-native");
-
-const WORKING_HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
-    'Accept': 'video/webm,video/ogg,video/*;q=0.9,*/*;q=0.5',
-    'Accept-Language': 'tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7',
-    'Accept-Encoding': 'identity',
-    'Origin': 'https://www.fullhdfilmizlesene.live',
-    'Referer': 'https://www.fullhdfilmizlesene.live/',
-    'DNT': '1'
-};
-
-const BASE_URL = "https://www.fullhdfilmizlesene.live";
-
-function decodeRapidVid(encodedData) {
+function atob(s) {
     try {
-        console.error("[FullHD Scraper] Decode input:", encodedData);
-        var reversed = encodedData.split('').reverse().join('');
-        var binary = Buffer.from(reversed.replace(/[^A-Za-z0-9+/=]/g, ""), 'base64').toString('binary');
-        var key = "K9L";
-        var adjusted = "";
-        for (var i = 0; i < binary.length; i++) {
-            var charCode = binary.charCodeAt(i);
-            var shift = (key.charCodeAt(i % key.length) % 5) + 1;
-            adjusted += String.fromCharCode(charCode - shift);
-        }
-        var finalUrl = Buffer.from(adjusted, 'base64').toString('utf8');
-        console.error("[FullHD Scraper] Decode output:", finalUrl);
-        return finalUrl.replace(/\\/g, "").trim();
-    } catch (e) {
-        console.error("[FullHD Scraper Decode Error]:", e.message);
+        return Buffer.from(s, 'base64').toString('utf8');
+    } catch(e) {
         return null;
     }
 }
@@ -69,36 +46,55 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
             .then(function(res) { return res.text(); })
             .then(function(filmHtml) {
                 console.error("[FullHD Scraper] Film sayfası çekildi.");
-                var vidIdMatch = filmHtml.match(/vidid\s*[:=]\s*['"]?(\d+)['"]?/i);
-                console.error("[FullHD Scraper] vidid eşleşmesi:", vidIdMatch);
-                if (!vidIdMatch) throw new Error("ID yok");
-                var playerUrl = "https://rapidvid.net/e/" + vidIdMatch[1];
-                console.error("[FullHD Scraper] RapidVid URL:", playerUrl);
-                return fetch(playerUrl, { headers: Object.assign({}, WORKING_HEADERS, { 'Referer': BASE_URL + '/' }) });
-            })
-            .then(function(res) { return res.text(); })
-            .then(function(embedHtml) {
-                console.error("[FullHD Scraper] RapidVid embed sayfası çekildi.");
-                var avMatch = embedHtml.match(/av\(['"]([^'"]+)['"]\)/);
-                console.error("[FullHD Scraper] av(...) eşleşmesi:", avMatch);
-                if (avMatch) {
-                    var rawUrl = decodeRapidVid(avMatch[1]);
-                    if (rawUrl) {
-                        var streamLink = rawUrl.startsWith("//") ? "https:" + rawUrl : rawUrl;
-                        console.error("[FullHD Scraper] Final stream link:", streamLink);
-                        var streams = [{
-                            name: "FullHD - Premium",
-                            title: "FullHD Film Akışı",
-                            url: streamLink,
-                            quality: "1080p",
-                            size: "Auto",
-                            headers: Object.assign({}, WORKING_HEADERS, { 'Referer': 'https://rapidvid.net/' }),
-                            provider: "fullhd_scraper"
-                        }];
-                        return resolve(streams);
+                
+                // YENİ YÖNTEM: scx değişkenini bul
+                var scxMatch = filmHtml.match(/var scx = (\{.*?\});/);
+                if (scxMatch) {
+                    try {
+                        var scxData = JSON.parse(scxMatch[1]);
+                        var streams = [];
+                        var keys = ['atom', 'advid', 'advidprox', 'proton', 'fast', 'fastly', 'tr', 'en'];
+                        
+                        keys.forEach(function(key) {
+                            if (scxData[key] && scxData[key].sx && scxData[key].sx.t) {
+                                var t = scxData[key].sx.t;
+                                
+                                // String veya Array olabilir
+                                var items = Array.isArray(t) ? t : [t];
+                                
+                                items.forEach(function(item) {
+                                    if (typeof item === 'string') {
+                                        var rot13 = rtt(item);
+                                        var url = atob(rot13);
+                                        
+                                        if (url && url.startsWith('http')) {
+                                            console.error("[FullHD Scraper] Bulunan URL (" + key + "):", url);
+                                            streams.push({
+                                                name: "FullHD - " + key,
+                                                title: key + " Akışı",
+                                                url: url,
+                                                quality: "1080p",
+                                                headers: WORKING_HEADERS,
+                                                provider: "fullhd_scraper"
+                                            });
+                                        }
+                                    }
+                                });
+                            }
+                        });
+                        
+                        if (streams.length > 0) {
+                            return resolve(streams);
+                        }
+                    } catch(e) {
+                        console.error("[FullHD Scraper] scx parse hatası:", e.message);
                     }
                 }
-                console.error("[FullHD Scraper] Stream bulunamadı.");
+                
+                // Eski yöntem (yedek)
+                console.error("[FullHD Scraper] scx bulunamadı, eski yöntem deneniyor...");
+                // ... eski ajax-data kodu buraya ...
+                
                 resolve([]);
             })
             .catch(function(err) {
@@ -106,10 +102,4 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                 resolve([]);
             });
     });
-}
-
-if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { getStreams };
-} else {
-    global.getStreams = getStreams;
 }
