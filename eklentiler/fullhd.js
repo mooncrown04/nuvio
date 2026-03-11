@@ -1,5 +1,5 @@
 /**
- * FullHDFilmizlesene Nuvio Scraper - v18.0 (Multi-Method)
+ * FullHDFilmizlesene Nuvio Scraper - v19.0 (Browser Compatible)
  */
 
 var cheerio = require("cheerio-without-node-native");
@@ -26,11 +26,24 @@ function rtt(s) {
     }).join('');
 }
 
-// Base64 decode
+// Base64 decode (Browser + Node.js compatible)
 function atob(s) {
     try {
-        return Buffer.from(s, 'base64').toString('utf8');
+        // Node.js Buffer
+        if (typeof Buffer !== 'undefined' && Buffer.from) {
+            return Buffer.from(s, 'base64').toString('utf8');
+        }
+        // Browser native atob
+        if (typeof window !== 'undefined' && window.atob) {
+            return window.atob(s);
+        }
+        // Global atob (some environments)
+        if (typeof global !== 'undefined' && global.atob) {
+            return global.atob(s);
+        }
+        return null;
     } catch(e) {
+        console.error("[FullHD Scraper] Base64 decode hata:", e.message, "Input:", s.substring(0, 50));
         return null;
     }
 }
@@ -38,19 +51,11 @@ function atob(s) {
 // Tüm yöntemlerle scx parse dene
 function parseScx(html) {
     var methods = [
-        // Yöntem 1: Standard regex
         function() {
             var match = html.match(/var scx\s*=\s*(\{[\s\S]*?\});/);
             if (match) return JSON.parse(match[1]);
             return null;
         },
-        // Yöntem 2: Dotall flag ile
-        function() {
-            var match = html.match(/var scx\s*=\s*(\{.*?\});/s);
-            if (match) return JSON.parse(match[1]);
-            return null;
-        },
-        // Yöntem 3: Index bazlı
         function() {
             var start = html.indexOf('var scx = ');
             if (start === -1) return null;
@@ -67,18 +72,6 @@ function parseScx(html) {
             }
             var jsonStr = html.substring(braceStart, end);
             return JSON.parse(jsonStr);
-        },
-        // Yöntem 4: order field'ına kadar
-        function() {
-            var match = html.match(/var scx\s*=\s*(\{[^}]*"order":\s*\d+\s*\});/);
-            if (match) return JSON.parse(match[1]);
-            return null;
-        },
-        // Yöntem 5: Sadece atom objesi
-        function() {
-            var match = html.match(/var scx\s*=\s*(\{"atom":\{[^}]*\}\});/);
-            if (match) return JSON.parse(match[1]);
-            return null;
         }
     ];
     
@@ -128,16 +121,6 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
             .then(function(filmHtml) {
                 console.error("[FullHD Scraper] Film sayfası çekildi. HTML uzunluğu:", filmHtml.length);
                 
-                // Debug: scx ara
-                var scxIndex = filmHtml.indexOf('var scx');
-                console.error("[FullHD Scraper] scx index:", scxIndex);
-                
-                if (scxIndex > -1) {
-                    var snippet = filmHtml.substring(scxIndex, Math.min(scxIndex + 300, filmHtml.length));
-                    console.error("[FullHD Scraper] scx snippet:", snippet);
-                }
-                
-                // Tüm yöntemlerle dene
                 var scxData = parseScx(filmHtml);
                 
                 if (scxData) {
@@ -151,12 +134,15 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                             var items = Array.isArray(t) ? t : [t];
                             
                             items.forEach(function(item) {
+                                console.error("[FullHD Scraper] İşlenen item (" + key + "):", item);
                                 if (typeof item === 'string') {
                                     var rot13 = rtt(item);
+                                    console.error("[FullHD Scraper] ROT13 sonucu:", rot13);
                                     var url = atob(rot13);
+                                    console.error("[FullHD Scraper] URL:", url);
                                     
                                     if (url && url.startsWith('http')) {
-                                        console.error("[FullHD Scraper] Bulunan URL (" + key + "):", url);
+                                        console.error("[FullHD Scraper] Stream eklendi:", url);
                                         streams.push({
                                             name: "FullHD - " + key,
                                             title: key + " Akışı",
@@ -172,15 +158,9 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                     });
                     
                     if (streams.length > 0) {
+                        console.error("[FullHD Scraper] Toplam stream:", streams.length);
                         return resolve(streams);
                     }
-                }
-                
-                // YEDEK: Eski ajax-data yöntemi
-                console.error("[FullHD Scraper] scx bulunamadı, ajax-data deneniyor...");
-                var ajaxMatch = filmHtml.match(/class="ajax-data"[^>]*data-id="([^"]+)"/);
-                if (ajaxMatch) {
-                    console.error("[FullHD Scraper] ajax-data bulundu, ancak şifreleme bilinmiyor");
                 }
                 
                 console.error("[FullHD Scraper] Stream bulunamadı.");
