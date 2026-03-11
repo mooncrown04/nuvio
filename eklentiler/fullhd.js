@@ -1,87 +1,73 @@
 /**
- * Nuvio Local Scraper - DiziBox (v13.0 Slug-Master)
- * Arama yapmaz, doğrudan URL varyasyonlarını dener.
+ * Nuvio Local Scraper - DiziBox (v15.0 Kekik-Style)
  */
 
 var cheerio = require("cheerio-without-node-native");
 var CryptoJS = require("crypto-js");
 
 const BASE_URL = 'https://www.dizibox.live';
+// Kotlin kodundaki "Güvenilir Kullanıcı" cookie'leri
+const COOKIES = "LockUser=true; isTrustedUser=true; dbxu=1743289650198";
 
 var getStreams = function(tmdbId, mediaType, seasonNum, episodeNum) {
-    console.log("DZBX_START: v13 Direct Mode -> TMDB: " + tmdbId);
-
     return new Promise(function(resolve) {
-        // 1. TMDB Bilgilerini Al (Hem Türkçe hem Orijinal isim için)
+        // 1. Önce TMDB'den ismi al
         fetch('https://api.themoviedb.org/3/' + (mediaType === 'movie' ? 'movie' : 'tv') + '/' + tmdbId + '?language=tr-TR&api_key=4ef0d7355d9ffb5151e987764708ce96')
             .then(function(res) { return res.json(); })
             .then(function(data) {
-                var trName = (data.name || data.title || "").toLowerCase();
-                var orgName = (data.original_name || data.original_title || "").toLowerCase();
-                
-                // Slug Temizleme Fonksiyonu
-                var toSlug = function(text) {
-                    return text.replace(/[^\w\s-]/g, '').trim().replace(/\s+/g, '-');
-                };
+                var query = data.name || data.title;
+                console.log("DZBX_SEARCH: " + query);
 
-                var slugs = [toSlug(trName), toSlug(orgName)];
-                var suffix = '-' + seasonNum + '-sezon-' + episodeNum + '-bolum';
-                
-                // Denenecek tüm olasılıkları topla
-                var targets = [];
-                slugs.forEach(function(s) {
-                    if(!s) return;
-                    targets.push(BASE_URL + '/' + s + suffix + '-izle/');
-                    targets.push(BASE_URL + '/' + s + suffix + '-hd-izle/');
+                // 2. Cookie'lerle Arama Yap (Kritik nokta)
+                return fetch(BASE_URL + '/?s=' + encodeURIComponent(query), {
+                    headers: { 'Cookie': COOKIES, 'User-Agent': 'Mozilla/5.0' }
                 });
-
-                console.log("DZBX_INFO: Denenecek URL sayisi: " + targets.length);
-
-                // URL'leri sırayla kontrol et (Saniyeler içinde biter)
-                var tryTargets = function(index) {
-                    if (index >= targets.length) throw new Error("Hicbir varyasyon tutmadi.");
-
-                    console.log("DZBX_TRY_" + index + ": " + targets[index]);
-                    return fetch(targets[index], { method: 'HEAD' }).then(function(res) {
-                        if (res.status === 200) {
-                            console.log("DZBX_MATCH: Sayfa bulundu! Veri cekiliyor...");
-                            return fetch(targets[index]).then(function(r) { 
-                                return r.text().then(function(t) { return { html: t, url: targets[index] }; }); 
-                            });
-                        }
-                        return tryTargets(index + 1);
-                    });
-                };
-
-                return tryTargets(0);
             })
-            .then(function(resObj) {
-                var $ = cheerio.load(resObj.html);
-                var iframe = $('#video-area iframe').attr('src') || $('iframe[src*="king.php"]').attr('src');
+            .then(function(res) { return res.text(); })
+            .then(function(searchHtml) {
+                var $ = cheerio.load(searchHtml);
+                // Kotlin kodundaki select("article.detailed-article") seçicisi
+                var firstResult = $('article.detailed-article a').first().attr('href');
                 
-                if (!iframe) throw new Error("Iframe yok");
+                if (!firstResult) throw new Error("Arama sonucu bos dondu");
+                
+                // URL'yi Bölüm Formatına Çevir
+                var targetUrl = firstResult.replace(/\/$/, "") + '-' + seasonNum + '-sezon-' + episodeNum + '-bolum-izle/';
+                console.log("DZBX_TARGET: " + targetUrl);
 
-                if (iframe.includes('king.php')) iframe = iframe.replace("king.php?v=", "king.php?wmode=opaque&v=");
+                return fetch(targetUrl, { headers: { 'Cookie': COOKIES } });
+            })
+            .then(function(res) { return res.text(); })
+            .then(function(pageHtml) {
+                var $ = cheerio.load(pageHtml);
+                // Ana player veya alternatifleri bul
+                var iframe = $('#video-area iframe').attr('src');
                 
-                console.log("DZBX_STEP: Player -> " + iframe);
-                return fetch(iframe, { headers: { 'Referer': resObj.url } });
+                if (!iframe) throw new Error("Iframe bulunamadi");
+                
+                // King Player İşleme (Kotlin'deki iframeDecode mantığı)
+                if (iframe.includes("king.php")) {
+                    iframe = iframe.replace("king.php?v=", "king.php?wmode=opaque&v=");
+                }
+
+                return fetch(iframe, { headers: { 'Referer': BASE_URL, 'Cookie': COOKIES } });
             })
             .then(function(res) { return res.text(); })
             .then(function(playerHtml) {
+                // Şifreli veriyi çöz
                 var match = playerHtml.match(/decrypt\("(.*?)",\s*"(.*?)"\)/);
-                if (!match) throw new Error("Sifreleme bulunamadi.");
+                if (!match) throw new Error("Sifreleme cozulemedi");
 
                 var bytes = CryptoJS.AES.decrypt(match[1], match[2]);
                 var dec = bytes.toString(CryptoJS.enc.Utf8);
                 var file = dec.match(/file:\s*'(.*?)'/);
-                
+
                 if (file) {
-                    console.log("DZBX_FINAL: Link Hazir!");
                     resolve([{
-                        name: "DiziBox",
+                        name: "DiziBox (Direct)",
                         url: file[1],
                         quality: "1080p",
-                        headers: { 'Referer': BASE_URL + '/', 'User-Agent': 'Mozilla/5.0' },
+                        headers: { 'Referer': BASE_URL + '/' },
                         provider: "dizibox_local"
                     }]);
                 } else {
@@ -89,7 +75,7 @@ var getStreams = function(tmdbId, mediaType, seasonNum, episodeNum) {
                 }
             })
             .catch(function(err) {
-                console.error("DZBX_FATAL: " + err.message);
+                console.error("DZBX_ERROR: " + err.message);
                 resolve([]);
             });
     });
