@@ -1,5 +1,5 @@
 /**
- * FullHDFilmizlesene Nuvio Scraper - v16.4 (Debug)
+ * FullHDFilmizlesene Nuvio Scraper - v16. (Debug)
  * Promise tabanlı, async/await yok, hata yakalama zorunlu.
  */
 
@@ -113,3 +113,4 @@ if (typeof module !== 'undefined' && module.exports) {
 } else {
     global.getStreams = getStreams;
 }
+
