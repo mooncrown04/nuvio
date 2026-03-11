@@ -1,5 +1,5 @@
 /**
- * FullHDFilmizlesene Nuvio Scraper - v26.0 (Parallel & Speed Optimized)
+ * FullHDFilmizlesene Nuvio Scraper - v27.0 (Distinct Link Fix)
  */
 
 var cheerio = require("cheerio-without-node-native");
@@ -42,7 +42,6 @@ function decodeRapidVid(encodedData) {
     } catch (e) { return null; }
 }
 
-// PARALEL ARAMA FONKSİYONU
 async function getStreamsFromAPI(vidid) {
     const fetchAtom = async () => {
         try {
@@ -54,10 +53,18 @@ async function getStreamsFromAPI(vidid) {
                 let avMatch = playerHtml.match(/av\(['"]([^'"]+)['"]\)/);
                 if (avMatch) {
                     let url = decodeRapidVid(avMatch[1]);
-                    if (url) return { name: "FullHD - Atom", title: "Atom (1080p)", url: url, quality: "1080p", headers: WORKING_HEADERS, provider: "fullhd_scraper" };
+                    // İsim alanını benzersiz yapıyoruz
+                    if (url) return { 
+                        name: "FullHD (Atom-1080p)", 
+                        title: "Atom Kaynağı", 
+                        url: url, 
+                        quality: "1080p", 
+                        headers: WORKING_HEADERS, 
+                        provider: "fullhd_scraper" 
+                    };
                 }
             }
-        } catch (e) { console.error("Atom Error"); }
+        } catch (e) { console.error("Atom Hata"); }
         return null;
     };
 
@@ -70,14 +77,22 @@ async function getStreamsFromAPI(vidid) {
                 let playRes = await fetch('https://turbo.imgz.me/play/' + watchId + '?autoplay=true', { headers: Object.assign({}, WORKING_HEADERS, { 'Referer': BASE_URL }) });
                 let playHtml = await playRes.text();
                 let m3u8 = playHtml.match(/file:\s*"(.*?\.m3u8.*?)"/i);
-                if (m3u8) return { name: "FullHD - Turbo", title: "Turbo (HLS)", url: m3u8[1], quality: "1080p", headers: Object.assign({}, WORKING_HEADERS, { 'Referer': 'https://turbo.imgz.me/' }), provider: "fullhd_scraper" };
+                // İsim alanını benzersiz yapıyoruz
+                if (m3u8) return { 
+                    name: "FullHD (Turbo-HLS)", 
+                    title: "Turbo Kaynağı", 
+                    url: m3u8[1], 
+                    quality: "1080p", 
+                    headers: Object.assign({}, WORKING_HEADERS, { 'Referer': 'https://turbo.imgz.me/' }), 
+                    provider: "fullhd_scraper" 
+                };
             }
-        } catch (e) { console.error("Turbo Error"); }
+        } catch (e) { console.error("Turbo Hata"); }
         return null;
     };
 
-    // İki kaynağı aynı anda başlatıyoruz
     let results = await Promise.all([fetchAtom(), fetchTurbo()]);
+    // Sadece null olmayanları döndür
     return results.filter(r => r !== null);
 }
 
@@ -89,7 +104,8 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
             .then(res => res.json())
             .then(data => {
                 const year = data.release_date ? data.release_date.split('-')[0] : "";
-                const searchUrl = BASE_URL + '/arama/' + encodeURIComponent(data.title || data.original_title);
+                const query = data.title || data.original_title;
+                const searchUrl = BASE_URL + '/arama/' + encodeURIComponent(query);
                 return Promise.all([fetch(searchUrl, { headers: WORKING_HEADERS }), year]);
             })
             .then(async ([res, year]) => {
@@ -97,9 +113,7 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                 let $ = cheerio.load(searchHtml);
                 let filmLink = "";
                 
-                // Yıl doğrulamalı link bulma
                 $(".film-listesi li").each((i, el) => {
-                    let title = $(el).find(".film-adi").text();
                     let link = $(el).find("a").attr("href");
                     if (link && (year === "" || $(el).text().includes(year))) {
                         filmLink = link; return false;
@@ -107,7 +121,7 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                 });
 
                 if (!filmLink) filmLink = $(".film-listesi a").first().attr("href") || $("a[href*='/film/']").first().attr("href");
-                if (!filmLink) throw new Error("Link yok");
+                if (!filmLink) throw new Error("Film bulunamadı");
                 
                 let filmRes = await fetch(filmLink.startsWith('http') ? filmLink : BASE_URL + filmLink, { headers: WORKING_HEADERS });
                 let filmHtml = await filmRes.text();
