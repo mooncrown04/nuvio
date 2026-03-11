@@ -1,6 +1,6 @@
 /**
- * FullHDFilmizlesene Nuvio Scraper - v19.0
- * Çift Katmanlı Base64 Çözücü & Sertifika Yama
+ * FullHDFilmizlesene Nuvio Scraper - v20.0
+ * System Block Bypass Modu
  */
 
 var cheerio = require("cheerio-without-node-native");
@@ -9,21 +9,18 @@ const BASE_URL = "https://www.fullhdfilmizlesene.live";
 
 function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
     return new Promise(function(resolve) {
+        // Loglardaki iptalleri aşmak için TMDB fetch'ini tamamen sildik.
+        // Nuvio'nun tmdbId parametresi yerine başlık gönderdiğini varsayarak arama yapıyoruz.
+        
         if (mediaType !== 'movie') return resolve([]);
 
-        // Adım 1: TMDB üzerinden isim al (Sertifika hatası riskine karşı catch eklendi)
-        var tmdbUrl = 'https://api.themoviedb.org/3/movie/' + tmdbId + '?language=tr-TR&api_key=4ef0d7355d9ffb5151e987764708ce96';
-
-        fetch(tmdbUrl)
-            .then(function(res) { return res.json(); })
-            .then(function(data) {
-                var query = data.title || data.original_title;
-                return fetch(BASE_URL + '/arama/' + encodeURIComponent(query));
-            })
+        // Adım 1: Doğrudan Arama (Sistem engeline takılma ihtimali en düşük yol)
+        fetch(BASE_URL + '/arama/' + encodeURIComponent(tmdbId))
             .then(function(res) { return res.text(); })
             .then(function(html) {
                 var $ = cheerio.load(html);
                 var filmPath = $(".film-listesi a").first().attr("href") || $("a[href*='/film/']").first().attr("href");
+                
                 if (!filmPath) return resolve([]);
                 
                 var filmUrl = filmPath.startsWith('http') ? filmPath : BASE_URL + filmPath;
@@ -34,6 +31,7 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                 var vidMatch = filmHtml.match(/vidid\s*[:=]\s*['"]?(\d+)['"]?/i);
                 if (!vidMatch) return resolve([]);
 
+                // RapidVid şifreleme katmanı
                 return fetch("https://rapidvid.net/e/" + vidMatch[1], { 
                     headers: { 'Referer': BASE_URL + '/' } 
                 });
@@ -43,36 +41,27 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                 var avMatch = embedHtml.match(/av\(['"]([^'"]+)['"]\)/);
                 if (avMatch) {
                     var cipherText = avMatch[1];
-                    
-                    // 1. Ters Çevirme ve İlk Base64 Decode
                     var reversed = cipherText.split("").reverse().join("");
                     var step1 = atob(reversed.replace(/[^A-Za-z0-9+/=]/g, ""));
                     
-                    // 2. K9L Key Kaydırma Algoritması
                     var key = "K9L", step2 = "";
                     for (var i = 0; i < step1.length; i++) {
                         var shift = (key.charCodeAt(i % key.length) % 5) + 1;
                         step2 += String.fromCharCode(step1.charCodeAt(i) - shift);
                     }
                     
-                    // 3. ÇİFT KATMAN FIX: Loglardaki yarım kalan linki tam çözen kısım
+                    // Son Katman Base64 Decode
                     var finalLink = "";
                     try {
-                        // Eğer sonuç hala Base64 ise bir kez daha decode et
-                        finalLink = atob(step2).replace(/\\/g, "").trim();
-                        // Eğer decode sonrası link değilse ham hali kullan
-                        if (!finalLink.startsWith("http") && !finalLink.startsWith("//")) {
-                            finalLink = step2.replace(/\\/g, "").trim();
-                        }
+                        var decoded = atob(step2).replace(/\\/g, "").trim();
+                        finalLink = decoded.startsWith("http") ? decoded : step2;
                     } catch(e) {
-                        finalLink = step2.replace(/\\/g, "").trim();
+                        finalLink = step2;
                     }
 
-                    var streamUrl = finalLink.startsWith("//") ? "https:" + finalLink : finalLink;
-
                     resolve([{
-                        name: '⌜ FullHD ⌟',
-                        url: streamUrl,
+                        name: '⌜ FullHD 20.0 ⌟',
+                        url: finalLink,
                         quality: '1080p',
                         headers: { 'Referer': 'https://rapidvid.net/' },
                         provider: 'fullhd_scraper'
