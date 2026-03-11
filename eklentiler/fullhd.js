@@ -1,5 +1,5 @@
 /**
- * FullHDFilmizlesene Nuvio Scraper - v16. (Debug)
+ * FullHDFilmizlesene Nuvio Scraper - v16.5 (Debug Prefix)
  * Promise tabanlı, async/await yok, hata yakalama zorunlu.
  */
 
@@ -19,7 +19,7 @@ const BASE_URL = "https://www.fullhdfilmizlesene.live";
 
 function decodeRapidVid(encodedData) {
     try {
-        console.log("[Decode] Gelen data:", encodedData);
+        console.log("[FullHD Scraper] Decode input:", encodedData);
         var reversed = encodedData.split('').reverse().join('');
         var binary = Buffer.from(reversed.replace(/[^A-Za-z0-9+/=]/g, ""), 'base64').toString('binary');
         var key = "K9L";
@@ -30,10 +30,10 @@ function decodeRapidVid(encodedData) {
             adjusted += String.fromCharCode(charCode - shift);
         }
         var finalUrl = Buffer.from(adjusted, 'base64').toString('utf8');
-        console.log("[Decode] Çözülen URL:", finalUrl);
+        console.log("[FullHD Scraper] Decode output:", finalUrl);
         return finalUrl.replace(/\\/g, "").trim();
     } catch (e) {
-        console.error("[Decode Error]:", e.message);
+        console.error("[FullHD Scraper Decode Error]:", e.message);
         return null;
     }
 }
@@ -41,51 +41,51 @@ function decodeRapidVid(encodedData) {
 function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
     return new Promise(function(resolve) {
         if (mediaType !== 'movie') {
-            console.log("[Scraper] Dizi tipi desteklenmiyor.");
+            console.log("[FullHD Scraper] Dizi tipi desteklenmiyor.");
             return resolve([]);
         }
 
         var tmdbUrl = 'https://api.themoviedb.org/3/movie/' + tmdbId + '?language=tr-TR&api_key=4ef0d7355d9ffb5151e987764708ce96';
-        console.log("[Scraper] TMDB URL:", tmdbUrl);
+        console.log("[FullHD Scraper] TMDB URL:", tmdbUrl);
 
         fetch(tmdbUrl)
             .then(function(res) { return res.json(); })
             .then(function(data) {
                 var query = data.title || data.original_title;
-                console.log("[Scraper] TMDB Title:", query);
+                console.log("[FullHD Scraper] TMDB Title:", query);
                 return fetch(BASE_URL + '/arama/' + encodeURIComponent(query), { headers: WORKING_HEADERS });
             })
             .then(function(res) { return res.text(); })
             .then(function(html) {
-                console.log("[Scraper] Arama sonucu geldi.");
+                console.log("[FullHD Scraper] Arama sonucu geldi.");
                 var $ = cheerio.load(html);
                 var link = $(".film-listesi a").first().attr("href") || $("a[href*='/film/']").first().attr("href");
-                console.log("[Scraper] Bulunan film linki:", link);
+                console.log("[FullHD Scraper] Bulunan film linki:", link);
                 if (!link) throw new Error("Film bulunamadı");
                 var filmUrl = link.startsWith('http') ? link : BASE_URL + link;
-                console.log("[Scraper] Film URL:", filmUrl);
+                console.log("[FullHD Scraper] Film URL:", filmUrl);
                 return fetch(filmUrl, { headers: WORKING_HEADERS });
             })
             .then(function(res) { return res.text(); })
             .then(function(filmHtml) {
-                console.log("[Scraper] Film sayfası çekildi.");
+                console.log("[FullHD Scraper] Film sayfası çekildi.");
                 var vidIdMatch = filmHtml.match(/vidid\s*[:=]\s*['"]?(\d+)['"]?/i);
-                console.log("[Scraper] vidid eşleşmesi:", vidIdMatch);
+                console.log("[FullHD Scraper] vidid eşleşmesi:", vidIdMatch);
                 if (!vidIdMatch) throw new Error("ID yok");
                 var playerUrl = "https://rapidvid.net/e/" + vidIdMatch[1];
-                console.log("[Scraper] RapidVid URL:", playerUrl);
+                console.log("[FullHD Scraper] RapidVid URL:", playerUrl);
                 return fetch(playerUrl, { headers: Object.assign({}, WORKING_HEADERS, { 'Referer': BASE_URL + '/' }) });
             })
             .then(function(res) { return res.text(); })
             .then(function(embedHtml) {
-                console.log("[Scraper] RapidVid embed sayfası çekildi.");
+                console.log("[FullHD Scraper] RapidVid embed sayfası çekildi.");
                 var avMatch = embedHtml.match(/av\(['"]([^'"]+)['"]\)/);
-                console.log("[Scraper] av(...) eşleşmesi:", avMatch);
+                console.log("[FullHD Scraper] av(...) eşleşmesi:", avMatch);
                 if (avMatch) {
                     var rawUrl = decodeRapidVid(avMatch[1]);
                     if (rawUrl) {
                         var streamLink = rawUrl.startsWith("//") ? "https:" + rawUrl : rawUrl;
-                        console.log("[Scraper] Final stream link:", streamLink);
+                        console.log("[FullHD Scraper] Final stream link:", streamLink);
                         var streams = [{
                             name: "FullHD - Premium",
                             title: "FullHD Film Akışı",
@@ -98,7 +98,7 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                         return resolve(streams);
                     }
                 }
-                console.log("[Scraper] Stream bulunamadı.");
+                console.log("[FullHD Scraper] Stream bulunamadı.");
                 resolve([]);
             })
             .catch(function(err) {
@@ -113,4 +113,3 @@ if (typeof module !== 'undefined' && module.exports) {
 } else {
     global.getStreams = getStreams;
 }
-
