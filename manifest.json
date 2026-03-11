@@ -3,13 +3,13 @@
   "version": "1.0.0",
   "scrapers": [
    {
-      "id": "sinemacx",
-      "name": "SinemaCx",
-      "description": "Film, Dizi  İzleme Uygulaması",
+      "id": "mu3",
+      "name": "M3u",
+      "description": "Mu3 Film, Dizi ,Canlı İzleme ",
       "version": "1.0.0",
       "author": "MoOnCrOwN",
       "supportedTypes": ["movie", "tv"],
-      "filename": "eklentiler/sinemacx.js",
+      "filename": "eklentiler/mu3.js",
       "enabled": true,
       "formats": ["mp4", "mkv", "hls", "m3u8"],
       "logo": "https://play-lh.googleusercontent.com/brwGNmr7IjA_MKk_TTPs0va10hdKE_bD_a1lnKoiMuCayW98EHpRv55edA6aEoJlmwfX=w240-h480",
