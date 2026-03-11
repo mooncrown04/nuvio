@@ -82,7 +82,7 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                 resolve([]);
             })
             .catch(function(err) {
-                console.error('[FullHD] Hata:', err.message);
+                console.error('[FullHD Scraper Error]:', err && err.message ? err.message : err);
                 resolve([]);
             });
     });
@@ -93,12 +93,3 @@ if (typeof module !== 'undefined' && module.exports) {
 } else {
     global.getStreams = getStreams;
 }
-
-
-.catch(function(err) {
-    console.error('[FullHD Scraper Error]:', err && err.message ? err.message : err);
-    resolve([]);
-});
-
-
-                             
