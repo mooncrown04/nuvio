@@ -1,6 +1,6 @@
 /**
- * FullHDFilmizlesene Nuvio Scraper - v12.0
- * Strateji: HTML içindeki tüm gizli verileri, data-id'leri ve script bloklarını tarar.
+ * FullHDFilmizlesene Nuvio Scraper - v12.1
+ * Değişiklik: Poster resimlerini engelle, doğrudan player embed yapısına odaklan.
  */
 
 var cheerio = require("cheerio-without-node-native");
@@ -25,14 +25,14 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
     return new Promise(function(resolve) {
         if (mediaType !== 'movie') return resolve([]);
 
-        var tmdbUrl = 'https://api.themoviedb.org/3/movie/' + tmdbId + '?language=tr-TR&api_key=4ef0d7355d9ffb5151e987764708ce96';
         var userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36';
+        var tmdbUrl = 'https://api.themoviedb.org/3/movie/' + tmdbId + '?language=tr-TR&api_key=4ef0d7355d9ffb5151e987764708ce96';
 
         fetch(tmdbUrl)
             .then(function(res) { return res.json(); })
             .then(function(data) {
                 var query = data.title || data.original_title;
-                console.error("[FullHD] v12 Derin Tarama: " + query);
+                console.error("[FullHD] v12.1 Başladı: " + query);
                 return fetch(BASE_URL + '/arama/' + encodeURIComponent(query), { headers: { 'User-Agent': userAgent } });
             })
             .then(function(res) { return res.text(); })
@@ -46,52 +46,32 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
             })
             .then(function(res) { return res.text(); })
             .then(function(filmHtml) {
-                var $ = cheerio.load(filmHtml);
-                var potentialLinks = [];
-
-                // 1. Taktik: Sayfa içindeki tüm script'leri tara
-                $('script').each(function() {
-                    var scriptContent = $(this).html();
-                    if (scriptContent) {
-                        // Rapidvid, Moly veya Player kelimelerini içeren her türlü URL'yi yakala
-                        var matches = scriptContent.match(/https?:\/\/[^"'\s<>\\ ]+(?:rapidvid|moly|player|embed)[^"'\s<>\\ ]+/gi);
-                        if (matches) {
-                            matches.forEach(function(m) { potentialLinks.push(m.replace(/\\/g, "")); });
-                        }
-                    }
-                });
-
-                // 2. Taktik: Data özniteliklerini tara (data-id, data-url vb.)
-                $('[data-id], [data-url], [data-src]').each(function() {
-                    var val = $(this).attr('data-url') || $(this).attr('data-src');
-                    if (val && val.indexOf('http') > -1) potentialLinks.push(val);
-                });
-
-                // 3. Taktik: Vidid üzerinden manuel player tahmini (Eğer hiçbir şey bulunamazsa)
                 var vididMatch = filmHtml.match(/vidid\s*[:=]\s*['"]?(\d+)['"]?/i);
-                if (vididMatch) {
-                    console.error("[FullHD] Vidid ile manuel deneme: " + vididMatch[1]);
-                    // Sitenin kullandığı yaygın player şablonu
-                    potentialLinks.push("https://rapidvid.net/e/" + vididMatch[1]);
-                }
+                if (!vididMatch) throw new Error("vidid bulunamadı");
+                
+                var vidid = vididMatch[1];
+                console.error("[FullHD] Kesin ID: " + vidid);
 
-                if (potentialLinks.length > 0) {
-                    var target = potentialLinks[0];
-                    console.error("[FullHD] Bulunan Link: " + target);
-                    return fetch(target, { headers: { 'Referer': BASE_URL + '/', 'User-Agent': userAgent } });
-                } else {
-                    throw new Error("Hiçbir iz bulunamadı");
-                }
+                // Poster (.jpg) içermeyen ve video/player odaklı olan linkleri seç
+                var targetUrl = "https://rapidvid.net/e/" + vidid;
+                
+                console.error("[FullHD] Embed Hedefi: " + targetUrl);
+                return fetch(targetUrl, { headers: { 'Referer': BASE_URL + '/', 'User-Agent': userAgent } });
             })
             .then(function(res) { return res.text(); })
             .then(function(embedHtml) {
+                // Rapidvid/Moly içindeki şifreli linki bul
                 var avMatch = embedHtml.match(/av\(['"]([^'"]+)['"]\)/);
                 if (avMatch) {
                     var decrypted = decodeContentX(avMatch[1]);
                     if (decrypted) {
+                        var finalStream = decrypted.indexOf("//") === 0 ? "https:" + decrypted : decrypted;
+                        console.error("[FullHD] BAŞARILI! Stream URL Hazır.");
+                        
                         resolve([{
-                            name: "FullHD v12 Final",
-                            url: decrypted.indexOf("//") === 0 ? "https:" + decrypted : decrypted,
+                            name: "FullHD Premium v12.1",
+                            title: "FullHD (1080p)",
+                            url: finalStream,
                             quality: "1080p",
                             headers: { 'Referer': 'https://rapidvid.net/', 'User-Agent': userAgent },
                             provider: "fullhd_scraper"
@@ -99,7 +79,7 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                         return;
                     }
                 }
-                resolve([]);
+                throw new Error("Video cozulemedi (av bulunamadi)");
             })
             .catch(function(err) {
                 console.error("[FullHD] Hata: " + err.message);
