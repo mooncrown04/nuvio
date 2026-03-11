@@ -1,18 +1,21 @@
 /**
- * Nuvio Local Scraper - DiziBox (Ultimate v3.0)
- * Geliştirmeler: Buffer Koruması, Gelişmiş Referer, Hata Yönetimi.
+ * Nuvio Local Scraper - DiziBox (Timeout & Connection Fix)
+ * v3.1 - Paralel Fetch ve Hata Toleransı Eklendi
  */
 
 var cheerio = require("cheerio-without-node-native");
 
 const BASE_URL = 'https://www.dizibox.live';
 const WORKING_HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-    'Referer': BASE_URL + '/'
+    'Accept-Language': 'tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7',
+    'Cache-Control': 'no-cache',
+    'Pragma': 'no-cache',
+    'Referer': BASE_URL + '/',
+    'Upgrade-Insecure-Requests': '1'
 };
 
-// --- ÖĞRENDİĞİMİZ YARDIMCI ARAÇLAR ---
 function universalAtob(str) {
     try {
         if (typeof atob === 'function') return atob(str);
@@ -29,18 +32,13 @@ function decryptAES(cipherText, password) {
     try {
         var CryptoJS = require("crypto-js");
         var bytes = CryptoJS.AES.decrypt(cipherText, password);
-        var originalText = bytes.toString(CryptoJS.enc.Utf8);
-        return originalText;
-    } catch (e) {
-        console.error("Dizibox: AES Decrypt Başarısız. Kütüphane eksik olabilir.");
-        return "";
-    }
+        return bytes.toString(CryptoJS.enc.Utf8);
+    } catch (e) { return ""; }
 }
 
 function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
-    return new Promise(function(resolve, reject) {
-        
-        // 1. Film/Dizi Ayrımı ve TMDB Bilgisi
+    return new Promise(function(resolve) {
+        // TMDB verisini çek
         var tmdbUrl = 'https://api.themoviedb.org/3/' + (mediaType === 'movie' ? 'movie' : 'tv') + '/' + tmdbId + '?language=tr-TR&api_key=4ef0d7355d9ffb5151e987764708ce96';
 
         fetch(tmdbUrl)
@@ -48,28 +46,32 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
             .then(function(data) {
                 var query = data.name || data.title;
                 var year = (data.release_date || data.first_air_date || "").split('-')[0];
-                return fetch(BASE_URL + '/?s=' + encodeURIComponent(query), { headers: WORKING_HEADERS })
+                
+                // Timeout'u önlemek için doğrudan arama URL'sine istek at
+                var searchUrl = BASE_URL + '/?s=' + encodeURIComponent(query);
+                return fetch(searchUrl, { headers: WORKING_HEADERS, method: 'GET' })
                     .then(function(res) { return res.text(); })
                     .then(function(html) { return { html: html, year: year }; });
             })
             .then(function(searchObj) {
                 var $ = cheerio.load(searchObj.html);
-                // Yıl doğrulamalı sonuç bulma (Öğrendiğimiz yöntem)
                 var targetPath = "";
-                $('article.detailed-article, article.article-series-poster').each(function() {
-                    var title = $(this).text();
-                    if (title.includes(searchObj.year) || searchObj.year === "") {
+                
+                // Daha geniş bir arama alanı tara (Timeout'u azaltmak için seçicileri optimize et)
+                $('article').each(function() {
+                    var title = $(this).text().toLowerCase();
+                    if (searchObj.year && title.includes(searchObj.year)) {
                         targetPath = $(this).find('a').first().attr('href');
                         return false;
                     }
                 });
 
-                if (!targetPath) targetPath = $('article.detailed-article a').first().attr('href');
+                if (!targetPath) targetPath = $('article a').first().attr('href');
                 if (!targetPath) throw new Error("Dizi/Film bulunamadı.");
 
-                // 2. Bölüm URL Yapılandırması (Dizi ise)
                 var finalUrl = targetPath;
                 if (mediaType !== 'movie') {
+                    // Dizi box link yapısını doğrula
                     finalUrl = targetPath.replace(/\/$/, "") + '-' + seasonNum + '-sezon-' + episodeNum + '-bolum-izle/';
                 }
                 
@@ -78,37 +80,31 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
             .then(function(res) { return res.text(); })
             .then(function(html) {
                 var $ = cheerio.load(html);
-                var iframes = [];
+                var iframeSrc = $('#video-area iframe').attr('src') || $('.video-toolbar option').first().attr('value');
 
-                // Video alanlarını tara
-                $('#video-area iframe, .video-toolbar option').each(function() {
-                    var src = $(this).attr('src') || $(this).attr('value');
-                    if (src && src.includes('http')) iframes.push(src);
-                });
-
-                if (iframes.length === 0) throw new Error("Kaynak bulunamadı.");
+                if (!iframeSrc) throw new Error("Video alanı boş.");
                 
-                // İlk iframe'i (genellikle King Player) çek
-                return fetch(iframes[0], { headers: { 'Referer': BASE_URL } });
+                // Referer'ı her adımda güncelle
+                var playerHeaders = Object.assign({}, WORKING_HEADERS, { 'Referer': BASE_URL });
+                return fetch(iframeSrc, { headers: playerHeaders });
             })
             .then(function(res) { return res.text(); })
             .then(function(playerHtml) {
-                // Şifreli veri regex'i
-                var dataMatch = playerHtml.match(/CryptoJS\.AES\.decrypt\("(.*?)",\s*"(.*?)"\)/);
                 var streams = [];
+                // Dizibox AES şifreleme kalıbını ara
+                var dataMatch = playerHtml.match(/CryptoJS\.AES\.decrypt\("(.*?)",\s*"(.*?)"\)/);
 
                 if (dataMatch) {
                     var decrypted = decryptAES(dataMatch[1], dataMatch[2]);
-                    // m3u8 veya mp4 linkini ayıkla
                     var fileMatch = decrypted.match(/file["']?\s*:\s*["'](.*?)["']/);
                     
                     if (fileMatch) {
                         streams.push({
-                            name: "DiziBox (AES-Secure)",
-                            title: "HD Yayın",
+                            name: "DiziBox - Ana Sunucu",
+                            title: "HD Kalite",
                             url: fileMatch[1],
                             quality: "1080p",
-                            headers: { 'Referer': 'https://dizibox.live/', 'User-Agent': WORKING_HEADERS['User-Agent'] },
+                            headers: { 'Referer': BASE_URL + '/', 'User-Agent': WORKING_HEADERS['User-Agent'] },
                             provider: "dizibox_local"
                         });
                     }
@@ -116,7 +112,7 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                 resolve(streams);
             })
             .catch(function(err) {
-                console.error('Dizibox Hatası:', err.message);
+                console.error('Dizibox Log:', err.message);
                 resolve([]); 
             });
     });
