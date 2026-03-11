@@ -1,6 +1,6 @@
 /**
- * Nuvio Local Scraper - DiziBox (v10.0 Mega Debug)
- * Tek Kod, Çoklu Deneme, Full Loglama
+ * Nuvio Local Scraper - DiziBox (v11.0 - URL Pattern Fix)
+ * Kullanıcının ilettiği "-hd-izle" yapısı entegre edildi.
  */
 
 var cheerio = require("cheerio-without-node-native");
@@ -9,115 +9,114 @@ var CryptoJS = require("crypto-js");
 const BASE_URL = 'https://www.dizibox.live';
 
 var getStreams = function(tmdbId, mediaType, seasonNum, episodeNum) {
-    console.log("DZBX_START: TMDB=" + tmdbId + " | Type=" + mediaType + " | S:" + seasonNum + " E:" + episodeNum);
+    console.log("DZBX_START: " + tmdbId + " S:" + seasonNum + " E:" + episodeNum);
 
     return new Promise(function(resolve) {
-        // 1. ADIM: TMDB BİLGİSİ
+        // 1. TMDB Bilgisini Al
         fetch('https://api.themoviedb.org/3/' + (mediaType === 'movie' ? 'movie' : 'tv') + '/' + tmdbId + '?language=tr-TR&api_key=4ef0d7355d9ffb5151e987764708ce96')
-            .then(function(res) { 
-                if(!res.ok) console.error("DZBX_ERR: TMDB API Hatasi - Status: " + res.status);
-                return res.json(); 
-            })
+            .then(function(res) { return res.json(); })
             .then(function(data) {
                 var query = data.name || data.title;
-                var slug = query.toLowerCase().replace(/[^\w\s-]/g, '').replace(/\s+/g, '-');
-                console.log("DZBX_INFO: Medya Adi: " + query + " | Slug: " + slug);
+                console.log("DZBX_INFO: Arama Basliyor: " + query);
 
-                // --- DENEME 1: DOĞRUDAN URL TAHMİNİ ---
-                var guessedUrl = BASE_URL + (mediaType === 'movie' ? '/film/' : '/dizi/') + slug + '-' + seasonNum + '-sezon-' + episodeNum + '-bolum-izle/';
-                console.log("DZBX_TRY1: Doğrudan URL deneniyor: " + guessedUrl);
-                
-                return fetch(guessedUrl, { headers: { 'User-Agent': 'Mozilla/5.0' } }).then(function(r) {
-                    if (r.status === 200) {
-                        console.log("DZBX_SUCCESS1: Doğrudan URL çalıştı!");
-                        return r.text();
-                    }
-                    // --- DENEME 2: ARAMA MOTORU ÜZERİNDEN GİTME ---
-                    console.log("DZBX_TRY2: Arama sayfasina geciliyor...");
-                    return fetch(BASE_URL + '/?s=' + encodeURIComponent(query)).then(function(r2) { return r2.text(); });
-                });
+                // Arama Sayfasına Git
+                return fetch(BASE_URL + '/?s=' + encodeURIComponent(query));
             })
+            .then(function(res) { return res.text(); })
             .then(function(html) {
                 var $ = cheerio.load(html);
-                var targetPage = "";
-
-                if (html.includes('video-area')) {
-                    targetPage = "ALREADY_LOADED";
-                    return html;
-                } else {
-                    var link = $('article a').first().attr('href');
-                    if (!link) {
-                        console.error("DZBX_ERR: Arama sonucunda article/link bulunamadi.");
-                        throw new Error("Icerik bulunamadi");
-                    }
-                    targetPage = link.replace(/\/$/, "") + '-' + seasonNum + '-sezon-' + episodeNum + '-bolum-izle/';
-                    console.log("DZBX_INFO: Arama sonucu bulunan sayfa: " + targetPage);
-                    return fetch(targetPage).then(function(r) { return r.text(); });
+                var mainPageLink = $('article h2 a').attr('href') || $('article a').first().attr('href');
+                
+                if (!mainPageLink) {
+                    console.error("DZBX_ERR: Arama sonucu bulunamadi.");
+                    throw new Error("Icerik bulunamadi");
                 }
+
+                var cleanBase = mainPageLink.replace(/\/$/, "");
+                
+                // --- ÇOKLU URL DENEME SİSTEMİ ---
+                // Sitenin kullanabileceği tüm varyasyonları bir diziye koyuyoruz
+                var suffix = '-' + seasonNum + '-sezon-' + episodeNum + '-bolum';
+                var patterns = [
+                    cleanBase + suffix + '-hd-izle/', // Senin tarayıcıda gördüğün: -hd-izle
+                    cleanBase + suffix + '-izle/',    // Standart: -izle
+                    cleanBase + suffix + '-full-hd-izle/' // Alternatif: -full-hd-izle
+                ];
+
+                console.log("DZBX_INFO: Varyasyonlar deneniyor...");
+
+                // Recursive (özyinelemeli) fetch ile ilk çalışan URL'yi bul
+                var tryPattern = function(index) {
+                    if (index >= patterns.length) {
+                        console.error("DZBX_ERR: Hicbir URL varyasyonu calismadi.");
+                        throw new Error("Sayfa bulunamadi");
+                    }
+
+                    console.log("DZBX_TRY_" + index + ": " + patterns[index]);
+                    return fetch(patterns[index]).then(function(res) {
+                        if (res.status === 200) {
+                            console.log("DZBX_SUCCESS: URL Bulundu -> " + patterns[index]);
+                            return res.text();
+                        }
+                        return tryPattern(index + 1); // Bir sonrakini dene
+                    });
+                };
+
+                return tryPattern(0);
             })
             .then(function(episodeHtml) {
                 var $ = cheerio.load(episodeHtml);
-                var iframe = $('#video-area iframe').attr('src');
+                // Video alanını bul (Çoklu seçici)
+                var iframe = $('#video-area iframe').attr('src') || $('iframe[src*="king.php"]').attr('src');
+                
                 if (!iframe) {
-                    console.error("DZBX_ERR: Video alani (iframe) sayfada bulunamadi. DOM Degismis olabilir.");
-                    throw new Error("Iframe yok");
+                    console.error("DZBX_ERR: Iframe bulunamadi. Sayfa HTML boyutu: " + episodeHtml.length);
+                    throw new Error("Player bulunamadi");
                 }
 
-                // King Player Fix
                 if (iframe.includes('king.php')) iframe = iframe.replace("king.php?v=", "king.php?wmode=opaque&v=");
                 
-                console.log("DZBX_INFO: Iframe URL yakalandi: " + iframe);
-                
-                // --- DENEME 3: FARKLI REFERER BAŞLIKLARIYLA PLAYER ÇEKME ---
-                return fetch(iframe, { 
-                    headers: { 'Referer': BASE_URL + '/', 'User-Agent': 'Mozilla/5.0' } 
-                }).catch(function(e) {
-                    console.warn("DZBX_WARN: Player çekilirken hata (SSL?), Referer değiştiriliyor...");
-                    return fetch(iframe, { headers: { 'User-Agent': 'Mozilla/5.0' } });
-                });
+                console.log("DZBX_STEP: Player Iframe -> " + iframe);
+                return fetch(iframe, { headers: { 'Referer': BASE_URL + '/' } });
             })
             .then(function(res) { return res.text(); })
             .then(function(playerHtml) {
-                console.log("DZBX_INFO: Player HTML yuklendi. Sifre cozme basliyor.");
-                
-                // Kotlin/Python Mantığı ile Regex
-                var decData = playerHtml.match(/decrypt\("(.*?)",\s*"(.*?)"\)/);
-                if (!decData) {
-                    console.error("DZBX_ERR: CryptoJS.decrypt fonksiyonu HTML içinde bulunamadı.");
+                // SIFRE COZME
+                var match = playerHtml.match(/decrypt\("(.*?)",\s*"(.*?)"\)/);
+                if (!match) {
+                    console.error("DZBX_ERR: Sifreli veri yakalanamadi.");
                     return resolve([]);
                 }
 
                 try {
-                    console.log("DZBX_INFO: Sifre: " + decData[2].substring(0,5) + "***");
-                    var bytes = CryptoJS.AES.decrypt(decData[1], decData[2]);
-                    var decryptedText = bytes.toString(CryptoJS.enc.Utf8);
+                    var bytes = CryptoJS.AES.decrypt(match[1], match[2]);
+                    var dec = bytes.toString(CryptoJS.enc.Utf8);
+                    var file = dec.match(/file:\s*'(.*?)'/);
                     
-                    var fileMatch = decryptedText.match(/file:\s*'(.*?)'/);
-                    if (fileMatch) {
-                        console.log("DZBX_FINAL: Stream linki OK!");
+                    if (file) {
+                        console.log("DZBX_FINAL: Islem Basarili!");
                         resolve([{
-                            name: "DiziBox - Ultra Debug",
-                            url: fileMatch[1],
+                            name: "DiziBox",
+                            url: file[1],
                             quality: "1080p",
                             headers: { 'Referer': BASE_URL + '/', 'User-Agent': 'Mozilla/5.0' },
                             provider: "dizibox_local"
                         }]);
                     } else {
-                        console.error("DZBX_ERR: Desifre basarili ama içinde 'file:' linki yok.");
+                        console.error("DZBX_ERR: Dosya linki ayiklanamadi.");
                         resolve([]);
                     }
                 } catch (e) {
-                    console.error("DZBX_ERR: Desifreleme sirasinda kiritik hata: " + e.message);
+                    console.error("DZBX_ERR: CryptoJS Hatasi: " + e.message);
                     resolve([]);
                 }
             })
             .catch(function(err) {
-                console.error("DZBX_FATAL: Akis kesildi -> " + err.message);
+                console.error("DZBX_FATAL: " + err.message);
                 resolve([]);
             });
     });
 };
 
-// EXPORT
 if (typeof module !== 'undefined' && module.exports) { module.exports = { getStreams: getStreams }; }
 if (typeof globalThis !== 'undefined') { globalThis.getStreams = getStreams; }
