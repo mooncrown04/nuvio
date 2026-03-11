@@ -1,5 +1,5 @@
 /**
- * FullHDFilmizlesene Nuvio Scraper - v24.0 (Enhanced Fix)
+ * FullHDFilmizlesene Nuvio Scraper - v25.0 (Final Fix - No Buffer Dependency)
  */
 
 var cheerio = require("cheerio-without-node-native");
@@ -10,38 +10,63 @@ const API_BASE = "https://www.fullhdfilmizlesene.live/player/api.php";
 const WORKING_HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-    'Accept-Language': 'tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7',
+    'Accept-Language': 'tr-TR,tr;q=0.9',
     'Referer': BASE_URL + '/',
     'Origin': BASE_URL,
     'Connection': 'keep-alive'
 };
 
-// Geliştirilmiş RapidVid Decode
+// Cihazda Buffer veya atob yoksa kullanılacak manuel Base64 çözücü
+function universalAtob(str) {
+    try {
+        if (typeof atob === 'function') return atob(str);
+        // Manuel fallback
+        var chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=';
+        var out = '';
+        str = String(str).replace(/[=]+$/, '');
+        for (var bc = 0, bs, buffer, idx = 0; buffer = str.charAt(idx++); ~buffer && (bs = bc % 4 ? bs * 64 + buffer : buffer, bc++ % 4) ? out += String.fromCharCode(255 & bs >> (-2 * bc & 6)) : 0) {
+            buffer = chars.indexOf(buffer);
+        }
+        return out;
+    } catch (e) { return null; }
+}
+
+// RapidVid Çözücü - Buffer Hatası Giderildi
 function decodeRapidVid(encodedData) {
     try {
         if (!encodedData) return null;
-        // Veriyi ters çevir
+        
+        // 1. Veriyi ters çevir
         var reversed = encodedData.split('').reverse().join('');
-        // Base64 temizle ve çöz
-        var binary = Buffer.from(reversed.replace(/[^A-Za-z0-9+/=]/g, ""), 'base64').toString('binary');
+        
+        // 2. Base64 temizle
+        var cleaned = reversed.replace(/[^A-Za-z0-9+/=]/g, "");
+        
+        // 3. İlk aşama çözüm
+        var decodedBinary = universalAtob(cleaned);
+        if (!decodedBinary) return null;
         
         var key = "K9L";
         var adjusted = "";
-        for (var i = 0; i < binary.length; i++) {
-            var charCode = binary.charCodeAt(i);
+        for (var i = 0; i < decodedBinary.length; i++) {
+            var charCode = decodedBinary.charCodeAt(i);
             var shift = (key.charCodeAt(i % key.length) % 5) + 1;
             adjusted += String.fromCharCode(charCode - shift);
         }
         
-        var finalUrl = Buffer.from(adjusted, 'base64').toString('utf8').replace(/\\/g, "").trim();
-        return finalUrl.startsWith('http') ? finalUrl : null;
+        // 4. İkinci aşama çözüm (Final URL)
+        var finalUrl = universalAtob(adjusted);
+        if (finalUrl) {
+            finalUrl = finalUrl.replace(/\\/g, "").trim();
+            return finalUrl.startsWith('http') ? finalUrl : null;
+        }
+        return null;
     } catch (e) {
         console.error("[FullHD] Decode Hatası:", e.message);
         return null;
     }
 }
 
-// API'den stream al
 function getStreamsFromAPI(vidid) {
     return new Promise(function(resolve) {
         var streams = [];
@@ -51,19 +76,18 @@ function getStreamsFromAPI(vidid) {
         function checkComplete() {
             completedRequests++;
             if (completedRequests >= totalRequests) {
-                console.error("[FullHD] Toplam stream bulundu:", streams.length);
+                console.error("[FullHD] Toplam stream:", streams.length);
                 resolve(streams);
             }
         }
         
-        // Atom API
+        // Atom API (RapidVid)
         var atomUrl = API_BASE + '?id=' + vidid + '&type=t&name=atom&get=video&format=json';
         fetch(atomUrl, { headers: WORKING_HEADERS })
             .then(function(res) { return res.json(); })
             .then(function(data) {
                 if (data && data.html) {
                     var playerUrl = data.html.replace(/\\/g, '');
-                    console.error("[FullHD] Atom Player URL:", playerUrl);
                     return fetch(playerUrl, { headers: WORKING_HEADERS });
                 }
                 throw new Error("Atom HTML yok");
@@ -71,8 +95,6 @@ function getStreamsFromAPI(vidid) {
             .then(function(res) { return res ? res.text() : null; })
             .then(function(playerHtml) {
                 if (!playerHtml) return;
-                
-                // av('...') içindeki şifreli datayı bul
                 var avMatch = playerHtml.match(/av\(['"]([^'"]+)['"]\)/);
                 if (avMatch) {
                     var decoded = decodeRapidVid(avMatch[1]);
@@ -91,7 +113,7 @@ function getStreamsFromAPI(vidid) {
             .catch(function(err) { console.error("[FullHD] Atom Hatası:", err.message); })
             .finally(function() { checkComplete(); });
         
-        // Turbo API
+        // Turbo API (M3U8)
         var turboUrl = API_BASE + '?id=' + vidid + '&type=t&name=advid&get=video&pno=tr&format=json';
         fetch(turboUrl, { headers: WORKING_HEADERS })
             .then(function(res) { return res.json(); })
@@ -149,17 +171,13 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
             })
             .then(function(res) { return res.text(); })
             .then(function(filmHtml) {
-                // 1. Yöntem: vidid üzerinden API
                 var vidMatch = filmHtml.match(/vidid\s*=\s*['"](\d+)['"]/);
-                if (vidMatch) {
-                    return getStreamsFromAPI(vidMatch[1]);
-                }
+                if (vidMatch) return getStreamsFromAPI(vidMatch[1]);
                 
-                // 2. Yöntem: scx JSON objesi (Yeni sistem)
                 var scxMatch = filmHtml.match(/var scx = (\{.*?\});/);
                 if (scxMatch) {
                     var scxData = JSON.parse(scxMatch[1]);
-                    if (scxData.sources && scxData.sources.length > 0) {
+                    if (scxData.sources) {
                         return scxData.sources.map(s => ({
                             name: "FullHD - " + (s.label || "Kaynak"),
                             url: s.file,
