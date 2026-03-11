@@ -1,5 +1,5 @@
 /**
- * FullHDFilmizlesene Nuvio Scraper - v21.0 (API Endpoint)
+ * FullHDFilmizlesene Nuvio Scraper - v22.0 (Promise Fix)
  */
 
 var cheerio = require("cheerio-without-node-native");
@@ -14,7 +14,7 @@ const WORKING_HEADERS = {
     'Connection': 'Keep-Alive'
 };
 
-// Eski RapidVid decode fonksiyonu (yedek)
+// Eski RapidVid decode (yedek)
 function decodeRapidVid(encodedData) {
     try {
         var reversed = encodedData.split('').reverse().join('');
@@ -32,24 +32,33 @@ function decodeRapidVid(encodedData) {
     }
 }
 
-// Yeni API'den stream al
+// API'den stream al - DÜZELTİLDİ
 function getStreamsFromAPI(vidid) {
     return new Promise(function(resolve) {
         var streams = [];
+        var completedRequests = 0;
+        var totalRequests = 2;
+        
+        function checkComplete() {
+            completedRequests++;
+            console.error("[FullHD] Tamamlanan istekler:", completedRequests + "/" + totalRequests);
+            if (completedRequests >= totalRequests) {
+                console.error("[FullHD] Toplam stream bulunan:", streams.length);
+                resolve(streams);
+            }
+        }
         
         // Atom API
         var atomUrl = API_BASE + '?id=' + vidid + '&type=t&name=atom&get=video&format=json';
-        // Turbo/Advid API  
-        var turboUrl = API_BASE + '?id=' + vidid + '&type=t&name=advid&get=video&pno=tr&format=json';
+        console.error("[FullHD] Atom API çağrılıyor:", atomUrl);
         
-        console.error("[FullHD] Atom API:", atomUrl);
-        console.error("[FullHD] Turbo API:", turboUrl);
-        
-        // Atom isteği
-        var atomPromise = fetch(atomUrl, { headers: WORKING_HEADERS })
-            .then(function(res) { return res.text(); })
+        fetch(atomUrl, { headers: WORKING_HEADERS })
+            .then(function(res) { 
+                console.error("[FullHD] Atom API yanıt status:", res.status);
+                return res.text(); 
+            })
             .then(function(data) {
-                console.error("[FullHD] Atom yanıt:", data.substring(0, 200));
+                console.error("[FullHD] Atom yanıt:", data.substring(0, 300));
                 var clean = data.replace(/\\/g, '');
                 var htmlMatch = clean.match(/"html":"(.*?)"/);
                 
@@ -57,59 +66,78 @@ function getStreamsFromAPI(vidid) {
                     var playerUrl = htmlMatch[1];
                     console.error("[FullHD] Atom player URL:", playerUrl);
                     
-                    // Player'dan gerçek linki al
-                    return fetch(playerUrl, { headers: WORKING_HEADERS })
-                        .then(function(res) { return res.text(); })
-                        .then(function(playerHtml) {
-                            console.error("[FullHD] Atom player HTML:", playerHtml.substring(0, 300));
-                            
-                            // Eski yöntem: av() fonksiyonu
-                            var avMatch = playerHtml.match(/"file":\s*av\(['"]([^'"]+)['"]\)/) ||
-                                         playerHtml.match(/av\(['"]([^'"]+)['"]\)/);
-                            
-                            if (avMatch) {
-                                var decoded = decodeRapidVid(avMatch[1]);
-                                console.error("[FullHD] Atom decoded:", decoded);
-                                if (decoded && decoded.startsWith('http')) {
-                                    streams.push({
-                                        name: "FullHD - Atom",
-                                        title: "Atom Akışı",
-                                        url: decoded,
-                                        quality: "1080p",
-                                        headers: WORKING_HEADERS,
-                                        provider: "fullhd_scraper"
-                                    });
-                                }
-                            }
-                            
-                            // Yeni yöntem: direkt file
-                            var fileMatch = playerHtml.match(/"file":\s*"(.*?)"/) ||
-                                           playerHtml.match(/file:\s*"(.*?)"/);
-                            if (fileMatch && !avMatch) {
-                                var url = fileMatch[1];
-                                if (url.startsWith('http')) {
-                                    streams.push({
-                                        name: "FullHD - Atom",
-                                        title: "Atom Akışı",
-                                        url: url,
-                                        quality: "1080p",
-                                        headers: WORKING_HEADERS,
-                                        provider: "fullhd_scraper"
-                                    });
-                                }
-                            }
+                    return fetch(playerUrl, { headers: WORKING_HEADERS });
+                } else {
+                    console.error("[FullHD] Atom html match bulunamadı");
+                    throw new Error("Atom html bulunamadı");
+                }
+            })
+            .then(function(res) { 
+                if (!res) return null;
+                return res.text(); 
+            })
+            .then(function(playerHtml) {
+                if (!playerHtml) return;
+                
+                console.error("[FullHD] Atom player HTML:", playerHtml.substring(0, 400));
+                
+                // Eski yöntem: av()
+                var avMatch = playerHtml.match(/"file":\s*av\(['"]([^'"]+)['"]\)/) ||
+                             playerHtml.match(/av\(['"]([^'"]+)['"]\)/);
+                
+                if (avMatch) {
+                    console.error("[FullHD] Atom av() bulundu:", avMatch[1].substring(0, 50));
+                    var decoded = decodeRapidVid(avMatch[1]);
+                    console.error("[FullHD] Atom decoded:", decoded);
+                    if (decoded && decoded.startsWith('http')) {
+                        streams.push({
+                            name: "FullHD - Atom",
+                            title: "Atom Akışı",
+                            url: decoded,
+                            quality: "1080p",
+                            headers: WORKING_HEADERS,
+                            provider: "fullhd_scraper"
                         });
+                    }
+                } else {
+                    console.error("[FullHD] Atom av() bulunamadı");
+                }
+                
+                // Yeni yöntem: direkt file
+                var fileMatch = playerHtml.match(/"file":\s*"(.*?)"/) ||
+                               playerHtml.match(/file:\s*"(.*?)"/);
+                if (fileMatch && !avMatch) {
+                    console.error("[FullHD] Atom direkt file bulundu:", fileMatch[1]);
+                    if (fileMatch[1].startsWith('http')) {
+                        streams.push({
+                            name: "FullHD - Atom",
+                            title: "Atom Akışı",
+                            url: fileMatch[1],
+                            quality: "1080p",
+                            headers: WORKING_HEADERS,
+                            provider: "fullhd_scraper"
+                        });
+                    }
                 }
             })
             .catch(function(err) {
                 console.error("[FullHD] Atom hata:", err.message);
+            })
+            .finally(function() {
+                checkComplete();
             });
         
-        // Turbo isteği
-        var turboPromise = fetch(turboUrl, { headers: WORKING_HEADERS })
-            .then(function(res) { return res.text(); })
+        // Turbo API
+        var turboUrl = API_BASE + '?id=' + vidid + '&type=t&name=advid&get=video&pno=tr&format=json';
+        console.error("[FullHD] Turbo API çağrılıyor:", turboUrl);
+        
+        fetch(turboUrl, { headers: WORKING_HEADERS })
+            .then(function(res) {
+                console.error("[FullHD] Turbo API yanıt status:", res.status);
+                return res.text();
+            })
             .then(function(data) {
-                console.error("[FullHD] Turbo yanıt:", data.substring(0, 200));
+                console.error("[FullHD] Turbo yanıt:", data.substring(0, 300));
                 var clean = data.replace(/\\/g, '');
                 var watchMatch = clean.match(/\/watch\/(.*?)"/);
                 
@@ -122,46 +150,49 @@ function getStreamsFromAPI(vidid) {
                         headers: Object.assign({}, WORKING_HEADERS, {
                             'Referer': 'https://www.fullhdfilmizlesene.live/'
                         })
-                    })
-                    .then(function(res) { return res.text(); })
-                    .then(function(playHtml) {
-                        console.error("[FullHD] Turbo play HTML:", playHtml.substring(0, 300));
-                        
-                        var m3u8Match = playHtml.match(/file:\s*"(.*?)"/) ||
-                                       playHtml.match(/"file":\s*"(.*?)"/) ||
-                                       playHtml.match(/(https?:\/\/[^"'\s]+\.m3u8[^"'\s]*)/);
-                        
-                        if (m3u8Match) {
-                            var m3u8Url = m3u8Match[1];
-                            console.error("[FullHD] Turbo M3U8:", m3u8Url);
-                            if (m3u8Url.startsWith('http')) {
-                                streams.push({
-                                    name: "FullHD - Turbo",
-                                    title: "Turbo M3U8",
-                                    url: m3u8Url,
-                                    quality: "1080p",
-                                    headers: Object.assign({}, WORKING_HEADERS, {
-                                        'Referer': 'https://turbo.imgz.me/'
-                                    }),
-                                    provider: "fullhd_scraper"
-                                });
-                            }
-                        }
                     });
+                } else {
+                    console.error("[FullHD] Turbo watch match bulunamadı");
+                    throw new Error("Turbo watch bulunamadı");
+                }
+            })
+            .then(function(res) {
+                if (!res) return null;
+                return res.text();
+            })
+            .then(function(playHtml) {
+                if (!playHtml) return;
+                
+                console.error("[FullHD] Turbo play HTML:", playHtml.substring(0, 400));
+                
+                var m3u8Match = playHtml.match(/file:\s*"(.*?)"/) ||
+                               playHtml.match(/"file":\s*"(.*?)"/) ||
+                               playHtml.match(/(https?:\/\/[^"'\s]+\.m3u8[^"'\s]*)/);
+                
+                if (m3u8Match) {
+                    var m3u8Url = m3u8Match[1];
+                    console.error("[FullHD] Turbo M3U8 bulundu:", m3u8Url);
+                    if (m3u8Url.startsWith('http')) {
+                        streams.push({
+                            name: "FullHD - Turbo",
+                            title: "Turbo M3U8",
+                            url: m3u8Url,
+                            quality: "1080p",
+                            headers: Object.assign({}, WORKING_HEADERS, {
+                                'Referer': 'https://turbo.imgz.me/'
+                            }),
+                            provider: "fullhd_scraper"
+                        });
+                    }
+                } else {
+                    console.error("[FullHD] Turbo M3U8 bulunamadı");
                 }
             })
             .catch(function(err) {
                 console.error("[FullHD] Turbo hata:", err.message);
-            });
-        
-        // Her iki isteği bekle
-        Promise.all([atomPromise, turboPromise])
-            .then(function() {
-                console.error("[FullHD] Toplam stream:", streams.length);
-                resolve(streams);
             })
-            .catch(function() {
-                resolve(streams);
+            .finally(function() {
+                checkComplete();
             });
     });
 }
@@ -181,17 +212,20 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
             .then(function(data) {
                 var query = data.title || data.original_title;
                 console.error("[FullHD Scraper] TMDB Title:", query);
-                return fetch(BASE_URL + '/film/' + encodeURIComponent(query) + '/', { 
-                    headers: WORKING_HEADERS 
-                });
+                
+                // Film sayfasına git
+                var filmUrl = BASE_URL + '/film/' + encodeURIComponent(query) + '/';
+                console.error("[FullHD Scraper] Film URL:", filmUrl);
+                
+                return fetch(filmUrl, { headers: WORKING_HEADERS });
             })
             .then(function(res) { return res.text(); })
-            .then(function(html) {
-                console.error("[FullHD Scraper] Film sayfası çekildi.");
+            .then(function(filmHtml) {
+                console.error("[FullHD Scraper] Film sayfası çekildi. HTML uzunluğu:", filmHtml.length);
                 
-                // Yeni yöntem: vidid bul
-                var vidMatch = html.match(/vidid\s*=\s*['"](\d+)['"]/) ||
-                              html.match(/data-vid\s*=\s*['"](\d+)['"]/);
+                // Yöntem 1: vidid bul
+                var vidMatch = filmHtml.match(/vidid\s*=\s*['"](\d+)['"]/) ||
+                              filmHtml.match(/data-vid\s*=\s*['"](\d+)['"]/);
                 
                 if (vidMatch) {
                     var vidid = vidMatch[1];
@@ -199,15 +233,25 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                     return getStreamsFromAPI(vidid);
                 }
                 
-                // Yedek: scx kullan
-                var scxMatch = html.match(/var scx = (\{.*?\});/);
+                // Yöntem 2: scx kullan
+                console.error("[FullHD Scraper] vidid bulunamadı, scx deneniyor...");
+                var scxMatch = filmHtml.match(/var scx = (\{.*?\});/);
                 if (scxMatch) {
-                    // ... scx parse kodu (önceki versiyon) ...
+                    try {
+                        var scxData = JSON.parse(scxMatch[1]);
+                        console.error("[FullHD Scraper] scx bulundu, anahtarlar:", Object.keys(scxData));
+                        // scx parse kodu buraya...
+                        return [];
+                    } catch(e) {
+                        console.error("[FullHD Scraper] scx parse hatası:", e.message);
+                    }
                 }
                 
+                console.error("[FullHD Scraper] Hiçbir yöntem çalışmadı");
                 return [];
             })
             .then(function(streams) {
+                console.error("[FullHD Scraper] Döndürülen stream sayısı:", streams.length);
                 resolve(streams);
             })
             .catch(function(err) {
