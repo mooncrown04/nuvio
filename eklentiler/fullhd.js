@@ -93,3 +93,12 @@ if (typeof module !== 'undefined' && module.exports) {
 } else {
     global.getStreams = getStreams;
 }
+
+
+.catch(function(err) {
+    console.error('[FullHD Scraper Error]:', err && err.message ? err.message : err);
+    resolve([]);
+});
+
+
+                             
