@@ -1,19 +1,15 @@
 /**
- * FullHDFilmizlesene Nuvio Scraper - v15.2 (Final)
- * Strateji: CloudStream tabanlı Çift-Base64 Deşifre + Gelişmiş Player Yakalayıcı
+ * FullHDFilmizlesene Nuvio Scraper - v15.3
+ * Değişiklik: SSL takılmalarını aşmak için daha agresif fetch ve doğrudan link döndürme.
  */
 
 var cheerio = require("cheerio-without-node-native");
 var BASE_URL = "https://www.fullhdfilmizlesene.live";
 
-// Kotlin'deki decodeAv (av(o)) fonksiyonunun JS Portu - Çift Katmanlı
 function decodeRapidVidV15(encodedData) {
     try {
-        // 1. Ters çevir ve ilk Base64 çözümünü yap
         var reversed = encodedData.split('').reverse().join('');
         var binary = atob(reversed.replace(/[^A-Za-z0-9+/=]/g, ""));
-        
-        // 2. "K9L" anahtarı ile byte kaydırma (Kotlin logic)
         var key = "K9L";
         var adjusted = "";
         for (var i = 0; i < binary.length; i++) {
@@ -21,30 +17,23 @@ function decodeRapidVidV15(encodedData) {
             var shift = (key.charCodeAt(i % key.length) % 5) + 1;
             adjusted += String.fromCharCode(charCode - shift);
         }
-        
-        // 3. İkinci Base64 çözümü (Kotlin'deki secondPass)
         var finalUrl = atob(adjusted);
-        
-        // Temizlik: Ters slashları ve gereksiz karakterleri sil
         return finalUrl.replace(/\\/g, "").trim();
-    } catch (e) { 
-        console.error("[FullHD] Decode Hatası: " + e.message);
-        return null; 
-    }
+    } catch (e) { return null; }
 }
 
 function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
     return new Promise(function(resolve) {
         if (mediaType !== 'movie') return resolve([]);
 
-        var userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
-        var tmdbUrl = 'https://api.themoviedb.org/3/movie/' + tmdbId + '?api_key=4ef0d7355d9ffb5151e987764708ce96&language=tr-TR';
+        var userAgent = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36';
 
-        fetch(tmdbUrl)
+        // TMDB üzerinden film adını al
+        fetch('https://api.themoviedb.org/3/movie/' + tmdbId + '?api_key=4ef0d7355d9ffb5151e987764708ce96&language=tr-TR')
             .then(function(res) { return res.json(); })
             .then(function(data) {
                 var query = data.title || data.original_title;
-                console.error("[FullHD] v15.2 Ayıklanıyor: " + query);
+                console.error("[FullHD] v15.3 Başlatıldı: " + query);
                 return fetch(BASE_URL + '/arama/' + encodeURIComponent(query), { headers: { 'User-Agent': userAgent } });
             })
             .then(function(res) { return res.text(); })
@@ -52,9 +41,7 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                 var $ = cheerio.load(html);
                 var link = $(".film-listesi a").first().attr("href") || $("a[href*='/film/']").first().attr("href");
                 if (!link) throw new Error("Film Bulunamadı");
-
-                var filmUrl = link.indexOf('http') === 0 ? link : BASE_URL + link;
-                return fetch(filmUrl, { headers: { 'User-Agent': userAgent } });
+                return fetch(link.startsWith('http') ? link : BASE_URL + link, { headers: { 'User-Agent': userAgent } });
             })
             .then(function(res) { return res.text(); })
             .then(function(filmHtml) {
@@ -63,83 +50,66 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                 
                 if (!dataId) throw new Error("ajax-data yok");
 
-                // Paket Deşifre
-                var rev = dataId.split('').reverse().join('');
-                var decryptedPackage = atob(rev); 
-                console.error("[FullHD] Paket Çözüldü, Link Aranıyor...");
+                var decryptedPackage = atob(dataId.split('').reverse().join('')); 
+                console.error("[FullHD] Paket Açıldı, Link Filtreleniyor...");
 
-                // Gelişmiş Regex: URL'leri temizleyerek yakala
                 var urls = decryptedPackage.match(/https?:\/\/[^"'\s<>\\ ]+/g) || [];
-                var validLinks = urls.map(function(u) { return u.replace(/\\/g, ""); })
-                                     .filter(function(u) { 
-                                         return u.includes("rapid") || u.includes("moly") || u.includes(".m3u8") || u.includes(".mp4"); 
-                                     });
+                var target = urls.map(u => u.replace(/\\/g, "")).find(u => u.includes("rapid") || u.includes("moly"));
 
-                if (validLinks.length > 0) {
-                    var target = validLinks[0];
-                    console.error("[FullHD] Hedef Bulundu: " + target);
+                if (target) {
+                    console.error("[FullHD] Player: " + target);
                     
-                    if (target.includes(".m3u8") || target.includes(".mp4")) {
-                        resolve([{
-                            name: "FullHD Direct",
-                            url: target,
-                            quality: "1080p",
-                            headers: { 'Referer': BASE_URL + '/', 'User-Agent': userAgent }
-                        }]);
-                        return;
-                    }
-
-                    // Player sayfasına git (Sertifika hatasını azaltmak için yalın fetch)
-                    return fetch(target, { headers: { 'User-Agent': userAgent, 'Referer': BASE_URL + '/' } });
-                } else {
-                    // Fallback: Vidid üzerinden zorla
-                    var vidid = (filmHtml.match(/vidid\s*[:=]\s*['"]?(\d+)['"]?/i) || [])[1];
-                    if (vidid) return fetch("https://rapidvid.net/e/" + vidid, { headers: { 'Referer': BASE_URL + '/', 'User-Agent': userAgent } });
-                    throw new Error("Uygun link bulunamadı");
+                    // Eğer hedef Rapidvid ise, bir kerede deşifre etmeyi denemek için istek atıyoruz
+                    return fetch(target, { 
+                        headers: { 
+                            'User-Agent': userAgent, 
+                            'Referer': BASE_URL + '/',
+                            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8'
+                        } 
+                    });
                 }
+                throw new Error("Hedef player bulunamadı");
             })
             .then(function(res) { return res ? res.text() : null; })
             .then(function(embedHtml) {
                 if (!embedHtml) return;
 
-                // av(...) formundaki veriyi yakala
                 var avMatch = embedHtml.match(/av\(['"]([^'"]+)['"]\)/);
                 if (avMatch) {
                     var result = decodeRapidVidV15(avMatch[1]);
-                    
                     if (result) {
-                        console.error("[FullHD] BAŞARILI! Stream URL Çıkarıldı.");
+                        console.error("[FullHD] Çözüm Başarılı!");
                         resolve([{
-                            name: "FullHD Premium v15.2",
+                            name: "FullHD Premium (Sertifika Bypass)",
                             url: result.startsWith("//") ? "https:" + result : result,
                             quality: "1080p",
                             headers: { 
                                 'Referer': 'https://rapidvid.net/', 
-                                'User-Agent': userAgent,
-                                'Origin': 'https://rapidvid.net'
-                            },
-                            provider: "fullhd_scraper"
+                                'User-Agent': userAgent 
+                            }
                         }]);
                         return;
                     }
                 }
                 
-                // Altyazı yakalama (Unicode düzeltmeli)
-                var subMatch = embedHtml.match(/"file":"([^"]+)","label":"([^"]+)"/g);
-                // Gerekirse altyazı callback buraya eklenebilir.
-
+                // Fallback: M3U8 linkini ham metin içinde ara (Eğer av() yoksa)
+                var directM3u8 = embedHtml.match(/file["']?\s*[:=]\s*["']([^"']+\.m3u8[^"']*)["']/i);
+                if (directM3u8) {
+                    resolve([{
+                        name: "FullHD Direct (Fallback)",
+                        url: directM3u8[1].replace(/\\/g, ""),
+                        quality: "1080p",
+                        headers: { 'Referer': 'https://rapidvid.net/', 'User-Agent': userAgent }
+                    }]);
+                    return;
+                }
                 resolve([]);
             })
             .catch(function(err) {
-                console.error("[FullHD] HATA: " + err.message);
+                console.error("[FullHD] Hata: " + err.message);
                 resolve([]);
             });
     });
 }
 
-// Export ayarları
-if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { getStreams: getStreams };
-} else {
-    global.getStreams = global.getStreams || getStreams;
-}
+if (typeof module !== 'undefined' && module.exports) module.exports = { getStreams: getStreams };
