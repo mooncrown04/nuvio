@@ -1,11 +1,11 @@
 /**
- * FullHDFilmizlesene Nuvio Scraper - v16.0 (Official Template)
- * Şablona tam uyumlu, SSL ve Header optimizasyonlu.
+ * FullHDFilmizlesene Nuvio Scraper - v16.2 (Final & Official Template)
+ * Özellikler: Şablon uyumlu, SSL toleranslı, Hata yakalamalı.
  */
 
 var cheerio = require("cheerio-without-node-native");
 
-// Şablondaki gerçek çalışan header yapısı
+// Şablondaki ve loglardaki cihaz kısıtlamalarına uygun header seti
 const WORKING_HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
     'Accept': 'video/webm,video/ogg,video/*;q=0.9,application/ogg;q=0.7,audio/*;q=0.6,*/*;q=0.5',
@@ -20,7 +20,9 @@ const WORKING_HEADERS = {
 
 const BASE_URL = "https://www.fullhdfilmizlesene.live";
 
-// RapidVid Deşifre Fonksiyonu (Kotlin Port)
+/**
+ * RapidVid şifreli URL'yi çözen fonksiyon (v15.8+ stabil mantık)
+ */
 function decodeRapidVid(encodedData) {
     try {
         var reversed = encodedData.split('').reverse().join('');
@@ -38,38 +40,40 @@ function decodeRapidVid(encodedData) {
 }
 
 function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
-    return new Promise(function(resolve, reject) {
+    return new Promise(function(resolve) {
+        // Şablon gereği sadece film desteği (Dizi ise boş dön)
         if (mediaType !== 'movie') return resolve([]);
 
-        // 1. TMDB'den Film Adını Çek (Arama İçin)
+        // 1. TMDB'den Film İsmi Al (Arama için)
         var tmdbUrl = 'https://api.themoviedb.org/3/movie/' + tmdbId + '?language=tr-TR&api_key=4ef0d7355d9ffb5151e987764708ce96';
 
         fetch(tmdbUrl)
             .then(function(res) { return res.json(); })
             .then(function(data) {
                 var query = data.title || data.original_title;
-                console.error("[FullHD] Arama Başlatıldı: " + query);
+                console.error("[FullHD] Arama: " + query);
+                // Sitede arama yap
                 return fetch(BASE_URL + '/arama/' + encodeURIComponent(query), { headers: { 'User-Agent': WORKING_HEADERS['User-Agent'] } });
             })
             .then(function(res) { return res.text(); })
             .then(function(html) {
                 var $ = cheerio.load(html);
                 var link = $(".film-listesi a").first().attr("href") || $("a[href*='/film/']").first().attr("href");
-                if (!link) throw new Error("Film Bulunamadı");
+                if (!link) throw new Error("Film bulunamadı");
                 
-                var filmFullUrl = link.startsWith('http') ? link : BASE_URL + link;
-                return fetch(filmFullUrl, { headers: { 'User-Agent': WORKING_HEADERS['User-Agent'] } });
+                var filmUrl = link.startsWith('http') ? link : BASE_URL + link;
+                return fetch(filmUrl, { headers: { 'User-Agent': WORKING_HEADERS['User-Agent'] } });
             })
             .then(function(res) { return res.text(); })
             .then(function(filmHtml) {
-                // VidID Yakalama
+                // Video ID (vidid) ayıklama
                 var vidIdMatch = filmHtml.match(/vidid\s*[:=]\s*['"]?(\d+)['"]?/i);
-                if (!vidIdMatch) throw new Error("Video ID bulunamadı");
+                if (!vidIdMatch) throw new Error("ID yok");
 
-                var targetPlayer = "https://rapidvid.net/e/" + vidIdMatch[1];
-                console.error("[FullHD] Player Bulundu: " + targetPlayer);
+                var playerUrl = "https://rapidvid.net/e/" + vidIdMatch[1];
+                console.error("[FullHD] Player: " + playerUrl);
 
-                return fetch(targetPlayer, { 
+                return fetch(playerUrl, { 
                     headers: { 
                         'User-Agent': WORKING_HEADERS['User-Agent'],
                         'Referer': BASE_URL + '/'
@@ -80,24 +84,25 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
             .then(function(embedHtml) {
                 if (!embedHtml) return resolve([]);
 
+                // 'av' fonksiyonu içindeki şifreli datayı bul
                 var avMatch = embedHtml.match(/av\(['"]([^'"]+)['"]\)/);
                 if (avMatch) {
-                    var streamUrl = decodeRapidVid(avMatch[1]);
-                    if (streamUrl) {
-                        var finalUrl = streamUrl.startsWith("//") ? "https:" + streamUrl : streamUrl;
+                    var rawUrl = decodeRapidVid(avMatch[1]);
+                    if (rawUrl) {
+                        var streamLink = rawUrl.startsWith("//") ? "https:" + rawUrl : rawUrl;
                         
-                        // Şablon formatındaki zorunlu çıktı
+                        // Şablonun zorunlu kıldığı çıktı formatı
                         var streams = [{
-                            name: "FullHD - RapidVid", 
-                            title: "FullHD Movie Stream",
-                            url: finalUrl,
+                            name: "FullHD - Premium",
+                            title: "FullHD Film Akışı",
+                            url: streamLink,
                             quality: "1080p",
-                            size: "Unknown",
+                            size: "Auto",
                             headers: Object.assign({}, WORKING_HEADERS, { 'Referer': 'https://rapidvid.net/' }),
                             provider: "fullhd_scraper"
                         }];
 
-                        console.error("[FullHD] Akış Hazır!");
+                        console.error("[FullHD] BAŞARILI!");
                         return resolve(streams);
                     }
                 }
@@ -105,12 +110,12 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
             })
             .catch(function(err) {
                 console.error('[FullHD] Hata:', err.message);
-                resolve([]); 
+                resolve([]); // Hata anında boş dizi zorunlu
             });
     });
 }
 
-// React Native / Nuvio Export Yapısı
+// Export yapısı (React Native / Nuvio uyumlu)
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = { getStreams: getStreams };
 } else {
