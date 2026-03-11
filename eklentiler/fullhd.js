@@ -1,5 +1,5 @@
 /**
- * FullHDFilmizlesene Nuvio Scraper - v17.0 (scx Support)
+ * FullHDFilmizlesene Nuvio Scraper - v18.0 (Multi-Method)
  */
 
 var cheerio = require("cheerio-without-node-native");
@@ -35,6 +35,67 @@ function atob(s) {
     }
 }
 
+// Tüm yöntemlerle scx parse dene
+function parseScx(html) {
+    var methods = [
+        // Yöntem 1: Standard regex
+        function() {
+            var match = html.match(/var scx\s*=\s*(\{[\s\S]*?\});/);
+            if (match) return JSON.parse(match[1]);
+            return null;
+        },
+        // Yöntem 2: Dotall flag ile
+        function() {
+            var match = html.match(/var scx\s*=\s*(\{.*?\});/s);
+            if (match) return JSON.parse(match[1]);
+            return null;
+        },
+        // Yöntem 3: Index bazlı
+        function() {
+            var start = html.indexOf('var scx = ');
+            if (start === -1) return null;
+            var braceStart = start + 9;
+            var braceCount = 0;
+            var end = braceStart;
+            for (var i = braceStart; i < html.length; i++) {
+                if (html[i] === '{') braceCount++;
+                if (html[i] === '}') braceCount--;
+                if (braceCount === 0 && html[i] === '}') {
+                    end = i + 1;
+                    break;
+                }
+            }
+            var jsonStr = html.substring(braceStart, end);
+            return JSON.parse(jsonStr);
+        },
+        // Yöntem 4: order field'ına kadar
+        function() {
+            var match = html.match(/var scx\s*=\s*(\{[^}]*"order":\s*\d+\s*\});/);
+            if (match) return JSON.parse(match[1]);
+            return null;
+        },
+        // Yöntem 5: Sadece atom objesi
+        function() {
+            var match = html.match(/var scx\s*=\s*(\{"atom":\{[^}]*\}\});/);
+            if (match) return JSON.parse(match[1]);
+            return null;
+        }
+    ];
+    
+    for (var i = 0; i < methods.length; i++) {
+        try {
+            var result = methods[i]();
+            if (result) {
+                console.error("[FullHD Scraper] Yöntem " + (i+1) + " başarılı");
+                return result;
+            }
+        } catch(e) {
+            console.error("[FullHD Scraper] Yöntem " + (i+1) + " hata:", e.message);
+        }
+    }
+    return null;
+}
+
 function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
     return new Promise(function(resolve) {
         if (mediaType !== 'movie') {
@@ -65,48 +126,61 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
             })
             .then(function(res) { return res.text(); })
             .then(function(filmHtml) {
-                console.error("[FullHD Scraper] Film sayfası çekildi.");
+                console.error("[FullHD Scraper] Film sayfası çekildi. HTML uzunluğu:", filmHtml.length);
                 
-                // YENİ YÖNTEM: scx değişkenini bul
-                var scxMatch = filmHtml.match(/var scx = (\{.*?\});/);
-                if (scxMatch) {
-                    try {
-                        var scxData = JSON.parse(scxMatch[1]);
-                        var streams = [];
-                        var keys = ['atom', 'advid', 'advidprox', 'proton', 'fast', 'fastly', 'tr', 'en'];
-                        
-                        keys.forEach(function(key) {
-                            if (scxData[key] && scxData[key].sx && scxData[key].sx.t) {
-                                var t = scxData[key].sx.t;
-                                var items = Array.isArray(t) ? t : [t];
-                                
-                                items.forEach(function(item) {
-                                    if (typeof item === 'string') {
-                                        var rot13 = rtt(item);
-                                        var url = atob(rot13);
-                                        
-                                        if (url && url.startsWith('http')) {
-                                            console.error("[FullHD Scraper] Bulunan URL (" + key + "):", url);
-                                            streams.push({
-                                                name: "FullHD - " + key,
-                                                title: key + " Akışı",
-                                                url: url,
-                                                quality: "1080p",
-                                                headers: WORKING_HEADERS,
-                                                provider: "fullhd_scraper"
-                                            });
-                                        }
+                // Debug: scx ara
+                var scxIndex = filmHtml.indexOf('var scx');
+                console.error("[FullHD Scraper] scx index:", scxIndex);
+                
+                if (scxIndex > -1) {
+                    var snippet = filmHtml.substring(scxIndex, Math.min(scxIndex + 300, filmHtml.length));
+                    console.error("[FullHD Scraper] scx snippet:", snippet);
+                }
+                
+                // Tüm yöntemlerle dene
+                var scxData = parseScx(filmHtml);
+                
+                if (scxData) {
+                    console.error("[FullHD Scraper] scx parse edildi, anahtarlar:", Object.keys(scxData));
+                    var streams = [];
+                    var keys = ['atom', 'advid', 'advidprox', 'proton', 'fast', 'fastly', 'tr', 'en'];
+                    
+                    keys.forEach(function(key) {
+                        if (scxData[key] && scxData[key].sx && scxData[key].sx.t) {
+                            var t = scxData[key].sx.t;
+                            var items = Array.isArray(t) ? t : [t];
+                            
+                            items.forEach(function(item) {
+                                if (typeof item === 'string') {
+                                    var rot13 = rtt(item);
+                                    var url = atob(rot13);
+                                    
+                                    if (url && url.startsWith('http')) {
+                                        console.error("[FullHD Scraper] Bulunan URL (" + key + "):", url);
+                                        streams.push({
+                                            name: "FullHD - " + key,
+                                            title: key + " Akışı",
+                                            url: url,
+                                            quality: "1080p",
+                                            headers: WORKING_HEADERS,
+                                            provider: "fullhd_scraper"
+                                        });
                                     }
-                                });
-                            }
-                        });
-                        
-                        if (streams.length > 0) {
-                            return resolve(streams);
+                                }
+                            });
                         }
-                    } catch(e) {
-                        console.error("[FullHD Scraper] scx parse hatası:", e.message);
+                    });
+                    
+                    if (streams.length > 0) {
+                        return resolve(streams);
                     }
+                }
+                
+                // YEDEK: Eski ajax-data yöntemi
+                console.error("[FullHD Scraper] scx bulunamadı, ajax-data deneniyor...");
+                var ajaxMatch = filmHtml.match(/class="ajax-data"[^>]*data-id="([^"]+)"/);
+                if (ajaxMatch) {
+                    console.error("[FullHD Scraper] ajax-data bulundu, ancak şifreleme bilinmiyor");
                 }
                 
                 console.error("[FullHD Scraper] Stream bulunamadı.");
@@ -119,7 +193,7 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
     });
 }
 
-// KRİTİK: Export et
+// Export
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = { getStreams: getStreams };
 } else {
