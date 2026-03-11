@@ -1,11 +1,10 @@
 /**
- * FullHDFilmizlesene Nuvio Scraper - v16.6
- * NetMirror.js çalışma mantığı ve header yapısı entegre edildi.
+ * FullHDFilmizlesene Nuvio Scraper - v16.7
+ * System-Tolerant "Direct Link" Edition
  */
 
 var cheerio = require("cheerio-without-node-native");
 
-// NetMirror ve SineWix'te sorun çıkarmayan en stabil headerlar
 const NET_HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Linux; Android 14; SM-A546B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Mobile Safari/537.36',
     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
@@ -16,7 +15,6 @@ const NET_HEADERS = {
 
 const BASE_URL = "https://www.fullhdfilmizlesene.live";
 
-// RapidVid şifre çözücü (v16.2'den beri stabil çalışan kısım)
 function decodeRapidVid(data) {
     try {
         var r = data.split("").reverse().join(""),
@@ -34,36 +32,33 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
     return new Promise(function(resolve) {
         if (mediaType !== 'movie') return resolve([]);
 
+        // TMDB isteği (Bellek yormayan sade istek)
         var tmdbUrl = 'https://api.themoviedb.org/3/movie/' + tmdbId + '?language=tr-TR&api_key=4ef0d7355d9ffb5151e987764708ce96';
 
-        // 1. ADIM: TMDB'den film ismini al
         fetch(tmdbUrl)
             .then(function(res) { return res.json(); })
             .then(function(data) {
                 var query = data.title || data.original_title;
-                console.log('[FullHD] Aranan:', query);
-                
-                // 2. ADIM: Sitede arama yap (NetMirror stili fetch)
+                // Arama işlemini doğrudan başlat
                 return fetch(BASE_URL + '/arama/' + encodeURIComponent(query), { headers: NET_HEADERS });
             })
             .then(function(res) { return res.text(); })
             .then(function(html) {
                 var $ = cheerio.load(html);
-                var filmLink = $(".film-listesi a").first().attr("href") || $("a[href*='/film/']").first().attr("href");
+                var link = $(".film-listesi a").first().attr("href") || $("a[href*='/film/']").first().attr("href");
                 
-                if (!filmLink) throw new Error("Arama Sonucu Bulunamadı");
+                if (!link) throw new Error("Link bulunamadı");
                 
-                var filmUrl = filmLink.startsWith('http') ? filmLink : BASE_URL + filmLink;
+                var filmUrl = link.startsWith('http') ? link : BASE_URL + link;
                 return fetch(filmUrl, { headers: NET_HEADERS });
             })
             .then(function(res) { return res.text(); })
             .then(function(filmHtml) {
-                // vidid ayıklama
                 var vidMatch = filmHtml.match(/vidid\s*[:=]\s*['"]?(\d+)['"]?/i);
-                if (!vidMatch) throw new Error("Video ID Ayıklanamadı");
+                if (!vidMatch) throw new Error("ID Hatası");
 
-                var playerUrl = "https://rapidvid.net/e/" + vidMatch[1];
-                return fetch(playerUrl, { 
+                // RapidVid embed sayfasını çek
+                return fetch("https://rapidvid.net/e/" + vidMatch[1], { 
                     headers: { 'User-Agent': NET_HEADERS['User-Agent'], 'Referer': BASE_URL + '/' } 
                 });
             })
@@ -73,12 +68,11 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                 if (avMatch) {
                     var decrypted = decodeRapidVid(avMatch[1]);
                     if (decrypted) {
-                        var finalStreamUrl = decrypted.startsWith("//") ? "https:" + decrypted : decrypted;
+                        var streamUrl = decrypted.startsWith("//") ? "https:" + decrypted : decrypted;
                         
-                        // NetMirror'ın çalıştığı başarılı çıktı formatı
                         resolve([{
                             name: '⌜ FullHD ⌟ | RapidVid',
-                            url: finalStreamUrl,
+                            url: streamUrl,
                             quality: '1080p',
                             headers: {
                                 'User-Agent': NET_HEADERS['User-Agent'],
@@ -92,14 +86,12 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                 }
                 resolve([]);
             })
-            .catch(function(err) {
-                console.error('[FullHD] Scraper Hatası:', err.message);
+            .catch(function() {
                 resolve([]);
             });
     });
 }
 
-// Global Export
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = { getStreams: getStreams };
 } else {
