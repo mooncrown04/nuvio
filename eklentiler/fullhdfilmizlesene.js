@@ -1,137 +1,204 @@
-const cheerio = require('cheerio-without-node-native');
+/**
+ * FullHDFilmizlesene Nuvio Scraper - v25.0 (Final Fix - No Buffer Dependency)
+ */
 
-const MAIN_URL = "https://www.fullhdfilmizlesene.live";
-const TMDB_API_KEY = '4ef0d7355d9ffb5151e987764708ce96';
+var cheerio = require("cheerio-without-node-native");
 
-const HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-    "Referer": `${MAIN_URL}/`,
-    "Accept-Language": "tr-TR,tr;q=0.9"
+const BASE_URL = "https://www.fullhdfilmizlesene.live";
+const API_BASE = "https://www.fullhdfilmizlesene.live/player/api.php";
+
+const WORKING_HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+    'Accept-Language': 'tr-TR,tr;q=0.9',
+    'Referer': BASE_URL + '/',
+    'Origin': BASE_URL,
+    'Connection': 'keep-alive'
 };
 
-// =================================================================================
-// ŞİFRE ÇÖZÜCÜLER (Rapid2m3u8 - K9L Algoritması)
-// =================================================================================
-
-function rapidDecode(encodedString) {
+// Cihazda Buffer veya atob yoksa kullanılacak manuel Base64 çözücü
+function universalAtob(str) {
     try {
-        const reversed = encodedString.split('').reverse().join('');
-        const tString = Buffer.from(reversed, 'base64').toString('binary');
-        
-        let oBuilder = "";
-        const key = "K9L";
-        for (let i = 0; i < tString.length; i++) {
-            const keyChar = key[i % key.length];
-            const offset = (keyChar.charCodeAt(0) % 5) + 1;
-            oBuilder += String.fromCharCode(tString.charCodeAt(i) - offset);
+        if (typeof atob === 'function') return atob(str);
+        // Manuel fallback
+        var chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=';
+        var out = '';
+        str = String(str).replace(/[=]+$/, '');
+        for (var bc = 0, bs, buffer, idx = 0; buffer = str.charAt(idx++); ~buffer && (bs = bc % 4 ? bs * 64 + buffer : buffer, bc++ % 4) ? out += String.fromCharCode(255 & bs >> (-2 * bc & 6)) : 0) {
+            buffer = chars.indexOf(buffer);
         }
-        return Buffer.from(oBuilder, 'base64').toString('utf-8');
+        return out;
     } catch (e) { return null; }
 }
 
-function decodeSecret(s) {
+// RapidVid Çözücü - Buffer Hatası Giderildi
+function decodeRapidVid(encodedData) {
     try {
-        if (!s) return null;
-        let rotated = s.replace(/[a-zA-Z]/g, function(c) {
-            return String.fromCharCode((c <= "Z" ? 90 : 122) >= (c = c.charCodeAt(0) + 13) ? c : c - 26);
-        });
-        return Buffer.from(rotated, 'base64').toString('utf-8');
-    } catch (e) { return null; }
-}
-
-async function resolveHlsSource(embedUrl) {
-    try {
-        const res = await fetch(embedUrl, { headers: { ...HEADERS, "Referer": MAIN_URL } });
-        const html = await res.text();
-
-        // 1. av('...') pattern (RapidVid/Vidmoxy)
-        const avMatch = /av\('([^']+)'\)/.exec(html);
-        if (avMatch && avMatch[1]) {
-            let decoded = rapidDecode(avMatch[1]);
-            if (decoded) {
-                // VLC ve ExoPlayer'ın tanıması için uzantı kontrolü
-                if (!decoded.includes('.m3u8')) {
-                    decoded += "/index.m3u8";
-                }
-                return decoded;
-            }
-        }
-
-        // 2. Sayfa içinde m3u8 ara
-        const m3u8Match = /["'](https?:\/\/[^"']+\.m3u8[^"']*)["']/i.exec(html);
-        if (m3u8Match) return m3u8Match[1].replace(/\\/g, '');
-
-        return embedUrl;
-    } catch (e) { return embedUrl; }
-}
-
-// =================================================================================
-// ANA SCRAPER
-// =================================================================================
-
-async function getStreams(tmdbId, mediaType = 'movie') {
-    if (mediaType !== 'movie') return [];
-
-    try {
-        const tmdbRes = await fetch(`https://api.themoviedb.org/3/movie/${tmdbId}?api_key=${TMDB_API_KEY}&language=tr-TR`);
-        const mediaInfo = await tmdbRes.json();
-        const movieTitle = mediaInfo.title || mediaInfo.original_title;
-
-        // Arama kısmını genişlettik (Boş dönmemesi için)
-        const searchUrl = `${MAIN_URL}/arama/${encodeURIComponent(movieTitle)}`;
-        const searchRes = await fetch(searchUrl, { headers: HEADERS });
-        const searchHtml = await searchRes.text();
-        const $ = cheerio.load(searchHtml);
+        if (!encodedData) return null;
         
-        let filmLink = "";
-        $(".film-list li a, .film-box a, h2 a").each((i, el) => {
-            const href = $(el).attr("href");
-            if (href && href.includes("/film/")) {
-                filmLink = href;
-                return false;
-            }
-        });
-
-        if (!filmLink) return [];
-        const finalUrl = filmLink.startsWith("http") ? filmLink : MAIN_URL + filmLink;
-
-        const pageRes = await fetch(finalUrl, { headers: HEADERS });
-        const pageHtml = await pageRes.text();
-        const streams = [];
-
-        const scxMatch = /scx\s*=\s*({[\s\S]*?});/i.exec(pageHtml);
-        if (scxMatch) {
-            let jsonStr = scxMatch[1].replace(/'/g, '"').replace(/(\w+):/g, '"$1":').replace(/,\s*}/g, '}');
-            const data = JSON.parse(jsonStr);
-            const sources = ["proton", "atom", "tr", "en", "fast"];
-
-            for (const key of sources) {
-                if (data[key] && data[key].sx && data[key].sx.t) {
-                    const tokens = Array.isArray(data[key].sx.t) ? data[key].sx.t : [data[key].sx.t];
-                    for (const t of tokens) {
-                        const embedUrl = decodeSecret(t);
-                        if (embedUrl) {
-                            const videoUrl = await resolveHlsSource(embedUrl);
-                            streams.push({
-                                name: "FullHDFilm",
-                                title: `FHD - ${key.toUpperCase()}\n📼: ${movieTitle}`,
-                                url: videoUrl,
-                                quality: "1080p",
-                                headers: { 
-                                    "Referer": embedUrl,
-                                    "User-Agent": HEADERS["User-Agent"]
-                                },
-                                provider: 'FullHDFilmizlesene'
-                            });
-                        }
-                    }
-                }
-            }
+        // 1. Veriyi ters çevir
+        var reversed = encodedData.split('').reverse().join('');
+        
+        // 2. Base64 temizle
+        var cleaned = reversed.replace(/[^A-Za-z0-9+/=]/g, "");
+        
+        // 3. İlk aşama çözüm
+        var decodedBinary = universalAtob(cleaned);
+        if (!decodedBinary) return null;
+        
+        var key = "K9L";
+        var adjusted = "";
+        for (var i = 0; i < decodedBinary.length; i++) {
+            var charCode = decodedBinary.charCodeAt(i);
+            var shift = (key.charCodeAt(i % key.length) % 5) + 1;
+            adjusted += String.fromCharCode(charCode - shift);
         }
-        return streams;
-    } catch (error) {
-        return [];
+        
+        // 4. İkinci aşama çözüm (Final URL)
+        var finalUrl = universalAtob(adjusted);
+        if (finalUrl) {
+            finalUrl = finalUrl.replace(/\\/g, "").trim();
+            return finalUrl.startsWith('http') ? finalUrl : null;
+        }
+        return null;
+    } catch (e) {
+        console.error("[FullHD] Decode Hatası:", e.message);
+        return null;
     }
 }
 
-module.exports = { getStreams };
+function getStreamsFromAPI(vidid) {
+    return new Promise(function(resolve) {
+        var streams = [];
+        var completedRequests = 0;
+        var totalRequests = 2;
+        
+        function checkComplete() {
+            completedRequests++;
+            if (completedRequests >= totalRequests) {
+                console.error("[FullHD] Toplam stream:", streams.length);
+                resolve(streams);
+            }
+        }
+        
+        // Atom API (RapidVid)
+        var atomUrl = API_BASE + '?id=' + vidid + '&type=t&name=atom&get=video&format=json';
+        fetch(atomUrl, { headers: WORKING_HEADERS })
+            .then(function(res) { return res.json(); })
+            .then(function(data) {
+                if (data && data.html) {
+                    var playerUrl = data.html.replace(/\\/g, '');
+                    return fetch(playerUrl, { headers: WORKING_HEADERS });
+                }
+                throw new Error("Atom HTML yok");
+            })
+            .then(function(res) { return res ? res.text() : null; })
+            .then(function(playerHtml) {
+                if (!playerHtml) return;
+                var avMatch = playerHtml.match(/av\(['"]([^'"]+)['"]\)/);
+                if (avMatch) {
+                    var decoded = decodeRapidVid(avMatch[1]);
+                    if (decoded) {
+                        streams.push({
+                            name: "FullHD - Atom",
+                            title: "Atom (1080p)",
+                            url: decoded,
+                            quality: "1080p",
+                            headers: WORKING_HEADERS,
+                            provider: "fullhd_scraper"
+                        });
+                    }
+                }
+            })
+            .catch(function(err) { console.error("[FullHD] Atom Hatası:", err.message); })
+            .finally(function() { checkComplete(); });
+        
+        // Turbo API (M3U8)
+        var turboUrl = API_BASE + '?id=' + vidid + '&type=t&name=advid&get=video&pno=tr&format=json';
+        fetch(turboUrl, { headers: WORKING_HEADERS })
+            .then(function(res) { return res.json(); })
+            .then(function(data) {
+                if (data && data.html && data.html.includes('/watch/')) {
+                    var watchId = data.html.match(/\/watch\/(.*?)"/)[1];
+                    var playUrl = 'https://turbo.imgz.me/play/' + watchId + '?autoplay=true';
+                    return fetch(playUrl, { 
+                        headers: Object.assign({}, WORKING_HEADERS, { 'Referer': BASE_URL }) 
+                    });
+                }
+                throw new Error("Turbo Watch Linki Yok");
+            })
+            .then(function(res) { return res ? res.text() : null; })
+            .then(function(playHtml) {
+                if (!playHtml) return;
+                var m3u8Match = playHtml.match(/file:\s*"(.*?\.m3u8.*?)"/i);
+                if (m3u8Match) {
+                    streams.push({
+                        name: "FullHD - Turbo",
+                        title: "Turbo (HLS)",
+                        url: m3u8Match[1],
+                        quality: "1080p",
+                        headers: Object.assign({}, WORKING_HEADERS, { 'Referer': 'https://turbo.imgz.me/' }),
+                        provider: "fullhd_scraper"
+                    });
+                }
+            })
+            .catch(function(err) { console.error("[FullHD] Turbo Hatası:", err.message); })
+            .finally(function() { checkComplete(); });
+    });
+}
+
+function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
+    return new Promise(function(resolve) {
+        if (mediaType !== 'movie') return resolve([]);
+
+        var tmdbUrl = 'https://api.themoviedb.org/3/movie/' + tmdbId + '?language=tr-TR&api_key=4ef0d7355d9ffb5151e987764708ce96';
+        
+        fetch(tmdbUrl)
+            .then(function(res) { return res.json(); })
+            .then(function(data) {
+                var query = data.title || data.original_title;
+                var searchUrl = BASE_URL + '/arama/' + encodeURIComponent(query);
+                return fetch(searchUrl, { headers: WORKING_HEADERS });
+            })
+            .then(function(res) { return res.text(); })
+            .then(function(searchHtml) {
+                var $ = cheerio.load(searchHtml);
+                var filmLink = $(".film-listesi a").first().attr("href") || $("a[href*='/film/']").first().attr("href");
+                if (!filmLink) throw new Error("Film bulunamadı");
+                
+                var filmUrl = filmLink.startsWith('http') ? filmLink : BASE_URL + filmLink;
+                return fetch(filmUrl, { headers: WORKING_HEADERS });
+            })
+            .then(function(res) { return res.text(); })
+            .then(function(filmHtml) {
+                var vidMatch = filmHtml.match(/vidid\s*=\s*['"](\d+)['"]/);
+                if (vidMatch) return getStreamsFromAPI(vidMatch[1]);
+                
+                var scxMatch = filmHtml.match(/var scx = (\{.*?\});/);
+                if (scxMatch) {
+                    var scxData = JSON.parse(scxMatch[1]);
+                    if (scxData.sources) {
+                        return scxData.sources.map(s => ({
+                            name: "FullHD - " + (s.label || "Kaynak"),
+                            url: s.file,
+                            quality: s.label || "720p",
+                            headers: WORKING_HEADERS,
+                            provider: "fullhd_scraper"
+                        }));
+                    }
+                }
+                return [];
+            })
+            .then(function(streams) { resolve(streams); })
+            .catch(function(err) {
+                console.error('[FullHD Scraper Error]:', err.message);
+                resolve([]);
+            });
+    });
+}
+
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = { getStreams: getStreams };
+} else {
+    globalThis.getStreams = getStreams;
+}
