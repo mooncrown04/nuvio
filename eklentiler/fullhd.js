@@ -1,6 +1,6 @@
 /**
- * FullHDFilmizlesene Nuvio Scraper - v15.7 (Final)
- * Durum: Player ID başarıyla yakalandı, deşifre ve oynatma optimize edildi.
+ * FullHDFilmizlesene Nuvio Scraper - v15.8
+ * Durum: Player yakalama başarılı. Akış ve SSL stabilizasyonu eklendi.
  */
 
 var cheerio = require("cheerio-without-node-native");
@@ -17,7 +17,6 @@ function decodeRapidVid(encodedData) {
             var shift = (key.charCodeAt(i % key.length) % 5) + 1;
             adjusted += String.fromCharCode(charCode - shift);
         }
-        // Kotlin'deki çift katmanlı deşifrenin final adımı
         var finalUrl = atob(adjusted);
         return finalUrl.replace(/\\/g, "").trim();
     } catch (e) { return null; }
@@ -29,11 +28,12 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
 
         var userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 
+        // 1. Film Arama
         fetch('https://api.themoviedb.org/3/movie/' + tmdbId + '?api_key=4ef0d7355d9ffb5151e987764708ce96&language=tr-TR')
             .then(res => res.json())
             .then(data => {
                 var query = data.title || data.original_title;
-                console.error("[FullHD] v15.7 Başlatıldı: " + query);
+                console.error("[FullHD] v15.8 Başlatıldı: " + query);
                 return fetch(BASE_URL + '/arama/' + encodeURIComponent(query), { headers: { 'User-Agent': userAgent } });
             })
             .then(res => res.text())
@@ -46,24 +46,22 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
             .then(res => res.text())
             .then(filmHtml => {
                 var $ = cheerio.load(filmHtml);
-                var foundLinks = [];
-
-                // 1. Script içinden ID yakalama (En güvenli yol)
                 var vidIdMatch = filmHtml.match(/vidid\s*[:=]\s*['"]?(\d+)['"]?/i);
-                if (vidIdMatch) foundLinks.push("https://rapidvid.net/e/" + vidIdMatch[1]);
-
-                // 2. Iframe tarama
-                $("iframe").each(function() {
-                    var src = $(this).attr("src") || $(this).attr("data-src");
-                    if (src && (src.includes("rapid") || src.includes("moly"))) foundLinks.push(src);
-                });
-
-                if (foundLinks.length > 0) {
-                    var target = foundLinks[0].startsWith("//") ? "https:" + foundLinks[0] : foundLinks[0];
+                
+                if (vidIdMatch) {
+                    var target = "https://rapidvid.net/e/" + vidIdMatch[1];
                     console.error("[FullHD] Player Yakalandı: " + target);
-                    return fetch(target, { headers: { 'User-Agent': userAgent, 'Referer': BASE_URL + '/' } });
+                    
+                    // ÖNEMLİ: Cihazın sertifika hatasına takılmaması için doğrudan embed sayfasına gidiyoruz
+                    return fetch(target, { 
+                        headers: { 
+                            'User-Agent': userAgent, 
+                            'Referer': BASE_URL + '/',
+                            'Accept': 'text/html,application/xhtml+xml'
+                        } 
+                    });
                 }
-                throw new Error("Link yakalanamadı.");
+                throw new Error("ID bulunamadı.");
             })
             .then(res => res ? res.text() : null)
             .then(embedHtml => {
@@ -73,11 +71,9 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                 if (avMatch) {
                     var streamUrl = decodeRapidVid(avMatch[1]);
                     if (streamUrl) {
-                        console.error("[FullHD] BAŞARILI! Oynatılıyor...");
-                        
-                        // Linkin başına protokol ekle ve temizle
                         var finalUrl = streamUrl.startsWith("//") ? "https:" + streamUrl : streamUrl;
-
+                        console.error("[FullHD] AKIŞ HAZIR!");
+                        
                         return resolve([{
                             name: "FullHD Premium",
                             url: finalUrl,
@@ -85,7 +81,7 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                             headers: { 
                                 'Referer': 'https://rapidvid.net/', 
                                 'User-Agent': userAgent,
-                                'Origin': 'https://rapidvid.net'
+                                'Connection': 'keep-alive' 
                             }
                         }]);
                     }
