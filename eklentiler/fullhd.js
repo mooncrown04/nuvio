@@ -1,3 +1,22 @@
+/**
+ * FullHDFilmizlesene Nuvio Scraper - v17.0 (scx Support)
+ */
+
+var cheerio = require("cheerio-without-node-native");
+
+const WORKING_HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+    'Accept': 'video/webm,video/ogg,video/*;q=0.9,*/*;q=0.5',
+    'Accept-Language': 'tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7',
+    'Accept-Encoding': 'identity',
+    'Origin': 'https://www.fullhdfilmizlesene.live',
+    'Referer': 'https://www.fullhdfilmizlesene.live/',
+    'DNT': '1'
+};
+
+const BASE_URL = "https://www.fullhdfilmizlesene.live";
+
+// ROT13 decode
 function rtt(s) {
     return s.split('').map(function(c) {
         var code = c.charCodeAt(0);
@@ -7,6 +26,7 @@ function rtt(s) {
     }).join('');
 }
 
+// Base64 decode
 function atob(s) {
     try {
         return Buffer.from(s, 'base64').toString('utf8');
@@ -58,8 +78,6 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                         keys.forEach(function(key) {
                             if (scxData[key] && scxData[key].sx && scxData[key].sx.t) {
                                 var t = scxData[key].sx.t;
-                                
-                                // String veya Array olabilir
                                 var items = Array.isArray(t) ? t : [t];
                                 
                                 items.forEach(function(item) {
@@ -91,10 +109,7 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                     }
                 }
                 
-                // Eski yöntem (yedek)
-                console.error("[FullHD Scraper] scx bulunamadı, eski yöntem deneniyor...");
-                // ... eski ajax-data kodu buraya ...
-                
+                console.error("[FullHD Scraper] Stream bulunamadı.");
                 resolve([]);
             })
             .catch(function(err) {
@@ -102,4 +117,11 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                 resolve([]);
             });
     });
+}
+
+// KRİTİK: Export et
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = { getStreams: getStreams };
+} else {
+    globalThis.getStreams = getStreams;
 }
