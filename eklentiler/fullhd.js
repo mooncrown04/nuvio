@@ -1,10 +1,9 @@
 /**
- * FullHDFilmizlesene - v8.2 (SSL & Certificate Bypass Fix)
+ * FullHDFilmizlesene - v8.3 (Hardware Decoder & Memory Fix)
  */
 
 var cheerio = require("cheerio-without-node-native");
 var BASE_URL = "https://www.fullhdfilmizlesene.live";
-var HEADERS = { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" };
 
 function decodeRapid(input) {
   try {
@@ -27,29 +26,28 @@ function getStreams(tmdbId, mediaType) {
 
     fetch(tmdbUrl).then(function(res) { return res.json(); }).then(function(data) {
         var query = data.title || data.original_title;
-        return fetch(BASE_URL + "/arama/" + encodeURIComponent(query), { headers: HEADERS });
+        return fetch(BASE_URL + "/arama/" + encodeURIComponent(query));
     }).then(function(res) { return res.text(); }).then(function(html) {
         var $ = cheerio.load(html);
         var filmUrl = $("a[href*='/film/']").first().attr("href");
         if (!filmUrl) throw new Error("404");
-        return fetch(filmUrl.startsWith('http') ? filmUrl : BASE_URL + filmUrl, { headers: HEADERS });
+        return fetch(filmUrl.startsWith('http') ? filmUrl : BASE_URL + filmUrl);
     }).then(function(res) { return res.text(); }).then(function(filmHtml) {
         var vidid = filmHtml.match(/vidid\s*=\s*['"]([^'"]+)['"]/);
-        return fetch("https://rapidvid.net/e/" + vidid[1], { headers: HEADERS });
+        return fetch("https://rapidvid.net/e/" + vidid[1]);
     }).then(function(res) { return res.text(); }).then(function(embedHtml) {
         var av = embedHtml.match(/av\(['"]([^'"]+)['"]\)/);
         if (av && av[1]) {
             var finalUrl = decodeRapid(av[1]);
             if (finalUrl) {
-                // ÖNEMLİ: Linki Nuvio'ya en basit haliyle gönderiyoruz. 
-                // Header kalabalığı sertifika hatasını tetikliyor olabilir.
+                // Sadece en temel veriyi yolluyoruz
                 resolve([{
-                    name: "FullHD (v8.2)",
+                    name: "FullHD (Donanım Dostu)",
                     url: finalUrl,
                     quality: "1080p",
                     headers: { 
-                        "Referer": "https://rapidvid.net/",
-                        "Origin": "https://rapidvid.net" 
+                        "User-Agent": "Mozilla/5.0", 
+                        "Referer": "https://rapidvid.net/" 
                     } 
                 }]);
             } else { resolve([]); }
