@@ -21,16 +21,11 @@
       "description": "Streaming links from netmirror. Automatically disabled on iOS due to compatibility issues.",
       "version": "1.0.2",
       "author": "Nuvio Team",
-      "supportedTypes": [
-        "movie",
-        "tv"
-      ],
+      "supportedTypes": ["tv"],
       "filename": "eklentiler/fullhd.js",
       "enabled": true,
       "logo": "https://net2025.cc/favicon.ico",
-      "contentLanguage": ["en"],
-      "disabledPlatforms": ["ios"],
-      "supportsExternalPlayer": false
+      "contentLanguage": ["en"]
     }
     
   ]
