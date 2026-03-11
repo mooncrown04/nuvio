@@ -1,18 +1,10 @@
 /**
- * FullHDFilmizlesene Nuvio Scraper - v10.1
- * Değişiklik: API isteği POST'tan GET'e çevrildi + Headerlar sadeleştirildi.
+ * FullHDFilmizlesene Nuvio Scraper - v11.0
+ * Strateji: API.php'yi atlayıp doğrudan sayfa içindeki player linklerini toplar.
  */
 
 var cheerio = require("cheerio-without-node-native");
 var BASE_URL = "https://www.fullhdfilmizlesene.live";
-
-var NUVIO_HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-    'Accept': 'application/json, text/javascript, */*; q=0.01',
-    'Accept-Language': 'tr-TR,tr;q=0.9',
-    'X-Requested-With': 'XMLHttpRequest',
-    'DNT': '1'
-};
 
 function decodeContentX(encodedData) {
     try {
@@ -34,13 +26,14 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
         if (mediaType !== 'movie') return resolve([]);
 
         var tmdbUrl = 'https://api.themoviedb.org/3/movie/' + tmdbId + '?language=tr-TR&api_key=4ef0d7355d9ffb5151e987764708ce96';
+        var userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36';
 
         fetch(tmdbUrl)
             .then(function(res) { return res.json(); })
             .then(function(data) {
                 var query = data.title || data.original_title;
-                console.error("[FullHD] v10.1 Başladı: " + query);
-                return fetch(BASE_URL + '/arama/' + encodeURIComponent(query), { headers: { 'User-Agent': NUVIO_HEADERS['User-Agent'] } });
+                console.error("[FullHD] v11 Başladı (Direct): " + query);
+                return fetch(BASE_URL + '/arama/' + encodeURIComponent(query), { headers: { 'User-Agent': userAgent } });
             })
             .then(function(res) { return res.text(); })
             .then(function(html) {
@@ -49,58 +42,44 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                 if (!link) throw new Error("Film Bulunamadı");
 
                 var filmUrl = link.indexOf('http') === 0 ? link : BASE_URL + link;
-                return fetch(filmUrl, { headers: { 'User-Agent': NUVIO_HEADERS['User-Agent'] } });
-            })
-            .then(function(res) {
-                var setCookie = res.headers.get('set-cookie');
-                if (setCookie) NUVIO_HEADERS['Cookie'] = setCookie.split(';')[0];
-                return res.text();
-            })
-            .then(function(filmHtml) {
-                var vididMatch = filmHtml.match(/vidid\s*[:=]\s*['"]?(\d+)['"]?/i);
-                if (!vididMatch) throw new Error("vidid eksik");
-                
-                var vidid = vididMatch[1];
-                
-                // --- STRATEJİ DEĞİŞİKLİĞİ ---
-                // POST yerine sadece GET kullanarak JSON yanıtı zorluyoruz.
-                // Eğer site hala HTML dönüyorsa, 'type' değerini '1' veya '3' olarak deneyeceğiz.
-                var finalApiUrl = BASE_URL + "/player/api.php?id=" + vidid + "&type=t&get=video";
-                
-                console.error("[FullHD] API GET Sorgusu: " + vidid);
-
-                return fetch(finalApiUrl, {
-                    method: "GET",
-                    headers: NUVIO_HEADERS
-                });
+                console.error("[FullHD] Film Sayfası: " + filmUrl);
+                return fetch(filmUrl, { headers: { 'User-Agent': userAgent } });
             })
             .then(function(res) { return res.text(); })
-            .then(function(apiText) {
-                // Eğer hala HTML geliyorsa, logda içeriği daha fazla görmek için:
-                console.error("[FullHD] Yanıt (İlk 100): " + apiText.substring(0, 100));
-                
-                if (apiText.indexOf("<html") > -1) {
-                    throw new Error("API hala HTML donuyor, JSON bekleniyor");
-                }
+            .then(function(filmHtml) {
+                // YENİ STRATEJİ: API.php'yi çağırmıyoruz. 
+                // Sayfa içindeki iframe'leri veya data-url'leri tarıyoruz.
+                var streams = [];
+                var $ = cheerio.load(filmHtml);
 
-                var urls = apiText.match(/https?:\/\/[^"'\s<>\\ ]+/g) || [];
-                var embedUrl = urls.find(function(u) { return u.indexOf("rapid") > -1 || u.indexOf("moly") > -1; }) || urls[0];
-                
-                if (!embedUrl) throw new Error("Embed bulunamadı");
-                return fetch(embedUrl.replace(/\\/g, ""), { headers: { 'Referer': BASE_URL + '/' } });
+                // 1. Alternatif: Sayfa içinde gömülü olan "data-id" veya "source" linkleri
+                // FullHDFilmizlesene genellikle player'ı bir iframe içinde çağırır.
+                var embedMatch = filmHtml.match(/iframe\s+src=['"]([^'"]+player[^'"]+)['"]/i) || 
+                                 filmHtml.match(/['"](https?:\/\/rapidvid\.net\/[^'"]+)['"]/i) ||
+                                 filmHtml.match(/['"](https?:\/\/moly\.net\/[^'"]+)['"]/i);
+
+                if (embedMatch) {
+                    var embedUrl = embedMatch[1].replace(/&amp;/g, "&").replace(/\\/g, "");
+                    console.error("[FullHD] Embed URL Bulundu: " + embedUrl);
+                    
+                    return fetch(embedUrl, { headers: { 'Referer': BASE_URL + '/', 'User-Agent': userAgent } });
+                } else {
+                    throw new Error("Sayfa içinde embed linki bulunamadı");
+                }
             })
             .then(function(res) { return res.text(); })
             .then(function(embedHtml) {
+                // Rapidvid veya Moly içindeki 'av' şifresini çözme
                 var avMatch = embedHtml.match(/av\(['"]([^'"]+)['"]\)/);
                 if (avMatch) {
                     var decrypted = decodeContentX(avMatch[1]);
                     if (decrypted) {
                         resolve([{
-                            name: "FullHD v10.1 Fix",
+                            name: "FullHD Direct v11",
                             title: "FullHD Premium",
                             url: decrypted.indexOf("//") === 0 ? "https:" + decrypted : decrypted,
                             quality: "1080p",
-                            headers: { 'Referer': 'https://rapidvid.net/', 'User-Agent': NUVIO_HEADERS['User-Agent'] },
+                            headers: { 'Referer': 'https://rapidvid.net/', 'User-Agent': userAgent },
                             provider: "fullhd_scraper"
                         }]);
                         return;
@@ -118,5 +97,5 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = { getStreams: getStreams };
 } else {
-    global.getStreams = getStreams;
+    global.getStreams = global.getStreams || getStreams;
 }
