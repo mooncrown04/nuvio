@@ -1,6 +1,6 @@
 /**
- * MoOnCrOwN Precision Scraper - v7.0
- * Sadece İstenen İçeriği Getiren Hassas Filtreleme
+ * MoOnCrOwN Ultimate Scraper - v8.0
+ * Live TV (TRT 2 vb.) ve Film (Iron Man) Tam Uyumluluk
  */
 
 var cheerio = require("cheerio-without-node-native");
@@ -13,39 +13,45 @@ const SOURCES = {
 
 function normalizeText(text) {
     if (!text) return "";
-    return text.toLowerCase()
+    return text.toString().toLowerCase()
         .replace(/[İı]/g, 'i').replace(/[Ğğ]/g, 'g').replace(/[Üü]/g, 'u')
         .replace(/[Şş]/g, 's').replace(/[Öö]/g, 'o').replace(/[Çç]/g, 'c')
-        .replace(/[^a-z0-9 ]/g, '') // Sadece harf, rakam ve BOŞLUK bırakır
+        .replace(/[^a-z0-9]/g, '')
         .trim();
 }
 
 function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
     return new Promise(function(resolve, reject) {
-        console.error(">>> TALEP GELDİ: " + tmdbId + " | TIP: " + mediaType);
-        
-        var targetM3U = SOURCES[mediaType] || SOURCES.live;
         var isLive = (mediaType === 'live' || mediaType === 'channel');
+        
+        // KRİTİK KONTROL: Eğer tmdbId bir sayı değilse, bu bir kanal ismidir.
+        if (isNaN(tmdbId)) {
+            isLive = true;
+        }
+
+        console.error(">>> SORGULANIYOR: " + tmdbId + " | MOD: " + (isLive ? "CANLI" : "FILM"));
 
         var getMetadata = function() {
             if (isLive) {
-                return Promise.resolve({ search: normalizeText(tmdbId) });
+                // TRT 2 gibi metin aramaları için
+                var cleanSearch = normalizeText(tmdbId);
+                return Promise.resolve({ tr: cleanSearch, en: cleanSearch });
             } else {
+                // Iron Man gibi katalog aramaları için
                 var tmdbUrl = 'https://api.themoviedb.org/3/' + (mediaType === 'movie' ? 'movie' : 'tv') + '/' + tmdbId + '?api_key=4ef0d7355d9ffb5151e987764708ce96&language=tr-TR';
                 return fetch(tmdbUrl).then(function(res) { return res.json(); }).then(function(data) {
-                    var title = data.title || data.name;
-                    var original = data.original_title || data.original_name;
                     return { 
-                        tr: normalizeText(title), 
-                        en: normalizeText(original),
-                        raw: title 
+                        tr: normalizeText(data.title || data.name), 
+                        en: normalizeText(data.original_title || data.original_name) 
                     };
                 });
             }
         };
 
         getMetadata().then(function(keys) {
-            console.error(">>> TMDB'DEN GELEN: " + keys.tr);
+            var targetM3U = isLive ? SOURCES.live : (SOURCES[mediaType] || SOURCES.movie);
+            
+            console.error(">>> KAYNAK M3U: " + targetM3U);
 
             return fetch(targetM3U).then(function(res) { return res.text(); }).then(function(m3uContent) {
                 var lines = m3uContent.split('\n');
@@ -57,37 +63,32 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                         var m3uNameRaw = line.split(',').pop().trim();
                         var m3uNameNorm = normalizeText(m3uNameRaw);
 
-                        // --- KRİTİK FİLTRELEME MANTIĞI ---
-                        // Sadece 'içinde geçiyor mu' diye bakmıyoruz, 
-                        // M3U'daki isim TMDB'deki isme tam eşit mi ona bakıyoruz.
-                        var isMatch = (m3uNameNorm === keys.tr || m3uNameNorm === keys.en);
-
-                        // Eğer tam eşitlik yoksa (Yıl farkı vb. olabilir), çok yakın mı diye bak
-                        if (!isMatch) {
-                           // Örn: Aranan "venom", M3U "venom 2018" -> Bu eşleşsin
-                           // Ama aranan "venom", M3U "venom 2" -> Bu eşleşmesin (sayı farkı)
-                           if (m3uNameNorm.startsWith(keys.tr + " ") || m3uNameNorm.endsWith(" " + keys.tr)) {
-                               isMatch = true;
-                           }
+                        // Canlı TV'de "içinde geçme" (indexOf) daha sağlıklıdır çünkü listede "TRT 2 HD" yazabilir
+                        var isMatch = false;
+                        if (isLive) {
+                            isMatch = (m3uNameNorm.indexOf(keys.tr) !== -1);
+                        } else {
+                            // Filmlerde hala tam eşleşme (Precision) kullanıyoruz
+                            isMatch = (m3uNameNorm === keys.tr || m3uNameNorm === keys.en || m3uNameNorm.startsWith(keys.tr + " "));
                         }
 
                         if (isMatch) {
                             var streamUrl = lines[i + 1] ? lines[i + 1].trim() : "";
                             if (streamUrl.startsWith("http")) {
-                                console.error(">>> EŞLEŞTİ: " + m3uNameRaw);
                                 var logoMatch = line.match(/tvg-logo="([^"]+)"/);
                                 streams.push({
-                                    name: "MoOnCrOwN",
+                                    name: isLive ? "CANLI YAYIN" : "MoOnCrOwN",
                                     title: m3uNameRaw,
                                     url: streamUrl,
                                     poster: logoMatch ? logoMatch[1] : "",
-                                    quality: "1080p"
+                                    quality: isLive ? "LIVE" : "1080p"
                                 });
+                                if (isLive && streams.length >= 5) break; 
                             }
                         }
                     }
                 }
-                console.error(">>> TOPLAM UYGUN LİNK: " + streams.length);
+                console.error(">>> SONUÇ: " + streams.length + " adet bulundu.");
                 resolve(streams);
             });
         }).catch(function(err) {
@@ -97,10 +98,11 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
     });
 }
 
+// Export
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = { getStreams: getStreams };
 } else if (typeof globalThis !== 'undefined') {
-    globalThis.getStreams = getStreams;
+    globalThis.getStreams = globalThis.getStreams || getStreams;
 } else {
     global.getStreams = getStreams;
 }
