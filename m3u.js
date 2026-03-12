@@ -12,14 +12,10 @@ async function getChannels() {
         for (let i = 0; i < lines.length; i++) {
             let line = lines[i].trim();
             if (line.startsWith("#EXTINF")) {
-                // Regex ile tırnak içindeki değerleri güvenli çek
                 const logoMatch = line.match(/tvg-logo="([^"]+)"/i);
                 const groupMatch = line.match(/group-title="([^"]+)"/i);
-                
-                // Kanal adını virgülden sonrasını alarak bul
                 const namePart = line.substring(line.lastIndexOf(',') + 1).trim();
                 
-                // URL'yi bul (sonraki satırlarda gezerek)
                 let url = "";
                 for (let j = i + 1; j < lines.length; j++) {
                     let nextLine = lines[j].trim();
@@ -32,11 +28,12 @@ async function getChannels() {
 
                 if (url) {
                     list.push({
-                        id: "nv_" + namePart.toLowerCase().replace(/[^a-z0-9]/g, ""),
+                        // Site 'iptv_' önekini kullandığı için burayı güncelledik
+                        id: "iptv_" + namePart.toLowerCase().replace(/[^a-z0-9]/g, ""),
                         name: namePart,
                         url: url,
                         logo: logoMatch ? logoMatch[1] : "https://i.imgur.com/Dlsm9XP.png",
-                        group: groupMatch ? groupMatch[1] : "Genel"
+                        group: groupMatch ? groupMatch[1] : "All Channels"
                     });
                 }
             }
@@ -46,31 +43,30 @@ async function getChannels() {
     } catch (e) { return []; }
 }
 
-// Nuvio'nun beklediği standart fonksiyon yapısı
 globalThis.getCatalog = async function(args) {
+    const { type, id, extra } = args;
     const list = await getChannels();
-    const extra = args.extra || {};
     let filtered = list;
 
-    // Arama desteği
-    if (extra.search) {
-        filtered = list.filter(ch => ch.name.toLowerCase().includes(extra.search.toLowerCase()));
-    }
-
-    // Kategori desteği
-    if (extra.genre) {
-        filtered = list.filter(ch => ch.group === extra.genre);
+    // Sitenin verdiği katalog ID'lerine göre filtreleme yapıyoruz
+    if (id === "iptv_channels" || id === "iptv_movies") {
+        if (extra && extra.genre && extra.genre !== "All Channels") {
+            filtered = list.filter(ch => ch.group === extra.genre);
+        }
+        if (extra && extra.search) {
+            filtered = list.filter(ch => ch.name.toLowerCase().includes(extra.search.toLowerCase()));
+        }
     }
 
     return {
         metas: filtered.map(ch => ({
             id: ch.id,
-            type: "tv",
+            type: type, // tv veya movie
             name: ch.name,
             poster: ch.logo,
             background: ch.logo,
             description: ch.group,
-            posterShape: "square"
+            posterShape: type === "movie" ? "poster" : "square"
         }))
     };
 };
@@ -79,11 +75,10 @@ globalThis.getMeta = async function(args) {
     const list = await getChannels();
     const ch = list.find(c => c.id === args.id);
     if (!ch) return { meta: null };
-
     return {
         meta: {
             id: ch.id,
-            type: "tv",
+            type: args.type,
             name: ch.name,
             poster: ch.logo,
             videos: [{ id: ch.id, title: ch.name }]
