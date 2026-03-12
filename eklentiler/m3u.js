@@ -1,10 +1,10 @@
 /**
- * MoOnCrOwN Smart Search - Nuvio İçin Esnek Link Çözücü
+ * MoOnCrOwN Ultimate - Manifest Uyumlu Arama Motoru
  */
 
 const M3U_URL = "https://raw.githubusercontent.com/mooncrown04/nuvio/refs/heads/master/liste/canli.m3u";
 
-async function findStreamInM3U(targetId) {
+async function findStream(targetId) {
     try {
         const response = await fetch(M3U_URL);
         const text = await response.text();
@@ -14,31 +14,19 @@ async function findStreamInM3U(targetId) {
             let line = lines[i].trim();
             
             if (line.startsWith("#EXTINF")) {
-                // 1. tvg-id değerini al (Örn: trt1.tr)
-                const tvgIdMatch = line.match(/tvg-id="([^"]+)"/i);
-                const tvgId = tvgIdMatch ? tvgIdMatch[1].toLowerCase() : "";
-
-                // 2. Kanal ismini al ve temizle (Örn: trt1hd)
+                // M3U'daki kanal ismini al (Virgülden sonrası)
                 const namePart = line.substring(line.lastIndexOf(',') + 1).trim();
-                const cleanName = namePart.toLowerCase().replace(/[^a-z0-9]/g, "");
+                
+                // Manifestteki kurala göre ID oluştur: iptv_ + temizlenmiş isim
+                const generatedId = "iptv_" + namePart.toLowerCase().replace(/[^a-z0-9]/g, "");
 
-                // Gelen ID'yi temizleyip karşılaştıralım
-                const normalizedTargetId = targetId.toLowerCase().replace(/iptv_|nv_/g, "").replace(/[^a-z0-9.]/g, "");
-
-                // EŞLEŞME KONTROLÜ: 
-                // Ya tvg-id ile tutmalı, ya temizlenmiş kanal ismiyle, ya da prefixli haliyle
-                if (targetId === tvgId || 
-                    normalizedTargetId === cleanName || 
-                    targetId.includes(cleanName) ||
-                    normalizedTargetId === tvgId.replace(/[^a-z0-9]/g, "")) {
-                    
-                    // URL bulma döngüsü
+                // Eğer Nuvio'dan gelen ID bizim oluşturduğumuzla eşleşirse linki dön
+                if (targetId === generatedId) {
                     for (let j = i + 1; j < lines.length; j++) {
                         let nextLine = lines[j].trim();
                         if (nextLine && !nextLine.startsWith("#")) {
                             return { url: nextLine, name: namePart };
                         }
-                        if (nextLine.startsWith("#EXTINF")) break;
                     }
                 }
             }
@@ -47,12 +35,13 @@ async function findStreamInM3U(targetId) {
     return null;
 }
 
+// Oynatıcı (Stream) İsteği
 globalThis.getStreams = async function(args) {
-    const result = await findStreamInM3U(args.id);
+    const result = await findStream(args.id);
     if (result) {
         return {
             streams: [{
-                name: "MoOnCrOwN Engine",
+                name: "MoOnCrOwN",
                 title: result.name,
                 url: result.url,
                 behaviorHints: { isLive: true }
@@ -62,8 +51,9 @@ globalThis.getStreams = async function(args) {
     return { streams: [] };
 };
 
+// Detay (Meta) İsteği
 globalThis.getMeta = async function(args) {
-    const result = await findStreamInM3U(args.id);
+    const result = await findStream(args.id);
     if (!result) return { meta: null };
     return {
         meta: {
