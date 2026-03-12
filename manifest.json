@@ -1,16 +1,21 @@
 {
   "id": "nuvio35",
-  "version": "011",
+  "version": "0.1.1",
   "name": "MoOnCrOwN M3U",
+  "description": "MoOnCrOwN Ultimate M3U Engine for Nuvio",
   "logo": "https://i.imgur.com/Dlsm9XP.png",
   "resources": ["catalog", "meta", "stream"],
-  "types": ["tv", "movie"],
+  "types": ["tv"],
   "idPrefixes": ["nv_"],
   "catalogs": [
     {
       "id": "tum_liste",
       "type": "tv",
-      "name": "Favori TV"
+      "name": "Favori TV",
+      "extra": [
+        {"name": "search", "isRequired": false},
+        {"name": "genre", "isRequired": false}
+      ]
     }
   ],
   "scrapers": [
