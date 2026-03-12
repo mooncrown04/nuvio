@@ -1,8 +1,8 @@
 /**
- * MoOnCrOwN - Ultimate Provider (V15)
- * - Stabil Dizi Eşleşmesi
- * - Hızlı Çoklu Link Yakalama
- * - Timeout ve Hata Yönetimi
+ * MoOnCrOwN - Ultimate Provider (V16)
+ * - Sayıyla başlayan dizi isimleri için düzeltme yapıldı.
+ * - M3U satır sonu (virgül sonrası) önceliği eklendi.
+ * - Çoklu link desteği optimize edildi.
  */
 
 const SOURCES = {
@@ -21,11 +21,11 @@ const getStreams = function(tmdbId, mediaType, seasonNum, episodeNum) {
         const normalize = (text) => {
             if (!text) return "";
             return text.toString().toLowerCase()
-                .replace(/\(.*?\)/g, '')
-                .replace(/\[.*?\]/g, '')
+                .replace(/\(.*?\)/g, '')  // Parantezleri sil
+                .replace(/\[.*?\]/g, '')  // Köşeli parantezleri sil
                 .replace(/[İı]/g, 'i').replace(/[Ğğ]/g, 'g').replace(/[Üü]/g, 'u')
                 .replace(/[Şş]/g, 's').replace(/[Öö]/g, 'o').replace(/[Çç]/g, 'c')
-                .replace(/[^a-z0-9]/g, '') 
+                .replace(/[^a-z0-9]/g, '') // Sadece harf ve sayı kalsın
                 .trim();
         };
 
@@ -38,6 +38,9 @@ const getStreams = function(tmdbId, mediaType, seasonNum, episodeNum) {
             let sPad = sNum < 10 ? "0" + sNum : sNum;
             let ePad = eNum < 10 ? "0" + eNum : eNum;
 
+            // Dizi için arama etiketleri (s01e01, 1x01 vb.)
+            const episodeTags = ["s" + sPad + "e" + ePad, sNum + "x" + ePad, sNum + "x" + eNum];
+
             fetch(targetM3U)
                 .then(res => res.text())
                 .then(content => {
@@ -47,27 +50,26 @@ const getStreams = function(tmdbId, mediaType, seasonNum, episodeNum) {
                     for (let i = 0; i < lines.length; i++) {
                         let line = lines[i];
                         if (line.includes("#EXTINF")) {
-                            let match = line.match(/tvg-name="([^"]+)"/i) || line.match(/,(.*)$/);
-                            let m3uOriginalName = match ? (match[1] || match[0]).replace(",", "").trim() : "";
-                            let m3uClean = normalize(m3uOriginalName);
-
+                            // Satırın temizlenmiş hali
+                            let normLine = normalize(line);
                             let isMatch = false;
 
                             if (isSeries) {
-                                // Dizi kontrolü: İsim + Bölüm formatı
-                                let hasName = m3uClean.includes(queryTR) || m3uClean.includes(queryEN);
-                                let hasEp = m3uClean.includes("s"+sPad+"e"+ePad) || 
-                                            m3uClean.includes(sNum+"x"+eNum) ||
-                                            (m3uClean.includes(sNum+"s") && m3uClean.includes("bolum"+eNum));
+                                // 1. Adım: Satırda dizi adı geçiyor mu?
+                                let nameMatch = normLine.includes(queryTR) || normLine.includes(queryEN);
+                                // 2. Adım: Satırda bölüm bilgisi geçiyor mu?
+                                let epMatch = episodeTags.some(tag => normLine.includes(tag)) || 
+                                              (normLine.includes(sNum + "s") && normLine.includes("bolum" + eNum));
 
-                                if (hasName && hasEp) isMatch = true;
+                                if (nameMatch && epMatch) isMatch = true;
                             } else {
-                                // Film kontrolü: Tam eşleşme
-                                if (m3uClean === queryTR || m3uClean === queryEN) isMatch = true;
+                                // Filmlerde tam eşleşme devam
+                                let match = line.match(/tvg-name="([^"]+)"/i) || line.match(/,(.*)$/);
+                                let m3uName = match ? (match[1] || match[0]).replace(",", "").trim() : "";
+                                if (normalize(m3uName) === queryTR || normalize(m3uName) === queryEN) isMatch = true;
                             }
 
                             if (isMatch) {
-                                // Linki bul (EXTINF'ten sonraki ilk http satırı)
                                 let foundUrl = "";
                                 for (let j = 1; j <= 3; j++) {
                                     if (lines[i+j] && lines[i+j].trim().startsWith("http")) {
@@ -78,8 +80,8 @@ const getStreams = function(tmdbId, mediaType, seasonNum, episodeNum) {
 
                                 if (foundUrl) {
                                     results.push({
-                                        name: isSeries ? `🎬 Dizi: S${sPad} | E${ePad} (#${results.length + 1})` : `🎞️ Sinema: Link ${results.length + 1}`,
-                                        title: m3uOriginalName, 
+                                        name: isSeries ? `🎬 Dizi: S${sPad} | E${ePad} (${results.length + 1})` : `🎞️ Sinema: Link ${results.length + 1}`,
+                                        title: line.split(',').pop().trim() || "Kaynak", 
                                         url: foundUrl,
                                         http_headers: { "User-Agent": "VLC/3.0.18" }
                                     });
