@@ -1,25 +1,24 @@
 {
-  "id": "org.mooncrown.dynamic.m3u",
-  "version": "1.1.4",
-  "name": "MoOnCrOwN Dynamic",
+  "id": "org.mooncrown.m3u.engine",
+  "version": "1.2.0",
+  "name": "MoOnCrOwN M3U",
   "resources": ["catalog", "meta", "stream"],
   "types": ["tv"],
   "idPrefixes": ["nv_"],
   "catalogs": [
     {
-      "id": "m3u_liste",
+      "id": "m3u_katalog",
       "type": "tv",
-      "name": "M3U Canlı Kanallar"
+      "name": "MoOnCrOwN Kanallar"
     }
   ],
   "scrapers": [
     {
-      "id": "m3u-scraper-engine",
+      "id": "m3u-scraper",
       "name": "M3U Processor",
       "filename": "eklentiler/m3u.js",
-      "enabled": true,
-      "types": ["tv"],
-      "resources": ["catalog", "meta", "stream"]
+      "resources": ["catalog", "meta", "stream"],
+      "types": ["tv"]
     }
   ]
 }
