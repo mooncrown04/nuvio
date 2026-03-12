@@ -14,19 +14,7 @@
   "formats": ["mp4", "mkv", "hls", "m3u8"],
   "logo": "https://raw.githubusercontent.com/mooncrown04/nuvio/refs/heads/master/logo.png",
   "contentLanguage": ["tr"]
-},
-    {
-      "id": "fullhd",
-      "name": "FullHd",
-      "description": "Streaming links from netmirror. Automatically disabled on iOS due to compatibility issues.",
-      "version": "1.0.2",
-      "author": "Nuvio Team",
-      "supportedTypes": ["tv"],
-      "filename": "eklentiler/fullhd.js",
-      "enabled": true,
-      "logo": "https://net2025.cc/favicon.ico",
-      "contentLanguage": ["en"]
-    }
+}
     
   ]
 }
