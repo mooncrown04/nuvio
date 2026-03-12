@@ -1,28 +1,24 @@
 {
-  "id": "org.mooncrown.nuvio.live",
-  "version": "1.0.3",
-  "name": "MoOnCrOwN Live",
-  "description": "Nuvio Özel Canlı TV Motoru",
-  "logo": "https://st5.depositphotos.com/1041725/67731/v/380/depositphotos_677319750-stock-illustration-ararat-mountain-illustration-vector-white.jpg",
+  "id": "org.mooncrown.dynamic.m3u",
+  "version": "1.1.0",
+  "name": "MoOnCrOwN Dynamic Engine",
   "resources": ["catalog", "meta", "stream"],
-  "types": ["tv", "channel"],
+  "types": ["tv"],
   "idPrefixes": ["nv_"],
   "catalogs": [
     {
-      "id": "tum_liste",
+      "id": "m3u_liste",
       "type": "tv",
-      "name": "MoOnCrOwN Favoriler"
+      "name": "M3U Canlı Kanallar"
     }
   ],
   "scrapers": [
     {
-      "id": "mooncrown-scraper",
-      "name": "MoOnCrOwN Engine",
-      "version": "1.0.0",
-      "filename": "eklentiler/m3u.js", 
+      "id": "m3u-scraper-engine",
+      "name": "M3U Processor",
+      "filename": "eklentiler/m3u.js",
       "enabled": true,
-      "types": ["tv", "channel"],
-      "supportedTypes": ["tv", "channel"],
+      "types": ["tv"],
       "resources": ["catalog", "meta", "stream"]
     }
   ]
