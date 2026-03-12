@@ -1,9 +1,7 @@
 /**
- * MoOnCrOwN Ultimate Scraper - v8.0
- * Live TV (TRT 2 vb.) ve Film (Iron Man) Tam Uyumluluk
+ * MoOnCrOwN Manifest-Uyumlu Scraper - v11.0
+ * Stremio/Nuvio Katalog Yapısına %100 Uyumlu
  */
-
-var cheerio = require("cheerio-without-node-native");
 
 const SOURCES = {
     movie: "https://raw.githubusercontent.com/mooncrown04/nuvio/refs/heads/master/liste/film.m3u",
@@ -14,6 +12,7 @@ const SOURCES = {
 function normalizeText(text) {
     if (!text) return "";
     return text.toString().toLowerCase()
+        .replace("iptv_", "") // "iptv_trt2" gelirse "trt2" yapar
         .replace(/[İı]/g, 'i').replace(/[Ğğ]/g, 'g').replace(/[Üü]/g, 'u')
         .replace(/[Şş]/g, 's').replace(/[Öö]/g, 'o').replace(/[Çç]/g, 'c')
         .replace(/[^a-z0-9]/g, '')
@@ -22,24 +21,25 @@ function normalizeText(text) {
 
 function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
     return new Promise(function(resolve, reject) {
-        var isLive = (mediaType === 'live' || mediaType === 'channel');
+        // --- KRİTİK AYRIM: iptv_ ile başlıyorsa veya mediaType tv ise ---
+        var isIptvPrefix = (tmdbId && tmdbId.toString().startsWith("iptv_"));
         
-        // KRİTİK KONTROL: Eğer tmdbId bir sayı değilse, bu bir kanal ismidir.
-        if (isNaN(tmdbId)) {
-            isLive = true;
-        }
+        // Eğer katalogdan geliyorsa ID "iptv_" ile başlar.
+        // Bu durumda mediaType 'tv' olsa bile bu bir CANLI kanaldır.
+        var isLive = isIptvPrefix || mediaType === 'live' || mediaType === 'channel';
 
-        console.error(">>> SORGULANIYOR: " + tmdbId + " | MOD: " + (isLive ? "CANLI" : "FILM"));
+        console.error(">>> GIRDI: " + tmdbId + " | TIP: " + mediaType + " | MOD: " + (isLive ? "CANLI" : "KATALOG"));
 
         var getMetadata = function() {
             if (isLive) {
-                // TRT 2 gibi metin aramaları için
-                var cleanSearch = normalizeText(tmdbId);
-                return Promise.resolve({ tr: cleanSearch, en: cleanSearch });
+                // iptv_trt2 -> trt2 yapar
+                var clean = normalizeText(tmdbId);
+                console.error(">>> CANLI ARAMA ANAHTARI: " + clean);
+                return Promise.resolve({ tr: clean, en: clean });
             } else {
-                // Iron Man gibi katalog aramaları için
-                var tmdbUrl = 'https://api.themoviedb.org/3/' + (mediaType === 'movie' ? 'movie' : 'tv') + '/' + tmdbId + '?api_key=4ef0d7355d9ffb5151e987764708ce96&language=tr-TR';
-                return fetch(tmdbUrl).then(function(res) { return res.json(); }).then(function(data) {
+                // Gerçek Film/Dizi katalog araması
+                var url = 'https://api.themoviedb.org/3/' + (mediaType === 'movie' ? 'movie' : 'tv') + '/' + tmdbId + '?api_key=4ef0d7355d9ffb5151e987764708ce96&language=tr-TR';
+                return fetch(url).then(function(res) { return res.json(); }).then(function(data) {
                     return { 
                         tr: normalizeText(data.title || data.name), 
                         en: normalizeText(data.original_title || data.original_name) 
@@ -49,60 +49,45 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
         };
 
         getMetadata().then(function(keys) {
+            // Eğer isLive ise canli.m3u'yu, değilse ilgili m3u'yu seç
             var targetM3U = isLive ? SOURCES.live : (SOURCES[mediaType] || SOURCES.movie);
             
-            console.error(">>> KAYNAK M3U: " + targetM3U);
+            console.error(">>> HEDEF DOSYA: " + targetM3U);
 
-            return fetch(targetM3U).then(function(res) { return res.text(); }).then(function(m3uContent) {
-                var lines = m3uContent.split('\n');
+            return fetch(targetM3U).then(function(res) { return res.text(); }).then(function(m3u) {
+                var lines = m3u.split('\n');
                 var streams = [];
 
                 for (var i = 0; i < lines.length; i++) {
                     var line = lines[i];
                     if (line.toUpperCase().indexOf("#EXTINF") !== -1) {
-                        var m3uNameRaw = line.split(',').pop().trim();
-                        var m3uNameNorm = normalizeText(m3uNameRaw);
+                        var rawName = line.split(',').pop().trim();
+                        var normName = normalizeText(rawName);
 
-                        // Canlı TV'de "içinde geçme" (indexOf) daha sağlıklıdır çünkü listede "TRT 2 HD" yazabilir
-                        var isMatch = false;
-                        if (isLive) {
-                            isMatch = (m3uNameNorm.indexOf(keys.tr) !== -1);
-                        } else {
-                            // Filmlerde hala tam eşleşme (Precision) kullanıyoruz
-                            isMatch = (m3uNameNorm === keys.tr || m3uNameNorm === keys.en || m3uNameNorm.startsWith(keys.tr + " "));
-                        }
+                        // Canlı TV'de "içinde geçme" araması
+                        var match = isLive ? (normName.indexOf(keys.tr) !== -1) : (normName === keys.tr || normName === keys.en);
 
-                        if (isMatch) {
-                            var streamUrl = lines[i + 1] ? lines[i + 1].trim() : "";
-                            if (streamUrl.startsWith("http")) {
+                        if (match) {
+                            var url = lines[i + 1] ? lines[i + 1].trim() : "";
+                            if (url && url.startsWith("http")) {
                                 var logoMatch = line.match(/tvg-logo="([^"]+)"/);
                                 streams.push({
-                                    name: isLive ? "CANLI YAYIN" : "MoOnCrOwN",
-                                    title: m3uNameRaw,
-                                    url: streamUrl,
+                                    name: isLive ? "IPTV" : "MoOnCrOwN",
+                                    title: rawName,
+                                    url: url,
                                     poster: logoMatch ? logoMatch[1] : "",
                                     quality: isLive ? "LIVE" : "1080p"
                                 });
-                                if (isLive && streams.length >= 5) break; 
                             }
                         }
                     }
                 }
-                console.error(">>> SONUÇ: " + streams.length + " adet bulundu.");
+                console.error(">>> BULUNAN: " + streams.length);
                 resolve(streams);
             });
-        }).catch(function(err) {
-            console.error(">>> HATA: " + err.message);
-            resolve([]);
+        }).catch(function(e) { 
+            console.error(">>> HATA: " + e.message); 
+            resolve([]); 
         });
     });
-}
-
-// Export
-if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { getStreams: getStreams };
-} else if (typeof globalThis !== 'undefined') {
-    globalThis.getStreams = globalThis.getStreams || getStreams;
-} else {
-    global.getStreams = getStreams;
 }
