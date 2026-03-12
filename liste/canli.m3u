@@ -11,7 +11,7 @@ http://wowza.beinsports.com.tr/live/bshaber/playlist.m3u8
 #EXTINF:-1 tvg-id="" tvg-name="" tvg-logo="https://picon.pics/TR/Ulusal/TrtHaber.png" group-title="HABER KANALLARI",rocky
 https://trt.daioncdn.net/trt-haber/master.m3u8
 
-#EXTINF:-1 tvg-id="sinema1.tr" tvg-name="ÖRNEK SİNEMA" tvg-logo="https://i.imgur.com/Dlsm9XP.png" group-title="SİNEMA KANALLARI",awakado
+#EXTINF:-1 tvg-id="sinema1.tr" tvg-name="ÖRNEK SİNEMA" tvg-logo="https://i.imgur.com/Dlsm9XP.png" group-title="spor",awakado
 https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8
 #EXTINF:-1 tvg-id="trt1.tr" tvg-name="TRT 1 HD" tvg-logo="https://picon.pics/TR/Ulusal/Trt1.png" group-title="ULUSAL KANALLAR",TRT 1 HD
 https://trt.daioncdn.net/trt-1/master.m3u8?app=clean
