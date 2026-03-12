@@ -1,11 +1,11 @@
 #EXTM3U
 #EXTINF:-1 tvg-name="Fusion Türk" tvg-id="120" tvg-logo="https://feo.kablowebtv.com/resize/168A635D265A4328C2883FB4CD8FF/0/0/Vod/HLS/7d58e86c-d38e-4ef5-8ee0-fda0a7e65914.png" group-title="🇹🇷  DİZİ & SİNEMA KANALLARI 🎥🎦🎬",Fusion Türk
 http://162.212.179.32/akamaissh101/ssh101/084952510aaa/playlist.m3u8
-#EXTINF:-1 tvg-id="TRT1tr" tvg-name=" TRT 1 hd " tvg-logo="https://picon.pics/TR/Ulusal/Trt1.png" group-title="🇹🇷  ULUSAL KANALLAR":http-referrer="":http-user-agent="",nv_TRT 1
+#EXTINF:-1 tvg-id="TRT1tr" tvg-name=" TRT 1 hd " tvg-logo="https://picon.pics/TR/Ulusal/Trt1.png" group-title="🇹🇷  ULUSAL KANALLAR":http-referrer="":http-user-agent="",TRT 1
 https://trt.daioncdn.net/trt-1/master.m3u8?app=clean
-#EXTINF:-1 tvg-id="" tvg-name=" ATV" tvg-logo="https://picon.pics/TR/Ulusal/Atv.png" group-title="🇹🇷  ULUSAL KANALLAR",tmdb_TRT 1
+#EXTINF:-1 tvg-id="" tvg-name=" ATV" tvg-logo="https://picon.pics/TR/Ulusal/Atv.png" group-title="🇹🇷  ULUSAL KANALLAR",TRT 1
 https://rnttwmjcin.turknet.ercdn.net/lcpmvefbyo/atv/atv.m3u8
-#EXTINF:-1 tvg-name="Kanal D" tvg-id="Kanal D.tr"tvg-logo="https://i.ibb.co/hf2mSz5/kanal-d.png"group-title="🇹🇷  ULUSAL KANALLAR":http-referrer="":http-user-agent="",nv_trt1
+#EXTINF:-1 tvg-name="Kanal D" tvg-id="Kanal D.tr"tvg-logo="https://i.ibb.co/hf2mSz5/kanal-d.png"group-title="🇹🇷  ULUSAL KANALLAR":http-referrer="":http-user-agent="",trt1
 https://ackaxsqacw.turknet.ercdn.net/ozfkfbbjba/kanald/kanald_720p.m3u8
 #EXTINF:-1 tvg-id="" tvg-name="EURO STAR TV" tvg-logo="https://picon.pics/TR/Ulusal/Startv.png" group-title="🇹🇷  ULUSAL KANALLAR",TRT 2
 https://raw.githubusercontent.com/ipstreet312/freeiptv/master/ressources/tur/estar.m3u8
@@ -21,9 +21,9 @@ http://116.202.238.88/FOXTV_TR/index.m3u8
 https://uycyyuuzyh.turknet.ercdn.net/nphindgytw/nowtv/nowtv_720p.m3u8
 #EXTINF:-1 tvg-id="Kanal7Avrupa" tvg-name="Kanal 7 Avrupa" tvg-group="Ulusal - Yurt Dışı" group-title="EURO KANALLAR" tvg-logo="https://assets.tvcdn.net/d52bb3d8-b362-47c0-9b8e-bddc4ceb4fe5.png" ,Kanal 7 Avrupa
 https://livetv.radyotvonline.net/kanal7live/kanal7avr/chunklist.m3u8
-#EXTINF:-1 tvg-id="" tvg-name=" KANAL 7" tvg-logo="https://picon.pics/TR/Ulusal/Kanal7.png" group-title="🇹🇷  ULUSAL KANALLAR", KANAL 7
+#EXTINF:-1 tvg-id="" tvg-name=" KANAL 7" tvg-logo="https://picon.pics/TR/Ulusal/Kanal7.png" group-title="🇹🇷  ULUSAL KANALLAR",KANAL 7
 https://kanal7-live.daioncdn.net/kanal7/kanal7_720p.m3u8
-#EXTINF:-1 tvg-id="" tvg-name=" TV8" tvg-logo="https://picon.pics/TR/Ulusal/Tv8.png" group-title="🇹🇷  ULUSAL KANALLAR", TV8
+#EXTINF:-1 tvg-id="" tvg-name=" TV8" tvg-logo="https://picon.pics/TR/Ulusal/Tv8.png" group-title="🇹🇷  ULUSAL KANALLAR",TV8
 https://tv8.daioncdn.net/tv8/tv8.m3u8?app=7ddc255a-ef47-4e81-ab14-c0e5f2949788
 #EXTINF:-1 tvg-id="" tvg-name=" TEVE2" tvg-logo="https://picon.pics/TR/Ulusal/Teve2.png" group-title="🇹🇷  ULUSAL KANALLAR"", TEVE2
 https://ackaxsqacw.turknet.ercdn.net/ozfkfbbjba/teve2/teve2.m3u8
