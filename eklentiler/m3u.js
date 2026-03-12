@@ -1,6 +1,6 @@
 /**
- * MoOnCrOwN - Ultimate Zero-Lag v18.0
- * TMDB TAMAMEN DEVRE DIŞI - %100 GitHub M3U Odaklı
+ * MoOnCrOwN - Ghost TMDB Hibrit Çözüm
+ * Hem ID hem İsim üzerinden M3U taraması yapar.
  */
 
 var SOURCES = {
@@ -32,27 +32,22 @@ function parseAttributes(line) {
 
 var getStreams = function(tmdbId, mediaType, seasonNum, episodeNum) {
     return new Promise(function(resolve) {
-        // Canlı mı yoksa içerik mi kontrolü
-        var isLive = (tmdbId && tmdbId.toString().indexOf("iptv_") !== -1);
+        var isLive = (mediaType === 'live' || (tmdbId && tmdbId.toString().indexOf("iptv_") !== -1));
         var targetUrl = isLive ? SOURCES.live : (SOURCES[mediaType] || SOURCES.movie);
         
-        // Arama anahtarını hazırla (iptv_ önekini temizle veya tmdbId'yi kullan)
-        var rawKey = isLive ? tmdbId.toString().replace("iptv_", "") : tmdbId;
-        var searchKey = normalize(rawKey);
-
-        fetch(targetUrl)
-            .then(function(res) { return res.text(); })
-            .then(function(content) {
+        // M3U Arama Motoru
+        var runSearch = function(searchQuery) {
+            fetch(targetUrl).then(function(res) { return res.text(); }).then(function(content) {
                 var lines = content.split('\n');
                 var results = [];
+                var cleanQuery = normalize(searchQuery);
 
                 for (var i = 0; i < lines.length; i++) {
                     if (lines[i].toUpperCase().indexOf("#EXTINF") !== -1) {
                         var attrs = parseAttributes(lines[i]);
                         var m3uNameClean = normalize(attrs.name);
 
-                        // EŞLEŞME: M3U'daki isim ile gelen ID eşleşiyor mu?
-                        if (m3uNameClean.indexOf(searchKey) !== -1 || searchKey.indexOf(m3uNameClean) !== -1) {
+                        if (m3uNameClean.indexOf(cleanQuery) !== -1 || cleanQuery.indexOf(m3uNameClean) !== -1) {
                             var streamUrl = "";
                             if (lines[i+1] && lines[i+1].trim().startsWith("http")) streamUrl = lines[i+1].trim();
                             else if (lines[i+2] && lines[i+2].trim().startsWith("http")) streamUrl = lines[i+2].trim();
@@ -63,18 +58,33 @@ var getStreams = function(tmdbId, mediaType, seasonNum, episodeNum) {
                                     title: attrs.name.trim(),
                                     url: streamUrl,
                                     poster: attrs.logo || "",
-                                    http_headers: {
-                                        "User-Agent": "Mozilla/5.0",
-                                        "Referer": "https://nuvio.app/"
-                                    }
+                                    http_headers: { "User-Agent": "Mozilla/5.0", "Referer": "https://nuvio.app/" }
                                 });
                             }
                         }
                     }
                 }
                 resolve(results);
-            })
-            .catch(function() { resolve([]); });
+            }).catch(function() { resolve([]); });
+        };
+
+        // ANA TETİKLEYİCİ
+        if (isLive) {
+            // Canlıda TMDB bekleme, direkt ID'yi isme çevir ara
+            runSearch(tmdbId.toString().replace("iptv_", ""));
+        } else if (tmdbId) {
+            // Film/Dizi ise TMDB'yi "arka planda" dene ama kilitlenme
+            var tmdbKey = "4ef0d7355d9ffb5151e987764708ce96";
+            var type = (mediaType === 'tv' || seasonNum) ? 'tv' : 'movie';
+            var api = "https://api.themoviedb.org/3/" + type + "/" + tmdbId + "?api_key=" + tmdbKey + "&language=tr-TR";
+
+            fetch(api)
+                .then(function(r) { return r.json(); })
+                .then(function(d) { runSearch(d.title || d.name || tmdbId); })
+                .catch(function() { runSearch(tmdbId); }); // Hata olsa da ID ile aramaya devam et
+        } else {
+            resolve([]);
+        }
     });
 };
 
