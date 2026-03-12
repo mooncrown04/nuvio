@@ -1,52 +1,69 @@
 /**
- * MoOnCrOwN - Live TV Provider
- * Sadece Canlı TV odaklı, kanal ismi eşleştirmeli sürüm.
+ * MoOnCrOwN - Live TV Provider (V3 - DEBUG MODE)
+ * Adım adım konsol logları eklenmiş sürüm.
  */
 
 const LIVE_SOURCE = "https://raw.githubusercontent.com/mooncrown04/nuvio/refs/heads/master/liste/canli.m3u";
 
 const getStreams = function(tmdbId, mediaType, seasonNum, episodeNum, channelName) {
     return new Promise(function(resolve) {
-        // Sadece canlı yayın isteklerini işle, kanal adı yoksa boş dön
-        if (mediaType !== 'live' || !channelName) return resolve([]);
+        console.log("🚀 [Provider] İstek Alındı - Tip:", mediaType, "| Kanal:", channelName, "| ID:", tmdbId);
+
+        // 1. KONTROL: Doğru tipte miyiz?
+        if (mediaType !== 'live') {
+            console.warn("⚠️ [Provider] Tip 'live' değil, işlem durduruldu.");
+            return resolve([]);
+        }
+
+        let nameToSearch = channelName || tmdbId;
+        if (!nameToSearch) {
+            console.error("❌ [Provider] HATA: Aratılacak kanal ismi bulunamadı!");
+            return resolve([]);
+        }
 
         const normalize = (text) => {
             if (!text) return "";
             return text.toString().toLowerCase()
-                .replace(/\(.*?\)/g, '') // Parantez içini sil
                 .replace(/[İı]/g, 'i').replace(/[Ğğ]/g, 'g').replace(/[Üü]/g, 'u')
                 .replace(/[Şş]/g, 's').replace(/[Öö]/g, 'o').replace(/[Çç]/g, 'c')
-                .replace(/[^a-z0-9]/g, '') // Sadece harf ve sayı
                 .trim();
         };
 
-        const query = normalize(channelName);
+        const query = normalize(nameToSearch);
+        console.log("🔍 [Provider] Aranıyor (Normalize):", query);
 
+        // 2. KONTROL: M3U Dosyasına Erişim
+        console.log("📡 [Provider] M3U indiriliyor:", LIVE_SOURCE);
+        
         fetch(LIVE_SOURCE)
-            .then(res => res.text())
+            .then(res => {
+                if (!res.ok) throw new Error("M3U dosyası indirilemedi! Statü: " + res.status);
+                return res.text();
+            })
             .then(content => {
+                console.log("✅ [Provider] M3U indirildi. Satır sayısı:", content.split('\n').length);
+                
                 const lines = content.split('\n');
                 let results = [];
+                let matchCount = 0;
                 
                 for (let i = 0; i < lines.length; i++) {
                     let line = lines[i];
-                    if (line.includes("#EXTINF")) {
+                    
+                    if (line.startsWith("#EXTINF")) {
                         let normLine = normalize(line);
 
-                        // KANAL EŞLEŞTİRME: Uygulamadan gelen kanal ismi M3U satırında geçiyor mu?
                         if (normLine.includes(query)) {
-                            
-                            // Etiketleri çek (Kalite ve Dil)
-                            let quality = (line.match(/tvg-quality="([^"]*)"/i) || ["", ""])[1].trim();
-                            let language = (line.match(/tvg-language="([^"]*)"/i) || ["", ""])[1].trim();
-                            
-                            let extra = "";
-                            if (language) extra += ` [${language}]`;
-                            if (quality) extra += ` [${quality}]`;
+                            matchCount++;
+                            console.log(`🎯 [Match #${matchCount}] Satır bulundu:`, line.substring(0, 50) + "...");
 
-                            // Satırın altındaki linki bul
+                            let qualityMatch = line.match(/tvg-quality="([^"]*)"/i);
+                            let langMatch = line.match(/tvg-language="([^"]*)"/i);
+                            let q = (qualityMatch && qualityMatch[1]) ? ` [${qualityMatch[1]}]` : "";
+                            let l = (langMatch && langMatch[1]) ? ` [${langMatch[1]}]` : "";
+
                             let streamUrl = "";
-                            for (let j = 1; j <= 3; j++) {
+                            for (let j = 1; j <= 4; j++) {
                                 if (lines[i + j] && lines[i + j].trim().startsWith("http")) {
                                     streamUrl = lines[i + j].trim();
                                     break;
@@ -55,18 +72,25 @@ const getStreams = function(tmdbId, mediaType, seasonNum, episodeNum, channelNam
 
                             if (streamUrl) {
                                 results.push({
-                                    name: `📡 CANLI${extra || " [HD]"}`,
-                                    title: line.split(',').pop().trim(), // Kanalın tam adı
+                                    name: `📡 CANLI${l}${q}`,
+                                    title: line.split(',').pop().trim() || "Kanal",
                                     url: streamUrl,
                                     http_headers: { "User-Agent": "VLC/3.0.18" }
                                 });
+                            } else {
+                                console.error("❌ [Provider] HATA: Kanal bulundu ama altında URL yok! Satır:", i);
                             }
                         }
                     }
                 }
-                resolve(results);
+
+                console.log("📊 [Provider] Arama bitti. Toplam Sonuç:", results.length);
+                resolve(results.slice(0, 10));
             })
-            .catch(() => resolve([]));
+            .catch(err => {
+                console.error("🔴 [Provider] KRİTİK HATA:", err.message);
+                resolve([]);
+            });
     });
 };
 
