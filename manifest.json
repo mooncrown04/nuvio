@@ -1,25 +1,34 @@
 {
-  "id": "org.mooncrown.dynamic",
-  "version": "1.0.4",
-  "name": "MoOnCrOwN TV",
-  "description": "M3U ve TMDB Motoru",
+  "id": "org.mooncrown.ultimate.v8",
+  "version": "0.0.8",
+  "name": "MoOnCrOwN M3U",
+  "logo": "https://st5.depositphotos.com/1041725/67731/v/380/depositphotos_677319750-stock-illustration-ararat-mountain-illustration-vector-white.jpg",
   "resources": ["catalog", "meta", "stream"],
   "types": ["tv", "movie"],
-  "idPrefixes": ["nv_", "tmdb_"],
+  "idPrefixes": ["nv_", "tmdb_", "iptv_"],
   "catalogs": [
     {
-      "id": "mc_live_tv",
+      "id": "mc_tum_liste",
       "type": "tv",
-      "name": "Canlı Kanallar"
+      "name": "Canlı TV",
+      "extra": [
+        { "name": "search", "isRequired": false },
+        { 
+          "name": "genre", 
+          "isRequired": false, 
+          "options": ["ULUSAL KANALLAR", "SPOR KANALLARI", "SİNEMA KANALLARI", "HABER KANALLARI", "BELGESEL"] 
+        }
+      ]
+    },
+    {
+      "id": "mc_film_liste",
+      "type": "movie",
+      "name": "M3U Sinema",
+      "extra": [{ "name": "search" }]
     }
   ],
-  "scrapers": [
-    {
-      "id": "mc_scraper",
-      "name": "MC Scraper",
-      "enabled": true,
-      "types": ["tv", "movie"],
-      "resources": ["catalog", "meta", "stream"]
-    }
-  ]
+  "behaviorHints": {
+    "configurable": true,
+    "configurationRequired": false
+  }
 }
