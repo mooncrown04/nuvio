@@ -1,15 +1,1 @@
-{"id":"org.stremio.m3u-epg-addon",
-"version":"1.2.0",
-"name":"M3U/EPG TV Addon",
-"description":"IPTV addon with M3U, EPG & Xtream (JSON/M3U) + encrypted configs, LRU/Redis cache, cache toggle, EPG offset",
-"resources":["catalog","stream","meta"],
-"types":["tv","movie"],
-"catalogs":[{"type":"tv","id":"iptv_channels","name":"IPTV Channels","extra":[{"name":"genre"},{"name":"search"},
-{"name":"skip"}],
-"genres":["All Channels","🇹🇷  ÇOCUK KANALLARI 👶🍼","🇹🇷  DİZİ & SİNEMA KANALLARI 🎥🎦🎬",
-"🇹🇷  MÜZİK KANALLARI 🎵🎸🎻🎹","🇹🇷  RADYO","🇹🇷  SPOR KANALLARI [⚽🏀🏐🥎]","🇹🇷  ULUSAL KANALLAR","🇹🇷 HABER KANALLARI",
-"🇹🇷 YEREL KANALLAR 💒🏠🏯","🇹🇷⚽🏀🏐🥎🦁🌲👩🖊️ TR BELGESEL & YAŞAM & EĞİTİM KANALLARI","✨IMDb Top Rated✨",
-"3 Body Problem","𝖡𝖤𝖫𝖦𝖤𝖲𝖤𝖫 & YAŞAM & EĞİTİM KANALLARI","deneme","EURO KANALLAR","group-title=","HABER KANALLARI","Sinevizyon","YABANCI  KANALLAR"]},
-{"type":"movie","id":"iptv_movies","name":"IPTV Movies",
-"extra":[{"name":"search"},{"name":"skip"}]}],
-"idPrefixes":["iptv_"],"behaviorHints":{"configurable":true,"configurationRequired":false}}
+{"id":"org.stremio.m3u-epg-addon","version":"1.2.0","name":"M3U/EPG TV Addon","description":"IPTV addon with M3U, EPG & Xtream (JSON/M3U) + encrypted configs, LRU/Redis cache, cache toggle, EPG offset","resources":["catalog","stream","meta"],"types":["tv","movie"],"catalogs":[{"type":"tv","id":"iptv_channels","name":"IPTV Channels","extra":[{"name":"genre"},{"name":"search"},{"name":"skip"}],"genres":["All Channels","🇹🇷  ÇOCUK KANALLARI 👶🍼","🇹🇷  DİZİ & SİNEMA KANALLARI 🎥🎦🎬","🇹🇷  MÜZİK KANALLARI 🎵🎸🎻🎹","🇹🇷  RADYO","🇹🇷  SPOR KANALLARI [⚽🏀🏐🥎]","🇹🇷  ULUSAL KANALLAR","🇹🇷 HABER KANALLARI","🇹🇷 YEREL KANALLAR 💒🏠🏯","🇹🇷⚽🏀🏐🥎🦁🌲👩🖊️ TR BELGESEL & YAŞAM & EĞİTİM KANALLARI","✨IMDb Top Rated✨","3 Body Problem","𝖡𝖤𝖫𝖦𝖤𝖲𝖤𝖫 & YAŞAM & EĞİTİM KANALLARI","deneme","EURO KANALLAR","group-title=","HABER KANALLARI","Sinevizyon","YABANCI  KANALLAR"]},{"type":"movie","id":"iptv_movies","name":"IPTV Movies","extra":[{"name":"search"},{"name":"skip"}]}],"idPrefixes":["iptv_"],"behaviorHints":{"configurable":true,"configurationRequired":false}}
