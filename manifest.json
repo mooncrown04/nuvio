@@ -1,12 +1,44 @@
-"catalogs": [
-  {
-    "id": "tum_liste",
-    "type": "tv",
-    "name": "MoOnCrOwN TV",
-    "extra": [
-      {"name": "search", "isRequired": false},
-      {"name": "genre", "isRequired": false}
-    ],
-    "genres": ["ULUSAL KANALLAR", "SPOR KANALLARI", "HABER KANALLARI", "SİNEMA KANALLARI"]
-  }
-]
+{
+  "id": "nuvio35",
+  "version": "0.1.1",
+  "name": "MoOnCrOwN M3U",
+  "description": "MoOnCrOwN Ultimate M3U Scraper for Nuvio",
+  "logo": "https://i.imgur.com/Dlsm9XP.png",
+  "resources": ["catalog", "meta", "stream"],
+  "types": ["tv"],
+  "idPrefixes": ["nv_"],
+  "catalogs": [
+    {
+      "id": "tum_liste",
+      "type": "tv",
+      "name": "Favori TV",
+      "extra": [
+        {
+          "name": "search",
+          "isRequired": false
+        },
+        {
+          "name": "genre",
+          "isRequired": false
+        }
+      ],
+      "genres": [
+        "ULUSAL KANALLAR",
+        "SPOR KANALLARI",
+        "HABER KANALLARI",
+        "SİNEMA KANALLARI",
+        "Genel"
+      ]
+    }
+  ],
+  "scrapers": [
+    {
+      "id": "mc_scraper",
+      "name": "MC Engine",
+      "filename": "m3u.js",
+      "enabled": true,
+      "types": ["tv"],
+      "resources": ["catalog", "meta", "stream"]
+    }
+  ]
+}
