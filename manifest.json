@@ -1,7 +1,7 @@
 {
   "id": "org.mooncrown.dynamic.m3u",
-  "version": "1.1.0",
-  "name": "MoOnCrOwN Dynamic Engine",
+  "version": "1.1.4",
+  "name": "MoOnCrOwN Dynamic",
   "resources": ["catalog", "meta", "stream"],
   "types": ["tv"],
   "idPrefixes": ["nv_"],
