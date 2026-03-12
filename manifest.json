@@ -1,26 +1,44 @@
 {
-  "id": "org.mooncrown.m3u.dynamic",
-  "version": "3.2.0",
-  "name": "MoOnCrOwN Engine",
-  "description": "Dinamik M3U ve TMDB Eşleşme Motoru",
-  "logo": "https://i.imgur.com/Dlsm9XP.png",
-  "resources": ["catalog", "meta", "stream"],
-  "types": ["tv", "movie", "series"],
-  "idPrefixes": ["nv_", "tmdb_"],
+  "id": "org.stremio.m3u-epg-addon",
+  "version": "1.3.0",
+  "name": "MoOnCrOwN IPTV Engine",
+  "description": "Dinamik M3U, EPG & TMDB Matcher",
+  "resources": ["catalog", "stream", "meta"],
+  "types": ["tv", "movie"],
+  "idPrefixes": ["iptv_", "tmdb_", "nv_"],
   "catalogs": [
     {
-      "id": "m3u_katalog",
       "type": "tv",
-      "name": "Canlı Kanallar"
+      "id": "iptv_channels",
+      "name": "IPTV Kanallar",
+      "extra": [
+        { "name": "genre" },
+        { "name": "search" },
+        { "name": "skip" }
+      ],
+      "genres": [
+        "All Channels", "🇹🇷 ULUSAL KANALLAR", "🇹🇷 SPOR KANALLARI", "🇹🇷 DİZİ & SİNEMA", "🇹🇷 BELGESEL"
+      ]
+    },
+    {
+      "type": "movie",
+      "id": "iptv_movies",
+      "name": "IPTV Movies",
+      "extra": [{ "name": "search" }, { "name": "skip" }]
     }
   ],
   "scrapers": [
     {
-      "id": "m3u-engine",
+      "id": "m3u-dynamic-engine",
       "name": "MC Scraper",
+      "filename": "eklentiler/m3u.js",
       "enabled": true,
-      "types": ["tv", "movie", "series"],
-      "resources": ["catalog", "meta", "stream"]
+      "types": ["tv", "movie"],
+      "resources": ["catalog", "stream", "meta"]
     }
-  ]
+  ],
+  "behaviorHints": {
+    "configurable": true,
+    "configurationRequired": false
+  }
 }
