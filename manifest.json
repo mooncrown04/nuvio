@@ -1,24 +1,24 @@
 {
   "id": "org.mooncrown.m3u.dynamic",
-  "version": "2.0.0",
+  "version": "3.1.0",
   "name": "MoOnCrOwN Dynamic",
-  "description": "M3U to Dynamic Catalog Engine",
+  "description": "M3U and TMDB Link Provider",
   "resources": ["catalog", "meta", "stream"],
-  "types": ["tv"],
-  "idPrefixes": ["nv_"],
+  "types": ["tv", "movie"],
+  "idPrefixes": ["nv_", "tmdb_"],
   "catalogs": [
     {
       "id": "m3u_katalog",
       "type": "tv",
-      "name": "M3U Kanallar"
+      "name": "Canlı Kanallar"
     }
   ],
   "scrapers": [
     {
       "id": "m3u-engine",
-      "name": "M3U Processor",
+      "name": "M3U Scraper",
       "enabled": true,
-      "types": ["tv"],
+      "types": ["tv", "movie"],
       "resources": ["catalog", "meta", "stream"]
     }
   ]
