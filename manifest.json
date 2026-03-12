@@ -1,61 +1,15 @@
-{
-  "id": "nuvio35",
-  "version": "1.2.0",
-  "name": "MoOnCrOwN M3U",
-  "description": "IPTV addon with M3U for Nuvio",
-  "logo": "https://i.imgur.com/Dlsm9XP.png",
-  "resources": [
-    "catalog",
-    "stream",
-    "meta"
-  ],
-  "types": [
-    "tv",
-    "movie"
-  ],
-  "catalogs": [
-    {
-      "type": "tv",
-      "id": "nv_channels",
-      "name": "MoOnCrOwN TV Kanalları",
-      "extra": [
-        { "name": "genre" },
-        { "name": "search" },
-        { "name": "skip" }
-      ],
-      "genres": [
-        "ULUSAL KANALLAR",
-        "SPOR KANALLARI",
-        "HABER KANALLARI",
-        "SİNEMA KANALLARI",
-        "Genel"
-      ]
-    },
-    {
-      "type": "movie",
-      "id": "nv_movies",
-      "name": "MoOnCrOwN Filmler",
-      "extra": [
-        { "name": "search" },
-        { "name": "skip" }
-      ]
-    }
-  ],
-  "idPrefixes": [
-    "nv_"
-  ],
-  "scrapers": [
-    {
-      "id": "mc_scraper",
-      "name": "MC Engine",
-      "filename": "m3u.js",
-      "enabled": true,
-      "types": ["tv", "movie"],
-      "resources": ["catalog", "meta", "stream"]
-    }
-  ],
-  "behaviorHints": {
-    "configurable": true,
-    "configurationRequired": false
-  }
-}
+{"id":"org.stremio.m3u-epg-addon",
+"version":"1.2.0",
+"name":"M3U/EPG TV Addon",
+"description":"IPTV addon with M3U, EPG & Xtream (JSON/M3U) + encrypted configs, LRU/Redis cache, cache toggle, EPG offset",
+"resources":["catalog","stream","meta"],
+"types":["tv","movie"],
+"catalogs":[{"type":"tv","id":"iptv_channels","name":"IPTV Channels","extra":[{"name":"genre"},{"name":"search"},
+{"name":"skip"}],
+"genres":["All Channels","🇹🇷  ÇOCUK KANALLARI 👶🍼","🇹🇷  DİZİ & SİNEMA KANALLARI 🎥🎦🎬",
+"🇹🇷  MÜZİK KANALLARI 🎵🎸🎻🎹","🇹🇷  RADYO","🇹🇷  SPOR KANALLARI [⚽🏀🏐🥎]","🇹🇷  ULUSAL KANALLAR","🇹🇷 HABER KANALLARI",
+"🇹🇷 YEREL KANALLAR 💒🏠🏯","🇹🇷⚽🏀🏐🥎🦁🌲👩🖊️ TR BELGESEL & YAŞAM & EĞİTİM KANALLARI","✨IMDb Top Rated✨",
+"3 Body Problem","𝖡𝖤𝖫𝖦𝖤𝖲𝖤𝖫 & YAŞAM & EĞİTİM KANALLARI","deneme","EURO KANALLAR","group-title=","HABER KANALLARI","Sinevizyon","YABANCI  KANALLAR"]},
+{"type":"movie","id":"iptv_movies","name":"IPTV Movies",
+"extra":[{"name":"search"},{"name":"skip"}]}],
+"idPrefixes":["iptv_"],"behaviorHints":{"configurable":true,"configurationRequired":false}}
