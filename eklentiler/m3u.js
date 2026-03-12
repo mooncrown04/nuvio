@@ -1,6 +1,8 @@
 /**
- * MoOnCrOwN - Film & Dizi Deposu (V6)
- * Referer silindi, fonksiyon export sorunu düzeltildi.
+ * MoOnCrOwN - Film & Dizi Deposu (V8)
+ * - TMDB Çift İsim (TR/EN) Desteği
+ * - Nokta Atışı Arama Mantığı
+ * - Dizi S/E Entegrasyonu
  */
 
 const SOURCES = {
@@ -10,30 +12,46 @@ const SOURCES = {
 
 const getStreams = function(tmdbId, mediaType, seasonNum, episodeNum) {
     return new Promise(function(resolve) {
-        // Hata ayıklama için başlangıç logu
-        console.log(`[M3U_LOG] Baslatildi: ${tmdbId} | Tip: ${mediaType}`);
+        console.log(`[M3U_LOG] İstek Geldi: ${tmdbId} | Tip: ${mediaType}`);
 
-        if (mediaType === 'live') {
-            return resolve([]);
-        }
+        if (mediaType === 'live') return resolve([]);
 
         let cleanId = tmdbId ? tmdbId.toString().replace(/^[a-z0-9]+:/i, "") : "";
         let isSeries = (mediaType === 'series' || (mediaType === 'tv' && seasonNum));
         let targetM3U = isSeries ? SOURCES.tv : SOURCES.movie;
 
-        // Yazı temizleme fonksiyonu
+        // Yazı Temizleme (Boşluk ve noktalama işaretlerini yok sayar)
         const normalize = (text) => {
             if (!text) return "";
             return text.toString().toLowerCase()
                 .replace(/[İı]/g, 'i').replace(/[Ğğ]/g, 'g').replace(/[Üü]/g, 'u')
                 .replace(/[Şş]/g, 's').replace(/[Öö]/g, 'o').replace(/[Çç]/g, 'c')
-                .replace(/[^a-z0-9]/g, '') // Harf ve sayı dışındaki her şeyi (boşluk dahil) siler
+                .replace(/[^a-z0-9]/g, '') 
                 .trim();
         };
 
-        const runSearch = (baseTitle) => {
-            const queryClean = normalize(baseTitle);
-            console.log(`[M3U_LOG] Aranan Kelime: ${queryClean}`);
+        const runSearch = (trName, enName) => {
+            const queryTR = normalize(trName);
+            const queryEN = normalize(enName);
+            
+            // Dizi ise bölüm formatlarını hazırla
+            let variations = [];
+            if (isSeries && seasonNum && episodeNum) {
+                let s = seasonNum < 10 ? "0" + seasonNum : seasonNum;
+                let e = episodeNum < 10 ? "0" + episodeNum : episodeNum;
+                
+                // Örn: breakingbads01e01, breakingbad1x1
+                variations.push(queryTR + "s" + s + "e" + e);
+                variations.push(queryEN + "s" + s + "e" + e);
+                variations.push(queryTR + seasonNum + "x" + episodeNum);
+                variations.push(queryEN + seasonNum + "x" + episodeNum);
+            } else {
+                // Film ise sadece isimleri kullan
+                variations.push(queryTR);
+                variations.push(queryEN);
+            }
+
+            console.log(`[M3U_LOG] Aranıyor: ${variations.join(" | ")}`);
 
             fetch(targetM3U)
                 .then(res => res.text())
@@ -45,13 +63,11 @@ const getStreams = function(tmdbId, mediaType, seasonNum, episodeNum) {
                         if (lines[i].includes("#EXTINF")) {
                             let match = lines[i].match(/tvg-name="([^"]+)"/i) || lines[i].match(/,(.*)$/);
                             let m3uName = match ? (match[1] || match[0]).replace(",", "").trim() : "";
-                            
-                            // M3U ismini de aynı şekilde temizle
                             let m3uClean = normalize(m3uName);
 
-                            // TAM EŞLEŞME KONTROLÜ
-                            // Örn: "venom3" === "venom3" -> TRUE | "venom2" === "venom3" -> FALSE
-                            if (m3uClean === queryClean) {
+                            // NOKTA ATIŞI KONTROLÜ
+                            // M3U'daki temizlenmiş isim, varyasyonlardan birine TAM eşit mi?
+                            if (variations.includes(m3uClean)) {
                                 let streamUrl = "";
                                 for (let j = 1; j <= 3; j++) {
                                     if (lines[i + j] && lines[i + j].trim().startsWith("http")) {
@@ -62,44 +78,49 @@ const getStreams = function(tmdbId, mediaType, seasonNum, episodeNum) {
 
                                 if (streamUrl) {
                                     results.push({
-                                        name: isSeries ? "📺 DİZİ" : "🎬 FİLM",
+                                        name: isSeries ? `📺 DİZİ: ${seasonNum}x${episodeNum}` : "🎬 FİLM DEPOSU",
                                         title: m3uName,
                                         url: streamUrl,
-                                        http_headers: {
-                                            "User-Agent": "VLC/3.0.18"
-                                        }
+                                        http_headers: { "User-Agent": "VLC/3.0.18" }
                                     });
                                 }
                             }
                         }
                     }
-                    console.log(`[M3U_LOG] Sonuc: ${results.length} adet bulundu.`);
+                    console.log(`[M3U_LOG] Bitti. Sonuç: ${results.length}`);
                     resolve(results);
                 })
                 .catch(err => {
-                    console.error("[M3U_ERR] Fetch Hatasi:", err);
+                    console.error("[M3U_ERR] Liste çekme hatası:", err);
                     resolve([]);
                 });
         };
 
+        // TMDB Veri Çekme
         const tmdbKey = "4ef0d7355d9ffb5151e987764708ce96";
         const tmdbType = isSeries ? 'tv' : 'movie';
         
         fetch(`https://api.themoviedb.org/3/${tmdbType}/${cleanId}?api_key=${tmdbKey}&language=tr-TR`)
             .then(r => r.json())
             .then(d => {
-                let name = d.title || d.name || "";
-                if (name) runSearch(name);
-                else resolve([]);
+                let trTitle = d.title || d.name || "";
+                let enTitle = d.original_title || d.original_name || "";
+                
+                if (trTitle || enTitle) {
+                    runSearch(trTitle, enTitle);
+                } else {
+                    console.warn("[M3U_LOG] TMDB'den isim bulunamadı.");
+                    resolve([]);
+                }
             })
             .catch(err => {
-                console.error("[M3U_ERR] TMDB Baglanti Hatasi:", err);
+                console.error("[M3U_ERR] TMDB Bağlantı Hatası:", err);
                 resolve([]);
             });
     });
 };
 
-// Android TV / Nuvio için fonksiyonu dışa aç (Export)
+// Export işlemleri
 globalThis.getStreams = getStreams;
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = { getStreams };
