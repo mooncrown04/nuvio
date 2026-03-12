@@ -1,101 +1,96 @@
 /**
- * MoOnCrOwN - Live TV Engine (V12)
- * Bol logcat çıktıları ile hata ayıklama modu aktif.
+ * MoOnCrOwN - Nuvio Hybrid Engine (V15)
+ * Bu dosya Catalog, Meta ve Stream isteklerini tek basina karsilar.
  */
 
 const M3U_URL = "https://raw.githubusercontent.com/mooncrown04/nuvio/refs/heads/master/liste/canli.m3u";
 
-// 1. KATALOG FONKSİYONU (Kanal listesini çeker ve Nuvio'ya basar)
-const getCatalog = async function(type, id, extra) {
-    console.error(">>> MOONCROWN: Katalog isteği geldi. ID: " + id);
-
+// 1. KATALOG (Kanal Listesini Olusturur)
+const getCatalog = async function(type, id) {
+    console.error(">>> MOONCROWN [Catalog]: Istek geldi -> " + id);
     try {
-        const response = await fetch(M3U_URL);
-        if (!response.ok) throw new Error("M3U dosyasi indirilemedi! Status: " + response.status);
-        
-        const data = await response.text();
-        const lines = data.split('\n');
+        const res = await fetch(M3U_URL);
+        const text = await res.text();
         const metas = [];
+        const lines = text.split('\n');
 
         for (let i = 0; i < lines.length; i++) {
             if (lines[i].startsWith("#EXTINF")) {
                 const name = lines[i].split(',').pop().trim();
                 const streamUrl = lines[i + 1] ? lines[i + 1].trim() : "";
-                
                 if (streamUrl.startsWith("http")) {
                     metas.push({
-                        id: "mc_" + encodeURIComponent(name),
+                        id: "nv_" + btoa(name).substring(0, 10), // Isimden benzersiz ID uretir
                         type: "tv",
                         name: name,
-                        poster: "https://raw.githubusercontent.com/mooncrown04/nuvio/refs/heads/master/logo.png",
-                        description: "Canlı Yayın: " + name
+                        poster: "https://i.imgur.com/Dlsm9XP.png", // Varsayilan logo
+                        description: "Canli Yayin: " + name,
+                        releaseInfo: "LIVE"
                     });
                 }
             }
         }
-
-        console.error(">>> MOONCROWN: Katalog basariyla olusturuldu. Toplam Kanal: " + metas.length);
+        console.error(">>> MOONCROWN [Catalog]: " + metas.length + " kanal hazir.");
         return { metas: metas };
-
-    } catch (error) {
-        console.error(">>> MOONCROWN KRITIK HATA (Catalog): " + error.message);
+    } catch (e) {
+        console.error(">>> MOONCROWN [Catalog] HATA: " + e.message);
         return { metas: [] };
     }
 };
 
-// 2. STREAM FONKSİYONU (Kanala tıklandığında linki çözer)
+// 2. META (Kanal Detay Sayfasini Olusturur - Nuvio bunu mutlaka bekler)
+const getMeta = async function(type, id) {
+    console.error(">>> MOONCROWN [Meta]: Detay istendi -> " + id);
+    // Katalogda olusturdugumuz temel veriyi geri dondurur
+    return {
+        meta: {
+            id: id,
+            type: "tv",
+            name: "Kanal Detayi",
+            poster: "https://i.imgur.com/Dlsm9XP.png",
+            description: "Yayin yukleniyor, lutfen bekleyin...",
+            runtime: "Canli Yayin"
+        }
+    };
+};
+
+// 3. STREAM (Oynat Butonuna Basildiginda Linki Verir)
 const getStreams = async function(type, id) {
-    console.error(">>> MOONCROWN: Stream isteği geldi. ID: " + id);
-
-    if (!id.startsWith("mc_")) {
-        console.error(">>> MOONCROWN: Gecersiz ID prefixi!");
-        return { streams: [] };
-    }
-
+    console.error(">>> MOONCROWN [Stream]: Link araniyor -> " + id);
     try {
-        const channelName = decodeURIComponent(id.replace("mc_", ""));
-        console.error(">>> MOONCROWN: Aranan Kanal: " + channelName);
-
-        const response = await fetch(M3U_URL);
-        const data = await response.text();
-        const lines = data.split('\n');
+        const res = await fetch(M3U_URL);
+        const text = await res.text();
+        const lines = text.split('\n');
 
         for (let i = 0; i < lines.length; i++) {
-            if (lines[i].includes(channelName)) {
-                const streamUrl = lines[i + 1] ? lines[i + 1].trim() : "";
-                if (streamUrl.startsWith("http")) {
-                    console.error(">>> MOONCROWN: Link Bulundu: " + streamUrl);
+            if (lines[i].startsWith("#EXTINF")) {
+                const name = lines[i].split(',').pop().trim();
+                const currentId = "nv_" + btoa(name).substring(0, 10);
+                
+                if (currentId === id) {
+                    const streamUrl = lines[i + 1].trim();
+                    console.error(">>> MOONCROWN [Stream]: Link bulundu -> " + streamUrl);
                     return {
                         streams: [{
-                            title: "MoOnCrOwN HLS Player",
+                            name: "NUVIO",
+                            title: name + " | Kesintisiz",
                             url: streamUrl,
-                            behaviorHints: {
-                                proxyHeaders: { "User-Agent": "VLC/3.0.18" },
-                                notSearchable: true
-                            }
+                            behaviorHints: { notClickable: false }
                         }]
                     };
                 }
             }
         }
-
-        console.error(">>> MOONCROWN: Link bulunamadi!");
         return { streams: [] };
-
-    } catch (error) {
-        console.error(">>> MOONCROWN KRITIK HATA (Stream): " + error.message);
+    } catch (e) {
+        console.error(">>> MOONCROWN [Stream] HATA: " + e.message);
         return { streams: [] };
     }
 };
 
-// Global Tanımlamalar (Nuvio ve Stremio motorları için)
+// Global tanimlamalar
 globalThis.getCatalog = getCatalog;
+globalThis.getMeta = getMeta;
 globalThis.getStreams = getStreams;
 
-// Bazı eski motorlar için exports
-if (typeof exports !== 'undefined') {
-    exports.getCatalog = getCatalog;
-    exports.getStreams = getStreams;
-}
-
-console.error(">>> MOONCROWN: m3u.js basariyla yuklendi ve hazır! <<<");
+console.error(">>> MOONCROWN: Hibrit Motor Aktif! <<<");
