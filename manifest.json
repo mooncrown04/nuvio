@@ -1,8 +1,4 @@
 {
-  "name": "MoOnCrOwN",
-  "version": "1.0.0",
-  "scrapers": [
- {
   "id": "org.mooncrown.nuvio.live",
   "version": "1.0.0",
   "name": "MoOnCrOwN",
@@ -27,8 +23,5 @@
       "types": ["live", "channel", "tv"],
       "formats": ["hls", "m3u8"]
     }
-  ]
-}
-    
   ]
 }
