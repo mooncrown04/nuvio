@@ -8,7 +8,6 @@
       "description": "M3u Film, Dizi ,Canlı İzleme ",
       "version": "1.0.0",
       "author": "MoOnCrOwN",
-      "types": ["movie", "series", "tv"],
       "supportedTypes": ["movie", "series", "tv"],
       "filename": "eklentiler/m3u.js",
       "enabled": true,
