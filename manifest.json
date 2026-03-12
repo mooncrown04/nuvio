@@ -1,24 +1,24 @@
 {
-  "id": "org.mooncrown.ultimate.engine",
-  "version": "4.1.0",
-  "name": "MoOnCrOwN Engine",
-  "description": "M3U & TMDB Matcher",
+  "id": "org.mooncrown.dynamic",
+  "version": "1.0.4",
+  "name": "MoOnCrOwN TV",
+  "description": "M3U ve TMDB Motoru",
   "resources": ["catalog", "meta", "stream"],
-  "types": ["tv", "movie", "series"],
-  "idPrefixes": ["nv_", "tmdb_", "iptv_"],
+  "types": ["tv", "movie"],
+  "idPrefixes": ["nv_", "tmdb_"],
   "catalogs": [
     {
-      "id": "m3u_katalog",
+      "id": "mc_live_tv",
       "type": "tv",
-      "name": "Canlı Yayınlar"
+      "name": "Canlı Kanallar"
     }
   ],
   "scrapers": [
     {
-      "id": "mc-scraper-v4",
+      "id": "mc_scraper",
       "name": "MC Scraper",
       "enabled": true,
-      "types": ["tv", "movie", "series"],
+      "types": ["tv", "movie"],
       "resources": ["catalog", "meta", "stream"]
     }
   ]
