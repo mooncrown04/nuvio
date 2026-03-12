@@ -3,14 +3,13 @@
 https://api.m3use.projectmoose.xyz/m3u/myway/Myway Tv/68907178a2810a563a43674b.m3u8?uid=Yavuzdlpk21&pkey=hykPvM
 #EXTINF:-1 tvg-name="The Big Bang Theory Sezon 1 Bölüm 1" tvg-language="Turkish" tvg-country="TR" tvg-id="THE_BIG_BANG_THEORY11" tvg-logo="https://dizifun5.com/images/data/2007_the-big-bang-theory.webp" group-title="The Big Bang Theory",The Big Bang Theory Türkçe Dublaj Sezon 1 Bölüm 1
 https://d2.premiumvideo.click/uploads/encode/9wzn363y4fng9tbt2lw5/master.m3u8
-#EXTINF:0 type="video" channelId="-1"  tvg-logo="https://image.tmdb.org/t/p/w500/ykZ7hlShkdRQaL2aiieXdEMmrLb.jpg" tvg-quality="P360" tvg-language="Dublaj- eng"  group-title="4 Body Problem",4 Body Problem-1. Sezon 1. Bölüm(Geri Sayım)
+#EXTINF:0 type="video" channelId="-1"  tvg-logo="https://image.tmdb.org/t/p/w500/ykZ7hlShkdRQaL2aiieXdEMmrLb.jpg" tvg-quality="P360" tvg-language="Dublaj- eng"  group-title="4 Body Problem",4 Body Problem S01E01
 https://www.diziyou.one/episodes/91301_tr/play.m3u8
 #EXTINF:0 type="video" channelId="-1"  tvg-logo="https://image.tmdb.org/t/p/w500/ykZ7hlShkdRQaL2aiieXdEMmrLb.jpg" tvg-quality="P360" tvg-language="eng"   group-title="4 Body Problem",5 Body Problem-1. Sezon 2. Bölüm(Kızıl Kıyı)
 https://www.diziyou.one/episodes/91302_tr/play.m3u8
 #EXTINF:-1 tvg-id="5666" tvg-name="35Konuşanlarprx - Sezon 4 Bölüm 128" tvg-logo="https://m.prectv49.sbs/uploads/cache/poster_thumb/uploads/jpg/a02e896201b876c3c2d6864a34b607ef.jpg" group-title="Son Diziler",1Konuşamayanlar
 https://mehmetey3.serv00.net/dizifunproxy.php?url=https://load.rectv2024live.com/9/cdn333/857c7c2a-8c71-40b9-a195-2c1aea76b424/857c7c2a-8c71-40b9-a195-2c1aea76b424.mkv
 #EXTINF:-1 tvg-id="183" tvg-name="Breaking Bad - 1.S Dublaj Bölüm 3 " tvg-logo="https://m.prectv49.sbs/uploads/cache/poster_thumb/uploads/jpg/a21961f4dd15e85f201e02aa28b59c1d.jpg" group-title="Son Diziler",Breaking Bad S01E01
-#EXTVLCOPT:http-user-agent=okhttp/4.12.0
 https://load.rectv2024live.com/hls/10/cdn32/de3c9ee4a7f0e374e0ac6d68f239c00b171655607310.mp4/index.m3u8
 #EXTINF:-1 tvg-id="4781" tvg-name="Gönül Dağı - Sezon 4 Bölüm 121" tvg-logo="https://m.prectv49.sbs/uploads/cache/poster_thumb/uploads/jpg/93702c41f4283696d0dbfa2f6e0cc31f.jpg" group-title="Son Diziler",1Gönül Dağı - Sezon 4 Bölüm 121
 https://load.rectv2024live.com/9/cdn333/fc07c4de-3edf-4fda-8425-b3644b42cb05/fc07c4de-3edf-4fda-8425-b3644b42cb05.mkv
@@ -46,6 +45,7 @@ https://dogus-live.daioncdn.net/ntv/ntv_720p.m3u8
 #EXTINF:-1 group-title=" 🇹🇷 ULUSAL KANALLARI",1ANTV
 https://d1.premiumvideo.click/uploads/encode/3v783ctieymxdnue8x1x/master.m3u8
 #EXTINF:-1 group-title=" 🇹🇷 ULUSAL KANALLARI",1ANTV
+
 
 
 
