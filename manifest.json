@@ -8,7 +8,7 @@
   "description": "MoOnCrOwN Özel Canlı TV Sağlayıcısı - Kesintisiz Yayın",
   "version": "1.0.0",
   "author": "MoOnCrOwN",
-  "supportedTypes": ["live"], 
+  "supportedTypes": ["live", "channel", "tv"],
   "filename": "eklentiler/m3u.js",
   "enabled": true,
   "formats": ["mp4", "mkv", "hls", "m3u8"],
