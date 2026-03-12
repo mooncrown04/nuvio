@@ -3,19 +3,31 @@
   "version": "1.0.0",
   "scrapers": [
  {
-  "id": "mooncrown-live-m3u",
-  "name": "Live TV 📡",
-  "description": "MoOnCrOwN Özel Canlı TV Sağlayıcısı - Kesintisiz Yayın",
+  "id": "org.mooncrown.nuvio.live",
   "version": "1.0.0",
-  "author": "MoOnCrOwN",
-  "types": ["live", "movie", "series", "tv"],
-  "resources": ["stream"],
-  "supportedTypes": ["live", "channel", "tv"],
-  "filename": "eklentiler/m3u.js",
-  "enabled": true,
-  "formats": ["mp4", "mkv", "hls", "m3u8"],
+  "name": "MoOnCrOwN",
+  "description": "MoOnCrOwN Özel Canlı TV Sağlayıcısı",
   "logo": "https://raw.githubusercontent.com/mooncrown04/nuvio/refs/heads/master/logo.png",
-  "contentLanguage": ["tr"]
+  "types": ["tv", "live", "movie", "series"],
+  "resources": ["catalog", "stream"],
+  "idPrefixes": ["mc_"],
+  "catalogs": [
+    {
+      "id": "mooncrown-live-m3u",
+      "type": "tv",
+      "name": "Live TV 📡"
+    }
+  ],
+  "scrapers": [
+    {
+      "id": "mooncrown-live-m3u",
+      "name": "Live TV 📡",
+      "filename": "m3u.js",
+      "enabled": true,
+      "types": ["live", "channel", "tv"],
+      "formats": ["hls", "m3u8"]
+    }
+  ]
 }
     
   ]
