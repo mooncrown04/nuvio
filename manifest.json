@@ -1,24 +1,25 @@
 {
   "id": "nuvio35",
-  "version": "009",
+  "version": "011",
   "name": "MoOnCrOwN M3U",
+  "logo": "https://i.imgur.com/Dlsm9XP.png",
   "resources": ["catalog", "meta", "stream"],
   "types": ["tv", "movie"],
-  "idPrefixes": ["nv_", "tmdb_"],
+  "idPrefixes": ["nv_"],
   "catalogs": [
     {
       "id": "tum_liste",
       "type": "tv",
-      "name": "Favori"
+      "name": "Favori TV"
     }
   ],
   "scrapers": [
     {
-      "id": "mc_engine",
+      "id": "mc_scraper",
       "name": "MC Engine",
-      "filename": "m3u.js", 
+      "filename": "m3u.js",
       "enabled": true,
-      "types": ["tv", "movie"],
+      "types": ["tv"],
       "resources": ["catalog", "meta", "stream"]
     }
   ]
