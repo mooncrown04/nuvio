@@ -1,50 +1,10 @@
 #EXTM3U
-#EXTINF:-1 tvg-id="" group-title="film" tvg-logo="https://static.vecteezy.com/system/resources/previews/008/687/836/non_2x/moose-deer-logo-free-vector.jpg",ATV
-https://api.m3use.projectmoose.xyz/m3u/myway/Myway Tv/68907178a2810a563a43674b.m3u8?uid=Yavuzdlpk21&pkey=hykPvM
 #EXTINF:-1 tvg-name="The Big Bang Theory Sezon 1 Bölüm 1" tvg-language="Turkish" tvg-country="TR" tvg-id="THE_BIG_BANG_THEORY11" tvg-logo="https://dizifun5.com/images/data/2007_the-big-bang-theory.webp" group-title="The Big Bang Theory",The Big Bang Theory Türkçe Dublaj Sezon 1 Bölüm 1
 https://d2.premiumvideo.click/uploads/encode/9wzn363y4fng9tbt2lw5/master.m3u8
 #EXTINF:0  channelId="-1"  tvg-logo="https://image.tmdb.org/t/p/w500/ykZ7hlShkdRQaL2aiieXdEMmrLb.jpg" tvg-quality="P360" tvg-language="Dublaj- eng"  group-title="3 Body Problem",3 Body Problem S01E01
 https://www.diziyou.one/episodes/91301_tr/play.m3u8
 #EXTINF:0 type="video" channelId="-1"  tvg-logo="https://image.tmdb.org/t/p/w500/ykZ7hlShkdRQaL2aiieXdEMmrLb.jpg" tvg-quality="P360" tvg-language="eng"   group-title="3 Body Problem",3 Body Problem-1. Sezon 2. Bölüm
 https://www.diziyou.one/episodes/91302_tr/play.m3u8
-#EXTINF:-1 tvg-id="5666" tvg-name="35Konuşanlarprx - Sezon 4 Bölüm 128" tvg-logo="https://m.prectv49.sbs/uploads/cache/poster_thumb/uploads/jpg/a02e896201b876c3c2d6864a34b607ef.jpg" group-title="Son Diziler",1Konuşamayanlar
-https://mehmetey3.serv00.net/dizifunproxy.php?url=https://load.rectv2024live.com/9/cdn333/857c7c2a-8c71-40b9-a195-2c1aea76b424/857c7c2a-8c71-40b9-a195-2c1aea76b424.mkv
-#EXTINF:-1 tvg-id="183" tvg-name="Breaking Bad - 1.S Dublaj Bölüm 3 " tvg-logo="https://m.prectv49.sbs/uploads/cache/poster_thumb/uploads/jpg/a21961f4dd15e85f201e02aa28b59c1d.jpg" group-title="Son Diziler",Breaking Bad S01E01
-https://load.rectv2024live.com/hls/10/cdn32/de3c9ee4a7f0e374e0ac6d68f239c00b171655607310.mp4/index.m3u8
-#EXTINF:-1 tvg-id="4781" tvg-name="Gönül Dağı - Sezon 4 Bölüm 121" tvg-logo="https://m.prectv49.sbs/uploads/cache/poster_thumb/uploads/jpg/93702c41f4283696d0dbfa2f6e0cc31f.jpg" group-title="Son Diziler",1Gönül Dağı - Sezon 4 Bölüm 121
-https://load.rectv2024live.com/9/cdn333/fc07c4de-3edf-4fda-8425-b3644b42cb05/fc07c4de-3edf-4fda-8425-b3644b42cb05.mkv
-#EXTINF:-1 tvg-id="5666" tvg-name="35Konuşanlar - Sezon 4 Bölüm 128" tvg-logo="https://m.prectv49.sbs/uploads/cache/poster_thumb/uploads/jpg/a02e896201b876c3c2d6864a34b607ef.jpg" group-title="Son Diziler",1Konuşanlar - Sezon 4 Bölüm 128
-#EXTVLCOPT:http-user-agent=okhttp/4.12.0
-https://load.rectv2024live.com/9/cdn333/857c7c2a-8c71-40b9-a195-2c1aea76b424/857c7c2a-8c71-40b9-a195-2c1aea76b424.mkv
-#EXTINF:-1 tvg-id="" tvg-name="Mm4" tvg-logo=" https://i.hizliresim.com/8z9mxbm.png" group-title="mp4",mp4
-https://vekart.ucoz.net/video.mp4
-#EXTINF:0 type="video" channelId="-1"  tvg-logo="https://img.fullhdfilmizlesene.de/poster/izle/rebel-moon-part-one-a-child-of-fire-67877.webp" group-title="FİLM",İsyan Gezegeni Birinci Bölüm Ateşin Çocuğu Rebel Moon
-https://s24.picogallery.org/m3/HzIvMJjhGJ9ioyOupaDhG25yYxEcpzIwqT9lpl5QqKDhZwNlAP5KEHVgERjhZGN4ZUNhESIOGNd0zxpTywo2quoTkypaxho3Was0xi24vr1
-#EXTINF:0 type="video" channelId="-1"  tvg-logo="https://img.fullhdfilmizlesene.de/poster/izle/rebel-moon-part-two-the-scargiver-79966.webp" tvg-quality="P2160" tvg-score="9.1"   group-title="FİLM",İsyan Gezegeni - İkinci Bölüm: İz Bırakan Rebel Moon - Part Two: The Scargiver
-https://s10.imagebin.pics/mg/HzIvMJjhGJ9hHTSlqP5Hq28hETylMJA0o3WmYxA1qP4lZQV0YyqSDv1RGP4kZQtjpP5RIHSZd0zxnJ1uM2IvnJ4hpTywpjs0xi10vr1
-#EXTINF:0 type="video" channelId="-1"  tvg-logo="https://encrypted-tbn2.gstatic.com/images?q=tbn:ANd9GcRn7xgXi76ToOigvE6p4TNdJMN55BDf8QZnWGgi39C1n5mv6CmO"  tvg-quality="P1080"  tvg-score="9.2" group-title="FİLM",ÖLÜMSÜZ The Crow 
-https://s9.seeshare.pics/m7/ITuyYxAlo3phZwNlAP5KEHVgERjhZGN4ZUNhESIOGP5VYwV2AP1VER0d0zxp2Iyp2uupzHhpTywpjs0xi9vr1
-#EXTINF:0 type="video" channelId="-1"  tvg-logo="https://jetfilmizle.io/wp-content/posterler/2024/04/sleeping-dogs-sleeping-dogs-izle.jpg" tvg-score="9" group-title="FİLM",SLEEPİNG DOGS 
-https://s14.imagesbox.cloud/mr/H2kyMKOcozphET9apl4lZQV0YyqSDv1RGP4kZQtjpP5RIHSZd0zxnJ1uM2ImLz94YzAfo3Ixs0xi14vr1
-#EXTINF:0 type="video" channelId="-1"  tvg-logo="https://jetfilmizle.io/wp-content/posterler/2024/05/maymunlar-cehennemi-yeni-krallik-kingdom-of-the-planet-of-the-apes-izle.jpg" group-title="FİLM",MAYMUNLAR CEHENNEMİ:Yeni Krallık izle
-https://s6.imagehub.pics/mk/F2yhM2EioF5iMv50nTHhHTkuozI0Yz9zYaEbMF5OpTImYwVjZwDhI0IPYHEZYwRjBQOjYxEIDHjd0zxnJ1uM2IbqJVhpTywpjs0xi6vr1
-#EXTINF:0 type="video" channelId="-1"  tvg-logo="https://jetfilmizle.io/wp-content/posterler/2023/11/butchers-crossing-butchers-crossing-izle.jpg" group-title="FİLM",KASAP GEÇİDİ
-https://s24.imglink.pro/m4/DaI0L2uypaZhD3Wip3AcozphZwNlZv5PoUIlLKxhZGN4ZUNhESIOGNd0zxnJ1aoTyhnl5jpz8s0xi24vr1
-#EXTINF:0 type="video" channelId="-1"  tvg-logo="https://www.themoviedb.org/t/p/w600_and_h900_bestv2/vGXptEdgZIhPg3cGlc7e8sNPC2e.jpg" group-title="FİLM",VENOM 3
-https://s12.seeshare.pics/ms/IzIho20hITuyYxkup3DhETShL2HhZwNlAP5KEHVgERjhZGN4ZUNhESIOGNd0zxp2Iyp2uupzHhpTywpjs0xi12vr1
-#EXTINF:0 type="video" channelId="-1"  tvg-logo="https://jetfilmizle.io/wp-content/posterler/2023/11/butchers-crossing-butchers-crossing-izle.jpg" group-title="FİLM",KASAP GEÇİDİ vimeo
-https://ok.ru/video/7534497761962
-#EXTINF:0 type="video" channelId="-1"  tvg-logo="https://static.boxofficeturkiye.com/movie//poster/full/5/2017805-74666683.jpg" group-title="FİLM",KALENDER PİDE
-https://d2.premiumvideo.click/uploads/encode/bzlyi8byfhbjsh1s5ppd/master.m3u8
-#EXTINF:0 type="video" channelId="-1"  tvg-logo="https://static.boxofficeturkiye.com/movie/poster/235x336/17/2014917-60227427.jpg" group-title="FİLM",JOHN WİCK 4
-https://gujan.premiumvideo.click/hls/spnq1ty5y6r8_o/playlist.m3u8
-#EXTINF:0 type="video" channelId="-1"  tvg-logo="http://static.boxofficeturkiye.com/movie/poster/235x336/79/2017379-67282928.jpg" group-title="FİLM",ÖLÜMCÜL UÇUŞ
-https://d1.premiumvideo.click/uploads/encode/6kqe1reb48m8qcc5dz1q/master.m3u8
-#EXTINF:-1 group-title=" 🇹🇷 ULUSAL KANALLARI",1ANTV
-https://dogus-live.daioncdn.net/ntv/ntv_720p.m3u8
-#EXTINF:-1 group-title=" 🇹🇷 ULUSAL KANALLARI",1ANTV
-https://d1.premiumvideo.click/uploads/encode/3v783ctieymxdnue8x1x/master.m3u8
-#EXTINF:-1 group-title=" 🇹🇷 ULUSAL KANALLARI",1ANTV
 
 
 
