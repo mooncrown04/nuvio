@@ -2,7 +2,6 @@
   "id": "nuvio35",
   "version": "0.1.1",
   "name": "MoOnCrOwN M3U",
-  "description": "MoOnCrOwN Ultimate M3U Engine for Nuvio",
   "logo": "https://i.imgur.com/Dlsm9XP.png",
   "resources": ["catalog", "meta", "stream"],
   "types": ["tv"],
@@ -15,7 +14,8 @@
       "extra": [
         {"name": "search", "isRequired": false},
         {"name": "genre", "isRequired": false}
-      ]
+      ],
+      "genres": ["Genel", "Spor", "Sinema", "Haber", "Belgesel"]
     }
   ],
   "scrapers": [
