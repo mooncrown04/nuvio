@@ -1,24 +1,24 @@
 /**
- * MoOnCrOwN Dinamik M3U Motoru
+ * MoOnCrOwN Dinamik Motor - SSL Bypass Sürümü
  */
 
-const M3U_URL = "https://api.codetabs.com/v1/proxy?quest=https://raw.githubusercontent.com/mooncrown04/nuvio/refs/heads/master/liste/canli.m3u";
+// GitHub SSL hatasını aşmak için HTTPS -> HTTP dönüşümü yapan proxy kullanıyoruz
+const RAW_URL = "https://raw.githubusercontent.com/mooncrown04/nuvio/refs/heads/master/liste/canli.m3u";
+const M3U_URL = "https://api.codetabs.com/v1/proxy?quest=" + encodeURIComponent(RAW_URL);
 
-// M3U dosyasını işleyip diziye çeviren yardımcı fonksiyon
-async function getChannels() {
+async function getM3UData() {
     try {
         const res = await fetch(M3U_URL);
         const text = await res.text();
         const lines = text.split('\n');
-        const channels = [];
-
+        const list = [];
+        
         for (let i = 0; i < lines.length; i++) {
-            if (lines[i].startsWith("#EXTINF")) {
+            if (lines[i].includes("#EXTINF")) {
                 const name = lines[i].split(',').pop().trim();
                 const url = lines[i + 1] ? lines[i + 1].trim() : "";
                 if (url.startsWith("http")) {
-                    channels.push({
-                        // İsimden benzersiz bir ID oluşturur (nv_trt1 gibi)
+                    list.push({
                         id: "nv_" + btoa(encodeURIComponent(name)).substring(0, 8).toLowerCase(),
                         name: name,
                         url: url
@@ -26,27 +26,24 @@ async function getChannels() {
                 }
             }
         }
-        return channels;
+        return list;
     } catch (e) { return []; }
 }
 
-// 1. KATALOG BÖLÜMÜ (Giriş)
 globalThis.getCatalog = async function(type, id) {
-    const channels = await getChannels();
+    const channels = await getM3UData();
     return {
         metas: channels.map(ch => ({
             id: ch.id,
             type: "tv",
             name: ch.name,
-            poster: "https://i.imgur.com/Dlsm9XP.png", // Varsayılan logo
-            description: "Canlı Yayın: " + ch.name
+            poster: "https://i.imgur.com/Dlsm9XP.png"
         }))
     };
 };
 
-// 2. META BÖLÜMÜ (Hakkında/Detay)
 globalThis.getMeta = async function(type, id) {
-    const channels = await getChannels();
+    const channels = await getM3UData();
     const ch = channels.find(c => c.id === id);
     return {
         meta: {
@@ -54,24 +51,15 @@ globalThis.getMeta = async function(type, id) {
             type: "tv",
             name: ch ? ch.name : "Kanal",
             poster: "https://i.imgur.com/Dlsm9XP.png",
-            description: "M3U Listesinden otomatik eşleşti.",
-            videos: [{ id: id, title: "Canlı Yayını Başlat" }]
+            videos: [{ id: id, title: "Yayını Başlat" }]
         }
     };
 };
 
-// 3. STREAM BÖLÜMÜ (Linkler)
 globalThis.getStreams = async function(type, id) {
-    const channels = await getChannels();
+    const channels = await getM3UData();
     const ch = channels.find(c => c.id === id);
-    if (ch) {
-        return {
-            streams: [{
-                name: "MC-PLAYER",
-                title: ch.name,
-                url: ch.url
-            }]
-        };
-    }
-    return { streams: [] };
+    return {
+        streams: ch ? [{ name: "NUVIO", url: ch.url }] : []
+    };
 };
