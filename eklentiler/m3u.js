@@ -1,6 +1,6 @@
 /**
- * MoOnCrOwN Ultimate Scraper - v5.0
- * Katalog (Film/Dizi) + Manuel Arama (Canlı TV) Tam Destek
+ * MoOnCrOwN Precision Scraper - v7.0
+ * Sadece İstenen İçeriği Getiren Hassas Filtreleme
  */
 
 var cheerio = require("cheerio-without-node-native");
@@ -16,93 +16,87 @@ function normalizeText(text) {
     return text.toLowerCase()
         .replace(/[İı]/g, 'i').replace(/[Ğğ]/g, 'g').replace(/[Üü]/g, 'u')
         .replace(/[Şş]/g, 's').replace(/[Öö]/g, 'o').replace(/[Çç]/g, 'c')
-        .replace(/[^a-z0-9]/g, '');
+        .replace(/[^a-z0-9 ]/g, '') // Sadece harf, rakam ve BOŞLUK bırakır
+        .trim();
 }
 
 function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
     return new Promise(function(resolve, reject) {
-        console.error("--- İşlem Başladı ---");
+        console.error(">>> TALEP GELDİ: " + tmdbId + " | TIP: " + mediaType);
         
         var targetM3U = SOURCES[mediaType] || SOURCES.live;
         var isLive = (mediaType === 'live' || mediaType === 'channel');
 
-        // 1. ADIM: Metadata Hazırlama (Film mi? Canlı mı?)
         var getMetadata = function() {
             if (isLive) {
-                // Canlı yayınlarda tmdbId direkt kanal adıdır
-                console.error("Mod: Canlı Yayın | Aranan: " + tmdbId);
-                return Promise.resolve({ 
-                    tr: normalizeText(tmdbId), 
-                    en: normalizeText(tmdbId) 
-                });
+                return Promise.resolve({ search: normalizeText(tmdbId) });
             } else {
-                // Film veya Dizi ise TMDB'ye git
                 var tmdbUrl = 'https://api.themoviedb.org/3/' + (mediaType === 'movie' ? 'movie' : 'tv') + '/' + tmdbId + '?api_key=4ef0d7355d9ffb5151e987764708ce96&language=tr-TR';
-                console.error("Mod: Katalog | TMDB Sorgusu: " + tmdbUrl);
-                
-                return fetch(tmdbUrl)
-                    .then(function(res) { return res.json(); })
-                    .then(function(data) {
-                        return { 
-                            tr: normalizeText(data.title || data.name), 
-                            en: normalizeText(data.original_title || data.original_name) 
-                        };
-                    });
+                return fetch(tmdbUrl).then(function(res) { return res.json(); }).then(function(data) {
+                    var title = data.title || data.name;
+                    var original = data.original_title || data.original_name;
+                    return { 
+                        tr: normalizeText(title), 
+                        en: normalizeText(original),
+                        raw: title 
+                    };
+                });
             }
         };
 
-        // 2. ADIM: M3U İndirme ve Eşleştirme
-        getMetadata()
-            .then(function(keys) {
-                console.error("Arama Anahtarları -> TR: " + keys.tr + " | EN: " + keys.en);
+        getMetadata().then(function(keys) {
+            console.error(">>> TMDB'DEN GELEN: " + keys.tr);
 
-                return fetch(targetM3U)
-                    .then(function(res) { return res.text(); })
-                    .then(function(m3uContent) {
-                        var lines = m3uContent.split('\n');
-                        var streams = [];
+            return fetch(targetM3U).then(function(res) { return res.text(); }).then(function(m3uContent) {
+                var lines = m3uContent.split('\n');
+                var streams = [];
 
-                        for (var i = 0; i < lines.length; i++) {
-                            var line = lines[i];
-                            
-                            if (line.toUpperCase().indexOf("#EXTINF") !== -1) {
-                                // M3U ismini virgülden ayırarak al
-                                var parts = line.split(',');
-                                var m3uName = parts[parts.length - 1];
-                                var normalizedM3U = normalizeText(m3uName);
+                for (var i = 0; i < lines.length; i++) {
+                    var line = lines[i];
+                    if (line.toUpperCase().indexOf("#EXTINF") !== -1) {
+                        var m3uNameRaw = line.split(',').pop().trim();
+                        var m3uNameNorm = normalizeText(m3uNameRaw);
 
-                                // Eşleşme Kontrolü: TR veya EN isim geçiyor mu?
-                                if (normalizedM3U.indexOf(keys.tr) !== -1 || normalizedM3U.indexOf(keys.en) !== -1) {
-                                    var streamUrl = lines[i + 1] ? lines[i + 1].trim() : "";
-                                    
-                                    if (streamUrl && streamUrl.startsWith("http")) {
-                                        var logoMatch = line.match(/tvg-logo="([^"]+)"/);
-                                        
-                                        streams.push({
-                                            name: isLive ? "CANLI TV" : "MoOnCrOwN",
-                                            title: m3uName.trim(),
-                                            url: streamUrl,
-                                            poster: logoMatch ? logoMatch[1] : "",
-                                            quality: isLive ? "LIVE" : "1080p",
-                                            provider: "m3u_provider"
-                                        });
-                                        if (streams.length >= 10) break;
-                                    }
-                                }
+                        // --- KRİTİK FİLTRELEME MANTIĞI ---
+                        // Sadece 'içinde geçiyor mu' diye bakmıyoruz, 
+                        // M3U'daki isim TMDB'deki isme tam eşit mi ona bakıyoruz.
+                        var isMatch = (m3uNameNorm === keys.tr || m3uNameNorm === keys.en);
+
+                        // Eğer tam eşitlik yoksa (Yıl farkı vb. olabilir), çok yakın mı diye bak
+                        if (!isMatch) {
+                           // Örn: Aranan "venom", M3U "venom 2018" -> Bu eşleşsin
+                           // Ama aranan "venom", M3U "venom 2" -> Bu eşleşmesin (sayı farkı)
+                           if (m3uNameNorm.startsWith(keys.tr + " ") || m3uNameNorm.endsWith(" " + keys.tr)) {
+                               isMatch = true;
+                           }
+                        }
+
+                        if (isMatch) {
+                            var streamUrl = lines[i + 1] ? lines[i + 1].trim() : "";
+                            if (streamUrl.startsWith("http")) {
+                                console.error(">>> EŞLEŞTİ: " + m3uNameRaw);
+                                var logoMatch = line.match(/tvg-logo="([^"]+)"/);
+                                streams.push({
+                                    name: "MoOnCrOwN",
+                                    title: m3uNameRaw,
+                                    url: streamUrl,
+                                    poster: logoMatch ? logoMatch[1] : "",
+                                    quality: "1080p"
+                                });
                             }
                         }
-                        console.error("Bulunan Sonuç: " + streams.length);
-                        resolve(streams);
-                    });
-            })
-            .catch(function(err) {
-                console.error("Kritik Hata: " + err.message);
-                resolve([]);
+                    }
+                }
+                console.error(">>> TOPLAM UYGUN LİNK: " + streams.length);
+                resolve(streams);
             });
+        }).catch(function(err) {
+            console.error(">>> HATA: " + err.message);
+            resolve([]);
+        });
     });
 }
 
-// Nuvio/QuickJS Export Köprüsü
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = { getStreams: getStreams };
 } else if (typeof globalThis !== 'undefined') {
