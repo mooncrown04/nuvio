@@ -4,11 +4,11 @@
   "scrapers": [
    {
       "id": "m3u",
-      "name": "🎞️ M3u 🎬",
-      "description": "M3u Film, Dizi İzleme ",
+      "name": " Live M3u 🎬",
+      "description": "M3u Canlı TV İzleme ",
       "version": "1.0.0",
       "author": "MoOnCrOwN",
-      "supportedTypes": ["movie","tv"],
+      "supportedTypes": ["tv"],
       "filename": "eklentiler/m3u.js",
       "enabled": true,
       "formats": ["mp4", "mkv", "hls", "m3u8"],
