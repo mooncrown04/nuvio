@@ -1,56 +1,39 @@
-/**
- * MoOnCrOwN Ultimate Engine - Nuvio Kararlı Sürüm
- * v0.1.1 - Optimize Edilmiş Parser
- */
-
 const M3U_URL = "https://raw.githubusercontent.com/mooncrown04/nuvio/refs/heads/master/liste/canli.m3u";
 let channelsCache = null;
 
-// M3U Parser: Daha esnek ve hata payı düşük sürüm
 async function getChannels() {
     if (channelsCache) return channelsCache;
-
     try {
         const response = await fetch(M3U_URL);
-        if (!response.ok) throw new Error("M3U dosyasına erişilemedi");
-        
         const text = await response.text();
         const lines = text.split('\n');
         const list = [];
         
         for (let i = 0; i < lines.length; i++) {
             let line = lines[i].trim();
-            
             if (line.startsWith("#EXTINF")) {
-                // Regex ile logo ve grup bilgilerini daha güvenli çekelim
+                // Regex ile tırnak içindeki değerleri güvenli çek
                 const logoMatch = line.match(/tvg-logo="([^"]+)"/i);
                 const groupMatch = line.match(/group-title="([^"]+)"/i);
                 
-                // Kanal ismini temizle: Virgülden sonrasını al, nv_ gibi ekleri temizle
-                let namePart = line.split(',').pop().trim();
-                const cleanName = namePart.replace(/nv_|tmdb_/g, '').trim();
+                // Kanal adını virgülden sonrasını alarak bul
+                const namePart = line.substring(line.lastIndexOf(',') + 1).trim();
                 
-                // URL'yi bulana kadar sonraki satırlara bak (boş satırları atla)
+                // URL'yi bul (sonraki satırlarda gezerek)
                 let url = "";
-                let nextIdx = i + 1;
-                while (nextIdx < lines.length) {
-                    const nextLine = lines[nextIdx].trim();
+                for (let j = i + 1; j < lines.length; j++) {
+                    let nextLine = lines[j].trim();
                     if (nextLine && !nextLine.startsWith("#")) {
                         url = nextLine;
                         break;
                     }
-                    if (nextLine.startsWith("#")) break; // Yeni bir tag gelirse dur
-                    nextIdx++;
+                    if (nextLine.startsWith("#EXTINF")) break;
                 }
 
-                if (url && url.startsWith("http")) {
+                if (url) {
                     list.push({
-                        // ID oluştururken Türkçe karakterleri ve boşlukları temizle
-                        id: "nv_" + cleanName.toLowerCase()
-                            .replace(/ı/g, 'i').replace(/ğ/g, 'g').replace(/ü/g, 'u')
-                            .replace(/ş/g, 's').replace(/ö/g, 'o').replace(/ç/g, 'c')
-                            .replace(/[^a-z0-9]/g, ""),
-                        name: cleanName,
+                        id: "nv_" + namePart.toLowerCase().replace(/[^a-z0-9]/g, ""),
+                        name: namePart,
                         url: url,
                         logo: logoMatch ? logoMatch[1] : "https://i.imgur.com/Dlsm9XP.png",
                         group: groupMatch ? groupMatch[1] : "Genel"
@@ -60,26 +43,22 @@ async function getChannels() {
         }
         channelsCache = list;
         return list;
-    } catch (e) {
-        console.error("Scraper Hatası:", e.message);
-        return [];
-    }
+    } catch (e) { return []; }
 }
 
-// 1. KATALOG
+// Nuvio'nun beklediği standart fonksiyon yapısı
 globalThis.getCatalog = async function(args) {
-    const { type, id, extra } = args;
     const list = await getChannels();
+    const extra = args.extra || {};
     let filtered = list;
 
-    // Arama filtrelemesi (Stremio/Nuvio standart arama parametresi)
-    if (extra && extra.search) {
-        const query = extra.search.toLowerCase();
-        filtered = list.filter(ch => ch.name.toLowerCase().includes(query));
+    // Arama desteği
+    if (extra.search) {
+        filtered = list.filter(ch => ch.name.toLowerCase().includes(extra.search.toLowerCase()));
     }
 
-    // Genre/Kategori filtrelemesi
-    if (extra && extra.genre) {
+    // Kategori desteği
+    if (extra.genre) {
         filtered = list.filter(ch => ch.group === extra.genre);
     }
 
@@ -89,24 +68,16 @@ globalThis.getCatalog = async function(args) {
             type: "tv",
             name: ch.name,
             poster: ch.logo,
-            background: ch.logo, // TV kanallarında background genelde logo olur
-            description: `Kategori: ${ch.group}`,
-            posterShape: "square" // Kanallar genelde kare logoludur
+            background: ch.logo,
+            description: ch.group,
+            posterShape: "square"
         }))
     };
 };
 
-// 2. META
 globalThis.getMeta = async function(args) {
-    const { type, id } = args;
     const list = await getChannels();
-    
-    // TMDB desteği için fallback (Gerekirse)
-    if (id.startsWith("tmdb_")) {
-        return { meta: { id, type, name: "M3U Arama Sonucu", videos: [] } };
-    }
-
-    const ch = list.find(c => c.id === id);
+    const ch = list.find(c => c.id === args.id);
     if (!ch) return { meta: null };
 
     return {
@@ -115,34 +86,21 @@ globalThis.getMeta = async function(args) {
             type: "tv",
             name: ch.name,
             poster: ch.logo,
-            background: ch.logo,
-            description: `MoOnCrOwN Canlı TV - ${ch.group}`,
-            // TV kanallarında tek bir video (yayın) olur
-            videos: [{
-                id: ch.id,
-                title: ch.name,
-                released: new Date().toISOString()
-            }]
+            videos: [{ id: ch.id, title: ch.name }]
         }
     };
 };
 
-// 3. STREAM
 globalThis.getStreams = async function(args) {
-    const { type, id } = args;
     const list = await getChannels();
-    
-    const ch = list.find(c => c.id === id);
+    const ch = list.find(c => c.id === args.id);
     if (ch) {
         return {
             streams: [{
                 name: "MoOnCrOwN",
-                title: `Canlı: ${ch.name}\n${ch.group}`,
+                title: ch.name,
                 url: ch.url,
-                behaviorHints: {
-                    notWebReady: false,
-                    isLive: true // Canlı yayın olduğunu player'a bildirir
-                }
+                behaviorHints: { isLive: true }
             }]
         };
     }
