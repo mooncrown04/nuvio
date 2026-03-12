@@ -1,7 +1,7 @@
 #EXTM3U
 #EXTINF:-1 tvg-name="Fusion Türk" tvg-id="120" tvg-logo="https://feo.kablowebtv.com/resize/168A635D265A4328C2883FB4CD8FF/0/0/Vod/HLS/7d58e86c-d38e-4ef5-8ee0-fda0a7e65914.png" group-title="🇹🇷  DİZİ & SİNEMA KANALLARI 🎥🎦🎬",Fusion Türk
 http://162.212.179.32/akamaissh101/ssh101/084952510aaa/playlist.m3u8
-#EXTINF:-1 tvg-id="TRT1tr" tvg-name=" TRT 1 hd " tvg-logo="https://picon.pics/TR/Ulusal/Trt1.png" group-title="🇹🇷  ULUSAL KANALLAR":http-referrer="":http-user-agent="", TRT 2
+#EXTINF:-1 tvg-id="TRT1tr" tvg-name=" TRT 1 hd " tvg-logo="https://picon.pics/TR/Ulusal/Trt1.png" group-title="🇹🇷  ULUSAL KANALLAR":http-referrer="":http-user-agent="",TRT 2
 https://trt.daioncdn.net/trt-1/master.m3u8?app=clean
 #EXTINF:-1 tvg-id="" tvg-name=" ATV" tvg-logo="https://picon.pics/TR/Ulusal/Atv.png" group-title="🇹🇷  ULUSAL KANALLAR", ATV
 https://rnttwmjcin.turknet.ercdn.net/lcpmvefbyo/atv/atv.m3u8
