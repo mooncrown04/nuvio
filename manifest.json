@@ -5,7 +5,7 @@
       {
       "id": "m3u",
       "name": "M3u",
-      "description": "DDizi Scraper",
+      "description": " Scraper",
       "version": "1.0.1",
       "author": "mooncrown",
       "supportedTypes": ["movie","tv"],
