@@ -3,13 +3,13 @@
 http://162.212.179.32/akamaissh101/ssh101/084952510aaa/playlist.m3u8
 #EXTINF:-1 tvg-id="TRT1tr" tvg-name=" TRT 1 hd " tvg-logo="https://picon.pics/TR/Ulusal/Trt1.png" group-title="🇹🇷  ULUSAL KANALLAR":http-referrer="":http-user-agent="",TRT 2
 https://trt.daioncdn.net/trt-1/master.m3u8?app=clean
-#EXTINF:-1 tvg-id="" tvg-name=" ATV" tvg-logo="https://picon.pics/TR/Ulusal/Atv.png" group-title="🇹🇷  ULUSAL KANALLAR", ATV
+#EXTINF:-1 tvg-id="" tvg-name=" ATV" tvg-logo="https://picon.pics/TR/Ulusal/Atv.png" group-title="🇹🇷  ULUSAL KANALLAR",TRT 2
 https://rnttwmjcin.turknet.ercdn.net/lcpmvefbyo/atv/atv.m3u8
 #EXTINF:-1 tvg-name="Kanal D" tvg-id="Kanal D.tr"tvg-logo="https://i.ibb.co/hf2mSz5/kanal-d.png"group-title="🇹🇷  ULUSAL KANALLAR":http-referrer="":http-user-agent="",Kanal D
 https://ackaxsqacw.turknet.ercdn.net/ozfkfbbjba/kanald/kanald_720p.m3u8
-#EXTINF:-1 tvg-id="" tvg-name="EURO STAR TV" tvg-logo="https://picon.pics/TR/Ulusal/Startv.png" group-title="🇹🇷  ULUSAL KANALLAR",EURO STAR TV
+#EXTINF:-1 tvg-id="" tvg-name="EURO STAR TV" tvg-logo="https://picon.pics/TR/Ulusal/Startv.png" group-title="🇹🇷  ULUSAL KANALLAR",TRT 2
 https://raw.githubusercontent.com/ipstreet312/freeiptv/master/ressources/tur/estar.m3u8
-#EXTINF:-1 tvg-id="" tvg-name=" STAR TV" tvg-logo="https://picon.pics/TR/Ulusal/Startv.png" group-title="🇹🇷  ULUSAL KANALLAR",STAR TV
+#EXTINF:-1 tvg-id="" tvg-name=" STAR TV" tvg-logo="https://picon.pics/TR/Ulusal/Startv.png" group-title=" 🇹🇷 ULUSAL KANALLARI",TRT 2
 http://trn03.tulix.tv/gt-star-tv/tracks-v1a1/mono.m3u8
 #EXTINF:-1 tvg-name="Show TV"tvg-id="Show TV.tr"tvg-logo="https://upload.wikimedia.org/wikipedia/commons/f/f1/Logo_of_Show_TV.png"group-title="🇹🇷  ULUSAL KANALLAR"":http-referrer="":http-user-agent="",SHOW TV HD
 https://rmtftbjlne.turknet.ercdn.net/bpeytmnqyp/showtv/showtv.m3u8
