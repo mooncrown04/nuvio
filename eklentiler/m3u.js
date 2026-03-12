@@ -1,70 +1,43 @@
 /**
- * MoOnCrOwN - Live TV (V6 - Force Access)
- * Amaç: Kanal isminden bağımsız olarak dosyaya erişmek ve sonuç döndürmek.
+ * V7 - FINAL REGISTRATION
  */
 
-const LIVE_SOURCE = "https://raw.githubusercontent.com/mooncrown04/nuvio/refs/heads/master/liste/canli.m3u";
-
-const getStreams = function(tmdbId, mediaType, seasonNum, episodeNum, channelName) {
-    return new Promise(function(resolve) {
-        // Logları "Error" seviyesinde basıyoruz ki kırmızı renkle Logcat'te parlasın.
-        console.error("##########################################");
-        console.error("!!! MOONCROWN SISTEMINE GIRIS YAPILDI !!!");
-        console.error("Aranan Kelime: " + (channelName || tmdbId));
-        console.error("##########################################");
-
-        // Gelen aramayı basitleştirelim
-        let searchKey = (channelName || tmdbId || "").toString().toLowerCase().trim();
-
-        fetch(LIVE_SOURCE)
-            .then(res => {
-                console.error(">>> HTTP DURUMU: " + res.status);
-                return res.text();
-            })
-            .then(content => {
-                const lines = content.split('\n');
-                let results = [];
-                
-                console.error(">>> DOSYA OKUNDU. SATIR SAYISI: " + lines.length);
-
-                for (let i = 0; i < lines.length; i++) {
-                    let line = lines[i];
-
-                    if (line.includes("#EXTINF")) {
-                        let lineLower = line.toLowerCase();
-                        
-                        // FILTREYI ESNETTIK: Aranan kelime (örn: trt) satırda geçiyorsa ekle
-                        if (lineLower.includes(searchKey) || searchKey === "") {
-                            
-                            // Linki bul (Altındaki ilk http satırı)
-                            let streamUrl = "";
-                            for (let j = 1; j <= 5; j++) {
-                                if (lines[i + j] && lines[i + j].trim().startsWith("http")) {
-                                    streamUrl = lines[i + j].trim();
-                                    break;
-                                }
-                            }
-
-                            if (streamUrl) {
-                                results.push({
-                                    name: "📡 " + (line.split(',').pop().trim() || "KANAL"),
-                                    title: "YAYINI AC",
-                                    url: streamUrl,
-                                    http_headers: { "User-Agent": "VLC/3.0.18" }
-                                });
-                            }
-                        }
+const getStreams = async function(tmdbId, mediaType, seasonNum, episodeNum, channelName) {
+    // BU LOGU GÖRMEDEN DURMAK YOK!
+    console.error("CRITICAL_LOG: PROVIDER_STARTED_CHECK");
+    
+    return new Promise(async (resolve) => {
+        try {
+            const url = "https://raw.githubusercontent.com/mooncrown04/nuvio/refs/heads/master/liste/canli.m3u";
+            
+            // Sertifika hatalarını aşmak için en yalın fetch
+            const response = await fetch(url);
+            const text = await response.text();
+            const lines = text.split('\n');
+            
+            let results = [];
+            // Filtreleme yapmadan TRT olanları direkt döndür (Test amaçlı)
+            for (let i = 0; i < lines.length; i++) {
+                if (lines[i].includes("#EXTINF") && lines[i].toLowerCase().includes("trt")) {
+                    let streamUrl = lines[i+1]?.trim();
+                    if (streamUrl && streamUrl.startsWith("http")) {
+                        results.push({
+                            name: "📡 " + lines[i].split(',').pop().trim(),
+                            url: streamUrl
+                        });
                     }
                 }
-
-                console.error(">>> TOPLAM ESLENEN KANAL: " + results.length);
-                resolve(results);
-            })
-            .catch(err => {
-                console.error("!!! KRITIK BAGLANTI HATASI: " + err.message);
-                resolve([]);
-            });
+            }
+            
+            console.error("CRITICAL_LOG: RESULTS_FOUND: " + results.length);
+            resolve(results);
+        } catch (e) {
+            console.error("CRITICAL_LOG: FETCH_ERROR: " + e.message);
+            resolve([]);
+        }
     });
 };
 
+// Her yere kayıt et ki uygulama hangisini okuyorsa onu bulsun
 globalThis.getStreams = getStreams;
+if (typeof window !== 'undefined') { window.getStreams = getStreams; }
