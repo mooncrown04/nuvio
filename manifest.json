@@ -1,26 +1,27 @@
 {
   "id": "nuvio35",
-  "version": "0.1.1",
+  "version": "1.2.0",
   "name": "MoOnCrOwN M3U",
-  "description": "MoOnCrOwN Ultimate M3U Scraper for Nuvio",
+  "description": "IPTV addon with M3U for Nuvio",
   "logo": "https://i.imgur.com/Dlsm9XP.png",
-  "resources": ["catalog", "meta", "stream"],
-  "types": ["tv"],
-  "idPrefixes": ["nv_"],
+  "resources": [
+    "catalog",
+    "stream",
+    "meta"
+  ],
+  "types": [
+    "tv",
+    "movie"
+  ],
   "catalogs": [
     {
-      "id": "tum_liste",
       "type": "tv",
-      "name": "Favori TV",
+      "id": "nv_channels",
+      "name": "MoOnCrOwN TV Kanalları",
       "extra": [
-        {
-          "name": "search",
-          "isRequired": false
-        },
-        {
-          "name": "genre",
-          "isRequired": false
-        }
+        { "name": "genre" },
+        { "name": "search" },
+        { "name": "skip" }
       ],
       "genres": [
         "ULUSAL KANALLAR",
@@ -29,7 +30,19 @@
         "SİNEMA KANALLARI",
         "Genel"
       ]
+    },
+    {
+      "type": "movie",
+      "id": "nv_movies",
+      "name": "MoOnCrOwN Filmler",
+      "extra": [
+        { "name": "search" },
+        { "name": "skip" }
+      ]
     }
+  ],
+  "idPrefixes": [
+    "nv_"
   ],
   "scrapers": [
     {
@@ -37,8 +50,12 @@
       "name": "MC Engine",
       "filename": "m3u.js",
       "enabled": true,
-      "types": ["tv"],
+      "types": ["tv", "movie"],
       "resources": ["catalog", "meta", "stream"]
     }
-  ]
+  ],
+  "behaviorHints": {
+    "configurable": true,
+    "configurationRequired": false
+  }
 }
