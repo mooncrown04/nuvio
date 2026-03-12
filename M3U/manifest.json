@@ -1,8 +1,7 @@
 {
-  "id": "nuvio35222",
+  "id": "nuvio35",
   "version": "009",
-  "name": "MoOnCrOwN M3U",
-  "logo": "https://st5.depositphotos.com/1041725/67731/v/380/depositphotos_677319750-stock-illustration-ararat-mountain-illustration-vector-white.jpg",
+  "name": "MoOnCrOwN M3U--aytac",
   "resources": ["catalog", "meta", "stream"],
   "types": ["tv", "movie"],
   "idPrefixes": ["nv_", "tmdb_"],
@@ -10,19 +9,17 @@
     {
       "id": "tum_liste",
       "type": "tv",
-      "name": "Favori",
-      "extra": [
-        { "name": "search", "isRequired": false },
-        { 
-          "name": "genre", 
-          "isRequired": false, 
-          "options": ["ULUSAL KANALLAR", "SPOR KANALLARI", "SİNEMA KANALLARI", "HABER KANALLARI"] 
-        }
-      ]
+      "name": "Favori"
     }
   ],
-  "behaviorHints": {
-    "configurable": true,
-    "configurationRequired": false
-  }
+  "scrapers": [
+    {
+      "id": "mc_engine",
+      "name": "MC Engine",
+      "filename": "m3u.js", 
+      "enabled": true,
+      "types": ["tv", "movie"],
+      "resources": ["catalog", "meta", "stream"]
+    }
+  ]
 }
