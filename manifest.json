@@ -1,10 +1,11 @@
 {
   "id": "org.mooncrown.m3u.dynamic",
-  "version": "3.1.0",
-  "name": "MoOnCrOwN Dynamic",
-  "description": "M3U and TMDB Link Provider",
+  "version": "3.2.0",
+  "name": "MoOnCrOwN Engine",
+  "description": "Dinamik M3U ve TMDB Eşleşme Motoru",
+  "logo": "https://i.imgur.com/Dlsm9XP.png",
   "resources": ["catalog", "meta", "stream"],
-  "types": ["tv", "movie"],
+  "types": ["tv", "movie", "series"],
   "idPrefixes": ["nv_", "tmdb_"],
   "catalogs": [
     {
@@ -16,9 +17,9 @@
   "scrapers": [
     {
       "id": "m3u-engine",
-      "name": "M3U Scraper",
+      "name": "MC Scraper",
       "enabled": true,
-      "types": ["tv", "movie"],
+      "types": ["tv", "movie", "series"],
       "resources": ["catalog", "meta", "stream"]
     }
   ]
