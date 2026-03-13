@@ -1,0 +1,30 @@
+{
+  "id": "german-dub-finder",
+  "name": "German Dub",
+  "version": "1.0.0",
+  "description": "German dubbed movies and series",
+  "author": "Fortune",
+  "icon": "https://flagcdn.com/w320/de.png",
+  "catalogs": [
+    {
+      "id": "german-movies",
+      "name": "German Movies",
+      "type": "movie"
+    },
+    {
+      "id": "german-series", 
+      "name": "German Series",
+      "type": "series"
+    }
+  ],
+  "resources": [
+    "catalog",
+    "meta",
+    "stream"
+  ],
+  "types": [
+    "movie",
+    "series"
+  ],
+  "idPrefixes": ["tmdb"]
+}
