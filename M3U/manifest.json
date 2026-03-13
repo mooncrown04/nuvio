@@ -2,7 +2,7 @@
   "id": "M3U KATALOG",
   "version": "1.0.0",
   "name": "M3U TV & Film",
-  "resources": ["catalog"],
+  "resources": ["catalog","meta","stream"],
   "types": ["movie", "tv"],
   "idPrefixes": ["ch", "tt"],
   "catalogs": [
@@ -13,3 +13,4 @@
     }
   ]
 }
+
