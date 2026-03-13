@@ -2,16 +2,17 @@
   "name": "MoOnCrOwN",
   "version": "0.4",
   "scrapers": [
-      {
+    {
       "id": "m3u",
-      "name": "M3u",
-      "description": " Scraper",
+      "name": "MoOnCrOwN Engine",
+      "description": "Statik Katalog Uyumlu M3U Scraper",
       "version": "1.0.1",
       "author": "mooncrown",
-      "supportedTypes": ["movie","tv"],
+      "supportedTypes": ["movie", "tv"],
       "filename": "eklentiler/m3u.js",
       "enabled": true,
       "formats": ["mp4", "mkv", "hls", "m3u8"],
-      "contentLanguage": ["tr"]}
-      ]
-      }
+      "contentLanguage": ["tr"]
+    }
+  ]
+}
