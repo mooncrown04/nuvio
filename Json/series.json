@@ -1,0 +1,24 @@
+[
+  {
+    "title": "The Lucy Show",
+    "year": "1962",
+    "poster": "https://flemmix.surf/images/lucy.jpg",
+    "seasons": [
+      {
+        "season": 1,
+        "episodes": [
+          {
+            "episode": 1,
+            "title": "Lucy Waits Up for Chris",
+            "stream_url": "https://flemmix.surf/hls/lucy-s01e01.m3u8"
+          },
+          {
+            "episode": 2,
+            "title": "Lucy Digs Up a Date",
+            "stream_url": "https://flemmix.surf/videos/lucy-s01e02.mp4"
+          }
+        ]
+      }
+    ]
+  }
+]
