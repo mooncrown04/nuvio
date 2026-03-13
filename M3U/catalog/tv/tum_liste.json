@@ -71,15 +71,16 @@
       "type": "tv",
       "name": "Star TV",
       "poster": "https://picon.pics/TR/Ulusal/Startv.png",
-      "background": "https://image.tmdb.org/t/p/original/nS0M3n2yX06z3v3P087Xp7N2eC6z.jpg",
+      "background": "https://picon.pics/TR/Ulusal/Startv.png",
       "logo": "https://picon.pics/TR/Ulusal/Startv.png",
       "description": "Renkli içeriği ve iddialı dizileriyle Türkiye'nin ilk özel televizyonu.",
-      "genres": ["Dizi", "Eğlence"],
+      "genres": ["Eğlence"],
       "releaseInfo": "LIVE",
-      "runtime": "heyCanlı Yayın"
+      "runtime": "Canlı Yayın"
     }
   ]
 }
+
 
 
 
