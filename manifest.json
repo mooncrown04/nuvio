@@ -27,29 +27,6 @@
       "enabled": true,
       "formats": ["mp4", "mkv", "hls", "m3u8"],
       "contentLanguage": ["tr"]
-    },
-{ "id": "M3U KATALOG",
-  "name": "Flemmix Public Domain",
-  "description": "Public domain movies and TV shows from Flemmix",
-  "version": "1.0.0",
-  "author": "Flemmix",
-  "enabled": true,
-  "formats": ["mp4", "mkv", "hls", "m3u8"],
-  "contentLanguage": ["tr"]
-  "supportedTypes": ["movie", "tv"],
-  "providers": [
-    {
-      "name": "Flemmix Movies",
-      "type": "movie",
-      "url": "movies.json"
-    },
-    {
-      "name": "Flemmix Series",
-      "type": "tv",
-      "url": "series.json"
     }
-  ]
-}
-    
   ]
 }
