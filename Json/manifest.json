@@ -1,6 +1,8 @@
-{
+{ "id": "M3U KATALOG",
   "name": "Flemmix Public Domain",
   "description": "Public domain movies and TV shows from Flemmix",
+  "types": ["movie", "tv"],
+  "resources": ["catalog"],
   "version": "1.0.0",
   "author": "Flemmix",
   "providers": [
