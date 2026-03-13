@@ -1,23 +1,15 @@
-  "id": "nuvio35",
-  "version": "008",
-  "name": "M3U",
-  "logo": "https://st5.depositphotos.com/1041725/67731/v/380/depositphotos_677319750-stock-illustration-ararat-mountain-illustration-vector-white.jpg",
-  "resources": ["catalog", "meta", "stream"],
+{
+  "id": "M3U KATALOG",
+  "version": "1.0.0",
+  "name": "M3U TV & Film",
+  "resources": ["catalog"],
   "types": ["movie", "tv"],
-  "idPrefixes": ["nv_"],
+  "idPrefixes": ["ch", "tt"],
   "catalogs": [
     {
       "id": "tum_liste",
       "type": "tv",
-      "name": "Favori",
-  "extra": [
-        { "name": "search", "isRequired": false },
-        { 
-          "name": "genre", 
-          "isRequired": false, 
-          "options": ["Haber", "Spor", "Sinema", "Genel"] 
-        }
-      ]
+      "name": "Canlı Yayınlar"
     }
   ]
-} 
+}
