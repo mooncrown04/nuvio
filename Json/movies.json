@@ -1,0 +1,14 @@
+[
+  {
+    "title": "Night of the Living Dead",
+    "year": "1968",
+    "poster": "https://flemmix.surf/images/notld.jpg",
+    "stream_url": "https://flemmix.surf/videos/notld.mp4"
+  },
+  {
+    "title": "The General",
+    "year": "1926",
+    "poster": "https://flemmix.surf/images/thegeneral.jpg",
+    "stream_url": "https://flemmix.surf/hls/thegeneral.m3u8"
+  }
+]
