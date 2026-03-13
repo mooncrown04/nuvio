@@ -1,13 +1,13 @@
 {
   "meta": {
-    "id": "nv_trt1",
+    "id": "star",
     "type": "tv",
-    "name": "TRT 1 HD",
-    "poster": "https://feo.kablowebtv.com/resize/168A635D265A4328C2883FB4CD8FF/0/0/Vod/HLS/7d58e86c-d38e-4ef5-8ee0-fda0a7e65914.png",
+    "name": "Star Tv",
+    "poster": "https://picon.pics/TR/Ulusal/Startv.png",
     "background": "https://picon.pics/TR/Ulusal/Startv.png",
     "logo": "https://i.imgur.com/Dlsm9XP.png",
     "description": "Türkiye'nin ilk ulusal televizyon kanalı. Canlı yayınlar, diziler ve haberler.",
-    "genres": ["Genel", "Haber", "Dizi"],
+    "genres": ["Genel"],
     "releaseInfo": "LIVE",
     "runtime": "Canlı Yayın",
     "trailers": [
