@@ -16,8 +16,8 @@
       "contentLanguage": ["tr"]
     },
      {
-      "id": "m3u",
-      "name": "german",
+      "id": "german",
+      "name": "German",
       "description": "Statik Katalog Uyumlu M3U Scraper",
       "logo": "https://picon.pics/TR/Ulusal/Atv.png",
       "version": "1.0.1",
