@@ -1,0 +1,13 @@
+{
+  "streams": [
+    {
+      "name": "star-deneme",
+      "title": "star | Kesintisiz",
+      "url": "http://139.162.182.79/live/test/index.m3u8",
+      "behaviorHints": {
+        "notClickable": false,
+        "bingeGroup": "star-tv"
+      }
+    }
+  ]
+}
