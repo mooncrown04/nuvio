@@ -22,7 +22,7 @@
   "enabled": true,
   "formats": ["mp4", "mkv", "hls", "m3u8"],
   "contentLanguage": ["tr"],
-  "resources": ["catalog", "meta", "stream"] // Hangi fonksiyonları desteklediğini belirtmelisin
+  "resources": ["catalog", "meta", "stream"]
 },   
     {
       "id": "m3u",
