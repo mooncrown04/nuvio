@@ -4,7 +4,7 @@
   "description": "Sinewix Stremio eklentisi",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js"
+    "start": "index.js"
   },
   "keywords": [
     "stremio",
