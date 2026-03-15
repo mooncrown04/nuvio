@@ -6,9 +6,9 @@
   "id": "m3u.mooncrown.addon",
   "name": "MoOnCrOwN M3U",
   "description": "Otomatik M3U Katalog ve Yayın Eklentisi",
-  "logo": "https://picon.pics/TR/Ulusal/Atv.png",
+  "logo": "https://st5.depositphotos.com/1041725/67731/v/380/depositphotos_677319750-stock-illustration-ararat-mountain-illustration-vector-white.jpg",
   "version": "1.0.1",
-  "author": "mooncrown",
+  "author": "MoOnCrOwN",
   "types": ["tv", "movie"],
   "idPrefixes": ["tv_", "tmdb_", "iptv_", "nv_"],
   "catalogs": [
