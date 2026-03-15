@@ -4,7 +4,7 @@
   "scrapers": [  
    {
   "id": "m3u.mooncrown.addon",
-  "name": "MoOnCrOwN m3u",
+  "name": "MoOnCrOwN M3U",
   "description": "Otomatik M3U Katalog ve Yayın Eklentisi",
   "logo": "https://picon.pics/TR/Ulusal/Atv.png",
   "version": "1.0.1",
