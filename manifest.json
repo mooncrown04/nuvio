@@ -2,28 +2,41 @@
   "name": "MoOnCrOwN",
   "version": "0.4",
   "scrapers": [  
-    {
+   {
   "id": "m3u.mooncrown.addon",
   "name": "MoOnCrOwN m3u",
-  "description": "Statik Katalog Uyumlu M3U Scraper",
+  "description": "Otomatik M3U Katalog ve Yayın Eklentisi",
   "logo": "https://picon.pics/TR/Ulusal/Atv.png",
   "version": "1.0.1",
   "author": "mooncrown",
-  "types": ["tv", "movie"], 
-  "idPrefixes": ["tv_", "tmdb_", "iptv_", "star", "nv_"],
+  "types": ["tv", "movie"],
+  "idPrefixes": ["tv_", "tmdb_", "iptv_", "star", "nv_", "rocky"],
+  
+  // BURASI KRİTİK: Katalog görünümü için bu alan şart
   "catalogs": [
     {
       "type": "tv",
-      "id": "mooncrown_channels",
-      "name": "MoOnCrOwN TV"
+      "id": "mooncrown_m3u_list", 
+      "name": "MoOnCrOwN Canlı TV",
+      "extra": [
+        { "name": "search", "isRequired": false },
+        { "name": "genre", "isRequired": false }  
+      ]
     }
   ],
+  
+  // Eklentinin neler yapabildiğini sisteme bildiriyoruz
+  "resources": [
+    "catalog", 
+    "meta",    
+    "stream"  
+  ],
+
   "filename": "eklentiler/m3u.js",
   "enabled": true,
   "formats": ["mp4", "mkv", "hls", "m3u8"],
-  "contentLanguage": ["tr"],
-  "resources": ["catalog", "meta", "stream"]
-},   
+  "contentLanguage": ["tr"]
+}
     {
       "id": "m3u",
       "name": "MoOnCrOwN m3u",
