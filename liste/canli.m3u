@@ -4,6 +4,49 @@ https://trt.daioncdn.net/trt-1/master.m3u8?app=clean
 
 #EXTINF:-1 tvg-id="nv_trt1" tvg-name="" tvg-logo="https://picon.pics/TR/Ulusal/Atv.png" group-title="ULUSAL KANALLAR",nv_trt1
 https://rnttwmjcin.turknet.ercdn.net/lcpmvefbyo/atv/atv.m3u8
+#EXTINF:-1 tvg-id="star" tvg-name="" tvg-logo="https://picon.pics/TR/Ulusal/Trt1.png" group-title="ULUSAL KANALLAR",star
+https://trt.daioncdn.net/trt-1/master.m3u8?app=clean
+
+#EXTINF:-1 tvg-id="nv_trt1" tvg-name="" tvg-logo="https://picon.pics/TR/Ulusal/Atv.png" group-title="ULUSAL KANALLAR",nv_trt1
+https://rnttwmjcin.turknet.ercdn.net/lcpmvefbyo/atv/atv.m3u8
+
+#EXTINF:-1 tvg-id="tmdb_atv" tvg-name="" tvg-logo="https://i.ibb.co/Xz9R2zB/beinsports.png" group-title="SPOR KANALLARI",tmdb_atv
+http://wowza.beinsports.com.tr/live/bshaber/playlist.m3u8
+
+#EXTINF:-1 tvg-id="atv" tvg-name="" tvg-logo="https://picon.pics/TR/Ulusal/TrtHaber.png" group-title="HABER KANALLARI",atv
+https://trt.daioncdn.net/trt-haber/master.m3u8
+
+#EXTINF:-1 tvg-id="sinema1.tr" tvg-name="ÖRNEK SİNEMA" tvg-logo="https://i.imgur.com/Dlsm9XP.png" group-title="spor",awakado
+https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8
+#EXTINF:-1 tvg-id="TRT 1 HD" tvg-name="TRT 1 HD" tvg-logo="https://picon.pics/TR/Ulusal/Trt1.png" group-title="ULUSAL KANALLAR",TRT 1 HD
+https://trt.daioncdn.net/trt-1/master.m3u8?app=clean
+
+#EXTINF:-1 tvg-id="ATV HD" tvg-name="ATV HD" tvg-logo="https://picon.pics/TR/Ulusal/Atv.png" group-title="ULUSAL KANALLAR",ATV HD
+https://rnttwmjcin.turknet.ercdn.net/lcpmvefbyo/atv/atv.m3u8
+
+#EXTINF:-1 tvg-id="beinsports.tr" tvg-name="BEIN SPORTS HABER" tvg-logo="https://i.ibb.co/Xz9R2zB/beinsports.png" group-title="SPOR KANALLARI",BEIN SPORTS HABER
+http://wowza.beinsports.com.tr/live/bshaber/playlist.m3u8
+#EXTINF:-1 tvg-id="tmdb_atv" tvg-name="" tvg-logo="https://i.ibb.co/Xz9R2zB/beinsports.png" group-title="SPOR KANALLARI",tmdb_atv
+http://wowza.beinsports.com.tr/live/bshaber/playlist.m3u8
+
+#EXTINF:-1 tvg-id="atv" tvg-name="" tvg-logo="https://picon.pics/TR/Ulusal/TrtHaber.png" group-title="HABER KANALLARI",atv
+https://trt.daioncdn.net/trt-haber/master.m3u8
+
+#EXTINF:-1 tvg-id="sinema1.tr" tvg-name="ÖRNEK SİNEMA" tvg-logo="https://i.imgur.com/Dlsm9XP.png" group-title="spor",awakado
+https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8
+#EXTINF:-1 tvg-id="TRT 1 HD" tvg-name="TRT 1 HD" tvg-logo="https://picon.pics/TR/Ulusal/Trt1.png" group-title="ULUSAL KANALLAR",TRT 1 HD
+https://trt.daioncdn.net/trt-1/master.m3u8?app=clean
+
+#EXTINF:-1 tvg-id="ATV HD" tvg-name="ATV HD" tvg-logo="https://picon.pics/TR/Ulusal/Atv.png" group-title="ULUSAL KANALLAR",ATV HD
+https://rnttwmjcin.turknet.ercdn.net/lcpmvefbyo/atv/atv.m3u8
+
+#EXTINF:-1 tvg-id="beinsports.tr" tvg-name="BEIN SPORTS HABER" tvg-logo="https://i.ibb.co/Xz9R2zB/beinsports.png" group-title="SPOR KANALLARI",BEIN SPORTS HABER
+http://wowza.beinsports.com.tr/live/bshaber/playlist.m3u8
+#EXTINF:-1 tvg-id="star" tvg-name="" tvg-logo="https://picon.pics/TR/Ulusal/Trt1.png" group-title="ULUSAL KANALLAR",star
+https://trt.daioncdn.net/trt-1/master.m3u8?app=clean
+
+#EXTINF:-1 tvg-id="nv_trt1" tvg-name="" tvg-logo="https://picon.pics/TR/Ulusal/Atv.png" group-title="ULUSAL KANALLAR",nv_trt1
+https://rnttwmjcin.turknet.ercdn.net/lcpmvefbyo/atv/atv.m3u8
 
 #EXTINF:-1 tvg-id="tmdb_atv" tvg-name="" tvg-logo="https://i.ibb.co/Xz9R2zB/beinsports.png" group-title="SPOR KANALLARI",tmdb_atv
 http://wowza.beinsports.com.tr/live/bshaber/playlist.m3u8
