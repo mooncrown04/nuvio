@@ -11,8 +11,6 @@
   "author": "mooncrown",
   "types": ["tv", "movie"],
   "idPrefixes": ["tv_", "tmdb_", "iptv_", "nv_"],
-  
-  
   "catalogs": [
     {
       "type": "tv",
@@ -24,19 +22,16 @@
       ]
     }
   ],
-  
- 
   "resources": [
     "catalog", 
     "meta",    
     "stream"  
   ],
-
   "filename": "eklentiler/m3u.js",
   "enabled": true,
   "formats": ["mp4", "mkv", "hls", "m3u8"],
   "contentLanguage": ["tr"]
-}
+},
     {
       "id": "m3u",
       "name": "MoOnCrOwN m3u",
