@@ -3,14 +3,14 @@
   "version": "0.4",
   "scrapers": [  
     {
-  "id": "m3u.mooncrown.addon", // ID daha spesifik olmalı
+  "id": "m3u.mooncrown.addon",
   "name": "MoOnCrOwN m3u",
   "description": "Statik Katalog Uyumlu M3U Scraper",
   "logo": "https://picon.pics/TR/Ulusal/Atv.png",
   "version": "1.0.1",
   "author": "mooncrown",
-  "types": ["tv", "movie"], // 'supportedTypes' yerine sadece 'types' kullanılır genelde
-  "idPrefixes": ["tv_", "tmdb_", "iptv_", "star", "nv_", "rocky"], // Eşleşecek ID başlangıçları
+  "types": ["tv", "movie"], 
+  "idPrefixes": ["tv_", "tmdb_", "iptv_", "star", "nv_"],
   "catalogs": [
     {
       "type": "tv",
