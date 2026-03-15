@@ -10,9 +10,9 @@
   "version": "1.0.1",
   "author": "mooncrown",
   "types": ["tv", "movie"],
-  "idPrefixes": ["tv_", "tmdb_", "iptv_", "star", "nv_", "rocky"],
+  "idPrefixes": ["tv_", "tmdb_", "iptv_", "nv_"],
   
-  // BURASI KRİTİK: Katalog görünümü için bu alan şart
+  
   "catalogs": [
     {
       "type": "tv",
@@ -25,7 +25,7 @@
     }
   ],
   
-  // Eklentinin neler yapabildiğini sisteme bildiriyoruz
+ 
   "resources": [
     "catalog", 
     "meta",    
