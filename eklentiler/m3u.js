@@ -3,8 +3,8 @@
  * tvg-id, tvg-name veya virgül sonrası (star, tmdb_atv vb.) eşleşme yapar.
  */
 
-//var M3U_URL = "https://raw.githubusercontent.com/mooncrown04/nuvio/refs/heads/master/liste/canli.m3u";
-var M3U_URL = "https://dl.dropbox.com/scl/fi/piul7441pe1l41qcgq62y/powerdizi.m3u?rlkey=zwfgmuql18m09a9wqxe3irbbr";
+var M3U_URL = "https://raw.githubusercontent.com/mooncrown04/nuvio/refs/heads/master/liste/film.m3u";
+//var M3U_URL = "https://dl.dropbox.com/scl/fi/piul7441pe1l41qcgq62y/powerdizi.m3u?rlkey=zwfgmuql18m09a9wqxe3irbbr";
 var _HEADERS = {
     'User-Agent': 'VLC/3.0.18',
     'Accept': '*/*'
