@@ -1,6 +1,6 @@
 /**
- * DiziPal v53 - AES-256-CBC Decryption with 256-byte Salt
- * Salt: 256 byte -> ilk 32 byte kullan (256 bit key için)
+ * DiziPal v54 - Multiple Decryption Attempts
+ * Farklı key türetme yöntemlerini dene
  */
 
 var cheerio = require("cheerio-without-node-native");
@@ -16,7 +16,7 @@ var HEADERS = {
     'Referer': BASE_URL + '/'
 };
 
-// ========== CRYPTO UTILITIES ==========
+// ========== UTILITIES ==========
 
 function hexToBytes(hex) {
     var bytes = [];
@@ -28,32 +28,16 @@ function hexToBytes(hex) {
 
 function base64ToBytes(base64) {
     var cleaned = base64.replace(/\\\//g, '/').replace(/\\=/g, '=');
-    var chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=';
-    var result = [];
-    var i = 0;
-    
-    while (i < cleaned.length) {
-        var enc1 = chars.indexOf(cleaned.charAt(i++));
-        var enc2 = chars.indexOf(cleaned.charAt(i++));
-        var enc3 = chars.indexOf(cleaned.charAt(i++));
-        var enc4 = chars.indexOf(cleaned.charAt(i++));
-        
-        if (enc1 < 0 || enc2 < 0) break;
-        
-        var chr1 = (enc1 << 2) | (enc2 >> 4);
-        result.push(chr1);
-        
-        if (enc3 >= 0 && enc3 !== 64) {
-            var chr2 = ((enc2 & 15) << 4) | (enc3 >> 2);
-            result.push(chr2);
+    try {
+        var binary = atob(cleaned);
+        var bytes = [];
+        for (var i = 0; i < binary.length; i++) {
+            bytes.push(binary.charCodeAt(i));
         }
-        
-        if (enc4 >= 0 && enc4 !== 64) {
-            var chr3 = ((enc3 & 3) << 6) | enc4;
-            result.push(chr3);
-        }
+        return bytes;
+    } catch (e) {
+        return [];
     }
-    return result;
 }
 
 function bytesToString(bytes) {
@@ -66,57 +50,114 @@ function bytesToString(bytes) {
     return result;
 }
 
-// ========== SIMPLIFIED "DECRYPTION" ==========
-// Gerçek AES-256-CBC yerine, belki basit bir algoritma kullanıyorlar?
-// Deneme: Direkt base64 decode + XOR ile passphrase
+// ========== DECRYPTION ATTEMPTS ==========
 
-function simpleDecrypt(ciphertext, iv, salt) {
-    console.error('[DiziPal] Trying simple decryption...');
-    
-    // Salt'tan key türet (ilk 32 byte)
+function attempt1_Xor(ct, iv, salt, passphrase) {
+    // Basit XOR
     var key = salt.slice(0, 32);
-    console.error('[DiziPal] Key bytes: ' + key.slice(0, 8).join(','));
-    
-    // Ciphertext'i decode et
-    var ct = base64ToBytes(ciphertext);
-    console.error('[DiziPal] CT bytes: ' + ct.length);
-    
-    // IV'yi decode et
-    var ivBytes = hexToBytes(iv);
-    console.error('[DiziPal] IV bytes: ' + ivBytes.length);
-    
-    // Basit XOR "decryption" (deneme)
     var result = [];
-    for (var i = 0; i < ct.length && i < 100; i++) {
-        // XOR: CT ^ Key ^ IV
-        var decrypted = ct[i] ^ key[i % key.length] ^ ivBytes[i % ivBytes.length];
-        result.push(decrypted);
+    for (var i = 0; i < ct.length; i++) {
+        result.push(ct[i] ^ key[i % key.length] ^ iv[i % iv.length]);
+    }
+    return bytesToString(result);
+}
+
+function attempt2_PassphraseXor(ct, iv, salt, passphrase) {
+    // Passphrase'ten key türet
+    var passBytes = [];
+    for (var i = 0; i < passphrase.length; i++) {
+        passBytes.push(passphrase.charCodeAt(i) & 0xff);
     }
     
-    var str = bytesToString(result);
-    console.error('[DiziPal] Decrypted (first 100): ' + str);
+    var result = [];
+    for (var i = 0; i < ct.length; i++) {
+        var keyByte = passBytes[i % passBytes.length];
+        var saltByte = salt[i % salt.length]; // 256 byte salt'ın tamamı
+        result.push(ct[i] ^ keyByte ^ saltByte ^ iv[i % iv.length]);
+    }
+    return bytesToString(result);
+}
+
+function attempt3_SaltedPassphrase(ct, iv, salt, passphrase) {
+    // Passphrase + salt mixing
+    var passBytes = [];
+    for (var i = 0; i < passphrase.length; i++) {
+        passBytes.push(passphrase.charCodeAt(i) & 0xff);
+    }
     
-    // Eğer "http" veya "//" içeriyorsa, başarılı
-    if (str.indexOf('http') >= 0 || str.indexOf('//') >= 0) {
-        console.error('[DiziPal] URL pattern found!');
+    // Salt ve passphrase'i karıştır
+    var mixed = [];
+    for (var i = 0; i < 64; i++) {
+        var p = passBytes[i % passBytes.length];
+        var s = salt[i % salt.length];
+        mixed.push((p + s) & 0xff);
+    }
+    
+    var result = [];
+    for (var i = 0; i < ct.length; i++) {
+        result.push(ct[i] ^ mixed[i % mixed.length] ^ iv[i % iv.length]);
+    }
+    return bytesToString(result);
+}
+
+function attempt4_Reversed(ct, iv, salt, passphrase) {
+    // Tersine çevirme denemesi
+    var revCt = ct.slice().reverse();
+    var key = salt.slice(0, 32);
+    var result = [];
+    for (var i = 0; i < revCt.length; i++) {
+        result.push(revCt[i] ^ key[i % key.length]);
+    }
+    return bytesToString(result);
+}
+
+function attempt5_CtrMode(ct, iv, salt, passphrase) {
+    // CTR-like mode denemesi
+    var key = salt.slice(0, 32);
+    var result = [];
+    for (var i = 0; i < ct.length; i++) {
+        var counter = (iv[i % iv.length] + i) & 0xff;
+        result.push(ct[i] ^ key[i % key.length] ^ counter);
+    }
+    return bytesToString(result);
+}
+
+function tryAllDecryptions(ciphertext, iv, salt) {
+    var ct = base64ToBytes(ciphertext);
+    var ivBytes = hexToBytes(iv);
+    var saltBytes = hexToBytes(salt);
+    
+    console.error('[DiziPal] CT: ' + ct.length + ' bytes');
+    console.error('[DiziPal] IV: ' + ivBytes.length + ' bytes');
+    console.error('[DiziPal] Salt: ' + saltBytes.length + ' bytes');
+    
+    var attempts = [
+        { name: 'Simple XOR', fn: attempt1_Xor },
+        { name: 'Passphrase XOR', fn: attempt2_PassphraseXor },
+        { name: 'Salted Passphrase', fn: attempt3_SaltedPassphrase },
+        { name: 'Reversed CT', fn: attempt4_Reversed },
+        { name: 'CTR-like', fn: attempt5_CtrMode }
+    ];
+    
+    for (var i = 0; i < attempts.length; i++) {
+        console.error('[DiziPal] Trying ' + attempts[i].name + '...');
+        var result = attempts[i].fn(ct, ivBytes, saltBytes, PASSPHRASE);
+        console.error('[DiziPal] Result: ' + result.substring(0, 50));
         
-        // Tamamını çöz
-        var fullResult = [];
-        for (var i = 0; i < ct.length; i++) {
-            var d = ct[i] ^ key[i % key.length] ^ ivBytes[i % ivBytes.length];
-            fullResult.push(d);
+        if (result.indexOf('http') >= 0 || result.indexOf('//') >= 0) {
+            console.error('[DiziPal] ✓ SUCCESS with ' + attempts[i].name);
+            
+            // URL temizle
+            result = result.replace(/\\\//g, '/');
+            if (result.indexOf('://') === 0) result = 'https' + result;
+            else if (result.indexOf('//') === 0) result = 'https:' + result;
+            else if (result.indexOf('http') !== 0) result = 'https://' + result;
+            
+            return result;
         }
-        
-        var fullStr = bytesToString(fullResult);
-        // URL temizle
-        fullStr = fullStr.replace(/\\\//g, '/');
-        if (fullStr.indexOf('://') === 0) fullStr = 'https' + fullStr;
-        else if (fullStr.indexOf('//') === 0) fullStr = 'https:' + fullStr;
-        else if (fullStr.indexOf('http') !== 0) fullStr = 'https://' + fullStr;
-        
-        return fullStr;
     }
     
+    console.error('[DiziPal] All attempts failed');
     return '';
 }
 
@@ -164,20 +205,10 @@ function extractFromPage(html, url) {
             
             try {
                 var data = JSON.parse(encryptedText);
-                console.error('[DiziPal] Salt length: ' + data.salt.length + ' (hex chars)');
+                var decryptedUrl = tryAllDecryptions(data.ciphertext, data.iv, data.salt);
                 
-                // Salt: 512 hex chars = 256 bytes, ama ilk 64 byte (128 hex) kullanalım
-                var saltBytes = hexToBytes(data.salt);
-                console.error('[DiziPal] Salt bytes: ' + saltBytes.length);
-                
-                // İlk 32 byte kullan (normal salt boyutu)
-                var shortSalt = saltBytes.slice(0, 32);
-                
-                // Şifre çöz denemesi
-                var decryptedUrl = simpleDecrypt(data.ciphertext, data.iv, shortSalt);
-                
-                if (decryptedUrl && decryptedUrl.indexOf('http') === 0) {
-                    console.error('[DiziPal] Decrypted URL: ' + decryptedUrl.substring(0, 100));
+                if (decryptedUrl) {
+                    console.error('[DiziPal] Final URL: ' + decryptedUrl.substring(0, 100));
                     resolve([{
                         name: 'DiziPal',
                         url: decryptedUrl,
@@ -187,13 +218,12 @@ function extractFromPage(html, url) {
                     }]);
                     return;
                 }
-                
             } catch (e) {
-                console.error('[DiziPal] Decrypt error: ' + e.message);
+                console.error('[DiziPal] Error: ' + e.message);
             }
         }
         
-        // Fallback: iframe
+        // Fallback
         var iframe = $('iframe').first();
         if (iframe.length > 0) {
             var src = iframe.attr('src') || '';
@@ -253,7 +283,7 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
 
                             extractFromPage(html, url).then(function(streams) {
                                 if (streams.length > 0) {
-                                    console.error('[DiziPal] SUCCESS: ' + streams[0].url.substring(0, 50));
+                                    console.error('[DiziPal] SUCCESS');
                                     resolve(streams);
                                 } else {
                                     trySlug(index + 1);
