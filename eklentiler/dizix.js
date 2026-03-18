@@ -1,22 +1,22 @@
 /**
- * Nuvio Scraper v4.5 - Ultra-Safe Edition
- * [HATA ÇÖZÜMÜ]: Expected BEGIN_ARRAY
+ * Nuvio Scraper v5.0 - Final Array Shield
+ * [HATA]: java.lang.IllegalStateException: Expected BEGIN_ARRAY
  */
 
 var cheerio = require("cheerio-without-node-native");
 
 function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
-    // Nuvio'nun beklediği ana yapı bir Promise dizisidir
-    return new Promise(function(outerResolve) {
+    return new Promise(function(resolve) {
         
-        // İçerideki tüm hataları yakalayıp her zaman dizi dönmesini garanti ediyoruz
-        var safeResolve = function(data) {
-            if (!Array.isArray(data)) {
-                outerResolve([]); // Veri dizi değilse boş dizi zorla
+        // KRİTİK GÜVENLİK: Java motoruna sadece temiz dizi gitmesini sağlar
+        function finalOutput(data) {
+            if (data && Array.isArray(data)) {
+                resolve(data);
             } else {
-                outerResolve(data);
+                // Eğer data dizi değilse (hata objesiyse vb.) boş dizi dönerek çökmeyi engelle
+                resolve([]);
             }
-        };
+        }
 
         try {
             var isMovie = mediaType === 'movie';
@@ -24,35 +24,36 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
 
             fetch(tmdbUrl)
                 .then(function(r) { return r.json(); })
-                .then(function(tmdbData) {
-                    var query = tmdbData.title || tmdbData.name;
+                .then(function(tmdb) {
+                    var query = tmdb.title || tmdb.name;
                     var searchUrl = 'https://www.dizixo.com/api?action=search&q=' + encodeURIComponent(query);
                     
                     return fetch(searchUrl, { headers: { 'User-Agent': 'Mozilla/5.0' } })
                         .then(function(r) { return r.json(); })
-                        .then(function(searchJson) {
-                            return { list: searchJson, query: query };
+                        .then(function(searchRes) {
+                            return { list: searchRes, title: query };
                         });
                 })
-                .then(function(resObj) {
+                .then(function(context) {
                     var items = [];
-                    // API formatını standardize et
-                    if (Array.isArray(resObj.list)) items = resObj.list;
-                    else if (resObj.list && resObj.list.data) items = resObj.list.data;
-                    else if (resObj.list && typeof resObj.list === 'object') items = [resObj.list];
+                    // API formatını standardize et (Dizixo için)
+                    var raw = context.list;
+                    if (Array.isArray(raw)) items = raw;
+                    else if (raw && raw.data && Array.isArray(raw.data)) items = raw.data;
+                    else if (raw && typeof raw === 'object') items = [raw];
 
                     var targetId = "";
                     for (var i = 0; i < items.length; i++) {
                         var it = items[i];
                         var itTitle = (it.title || it.name || "").toLowerCase();
-                        // "Katil Makine" veya TMDB ID eşleşmesi
-                        if (itTitle.indexOf(resObj.query.toLowerCase()) !== -1 || it.id == "1265609") {
+                        // 1265609 (Katil Makine) ID kontrolü
+                        if (itTitle.indexOf(context.title.toLowerCase()) !== -1 || it.id == "1265609") {
                             targetId = it.id;
                             break;
                         }
                     }
 
-                    if (!targetId) return safeResolve([]);
+                    if (!targetId) return finalOutput([]);
 
                     var streamUrl = 'https://www.dizixo.com/api?action=getStream&id=' + targetId;
                     if (!isMovie) streamUrl += '&season=' + seasonNum + '&episode=' + episodeNum;
@@ -61,25 +62,26 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                         .then(function(r) { return r.json(); })
                         .then(function(sJson) {
                             var link = sJson.url || (sJson.data && sJson.data.url) || sJson.link;
-                            var streams = [];
+                            var results = [];
                             if (link) {
-                                streams.push({
+                                results.push({
                                     name: "Dizixo",
-                                    title: resObj.query,
+                                    title: context.title,
                                     url: link,
-                                    quality: "1080p"
+                                    quality: "1080p",
+                                    provider: "Dizixo"
                                 });
                             }
-                            safeResolve(streams);
+                            finalOutput(results);
                         });
                 })
-                .catch(function(e) {
-                    console.error("Scraper Catch:", e.message);
-                    safeResolve([]); // Hata anında boş dizi
+                .catch(function(err) {
+                    console.error("Fetch Hatasi:", err.message);
+                    finalOutput([]); // Hata anında boş dizi
                 });
 
         } catch (globalErr) {
-            safeResolve([]); // Global çökmede boş dizi
+            finalOutput([]); // Global çökmede boş dizi
         }
     });
 }
