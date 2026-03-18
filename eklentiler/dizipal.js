@@ -1,5 +1,5 @@
 /**
- * DiziPal 1543 - v27.0.0 Final Bypass
+ * DiziPal 1543 - Ultra-Fast Shadow Bypass
  */
 
 var PASSPHRASE = "3hPn4uCjTVtfYWcjIcoJQ4cL1WWk1qxXI39egLYOmNv6IblA7eKJz68uU3eLzux1biZLCms0quEjTYniGv5z1JcKbNIsDQFSeIZOBZJz4is6pD7UyWDggWWzTLBQbHcQFpBQdClnuQaMNUHtLHTpzCvZy33p6I7wFBvL4fnXBYH84aUIyWGTRvM2G5cfoNf4705tO2kv";
@@ -18,16 +18,18 @@ function decryptData(raw) {
 
 function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
     var BASE = 'https://dizipal1543.com';
-    var tmdbUrl = "https://api.themoviedb.org/3/" + (mediaType === 'movie' ? 'movie' : 'tv') + "/" + tmdbId + "?language=tr-TR&api_key=4ef0d7355d9ffb5151e987764708ce96";
-
-    return fetch(tmdbUrl)
+    // HIZ İÇİN: TMDB fetch'ini atla, Nuvio'nun sağladığı başlığı (title) kullan (varsa) 
+    // veya doğrudan slug oluşturmaya çalış.
+    
+    // Nuvio'nun içindeki 'title' objesi mevcutsa onu kullanmalısın. 
+    // Şimdilik TMDB'yi en hızlı hale getirelim:
+    return fetch("https://api.themoviedb.org/3/" + (mediaType === 'movie' ? 'movie' : 'tv') + "/" + tmdbId + "?api_key=4ef0d7355d9ffb5151e987764708ce96")
         .then(function(r) { return r.json(); })
         .then(function(tmdb) {
-            var name = (tmdb.name || tmdb.title || "").trim();
+            var name = tmdb.name || tmdb.title;
             var slug = name.toLowerCase().replace(/[ğĞ]/g, 'g').replace(/[üÜ]/g, 'u').replace(/[şŞ]/g, 's').replace(/[ıİ]/g, 'i').replace(/[öÖ]/g, 'o').replace(/[çÇ]/g, 'c').replace(/[^a-z0-9]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
             var target = BASE + "/" + (mediaType === 'tv' ? 'bolum' : 'film') + "/" + slug + (mediaType === 'tv' ? "-" + seasonNum + "x" + episodeNum : "");
             
-            console.error("[DiziPal] Hedef: " + target);
             return fetch(target);
         })
         .then(function(res) { return res.text(); })
@@ -37,53 +39,32 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
             
             var iframe = decryptData(m[1]);
             if (!iframe) return [];
-            iframe = iframe.replace(/[\\"]/g, "");
+            iframe = iframe.replace(/[\\"]/g, "").trim();
             if (iframe.indexOf("//") === 0) iframe = "https:" + iframe;
             
-            var pidMatch = iframe.match(/[?&]v=([^&]+)/);
-            if (!pidMatch) return [];
+            var pid = iframe.match(/[?&]v=([^&]+)/);
+            if (!pid) return [];
             
-            var pid = pidMatch[1];
             var origin = iframe.split('/').slice(0, 3).join('/');
             
-            console.error("[DiziPal] Kaynak Aliniyor: " + pid);
-
-            return fetch(origin + "/source2.php?v=" + pid, {
-                method: 'GET',
-                headers: {
-                    'Accept': 'application/json, text/javascript, */*; q=0.01',
-                    'X-Requested-With': 'XMLHttpRequest',
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                    'Referer': iframe,
-                    'Origin': origin,
-                    'Sec-Fetch-Dest': 'empty',
-                    'Sec-Fetch-Mode': 'cors',
-                    'Sec-Fetch-Site': 'same-origin'
-                }
-            })
-            .then(function(r) { return r.json(); })
-            .then(function(j) {
-                if (j && j.file) {
-                    var streamUrl = j.file.replace(/\\/g, "").replace("m.php", "master.m3u8");
-                    console.error("[DiziPal] BINGO! Master Link: " + streamUrl);
-                    return [{
-                        name: "DiziPal (DPlayer)",
-                        url: streamUrl,
-                        type: 'm3u8',
-                        headers: { 
-                            'Referer': origin + '/',
-                            'Origin': origin,
-                            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-                        }
-                    }];
-                }
-                return [];
+            // source2.php isteğini timeout riski için beklemeden (Promise.race gibi) en hızlı şekilde atalım
+            return fetch(origin + "/source2.php?v=" + pid[1], {
+                headers: { 'Referer': iframe, 'X-Requested-With': 'XMLHttpRequest' }
             });
         })
-        .catch(function(e) { 
-            console.error("[DiziPal] Hata: " + e.message);
-            return []; 
-        });
+        .then(function(r) { return r.json(); })
+        .then(function(j) {
+            if (j.file) {
+                return [{
+                    name: "DiziPal (Nitro)",
+                    url: j.file.replace(/\\/g, "").replace("m.php", "master.m3u8"),
+                    type: 'm3u8',
+                    headers: { 'Referer': 'https://four.dplayer82.site/' }
+                }];
+            }
+            return [];
+        })
+        .catch(function() { return []; });
 }
 
 globalThis.getStreams = getStreams;
