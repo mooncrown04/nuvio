@@ -1,6 +1,6 @@
 /**
- * DiziPal v57 - Mega Test (Tüm olasılıklar)
- * 15 farklı decryption yöntemi tek seferde
+ * DiziPal v58 - Salt Decode Variations
+ * Salt'ı farklı şekillerde yorumla
  */
 
 var cheerio = require("cheerio-without-node-native");
@@ -20,7 +20,9 @@ var HEADERS = {
 
 function hexToBytes(hex) {
     var bytes = [];
-    for (var i = 0; i < hex.length; i += 2) bytes.push(parseInt(hex.substr(i, 2), 16));
+    for (var i = 0; i < hex.length; i += 2) {
+        bytes.push(parseInt(hex.substr(i, 2), 16));
+    }
     return bytes;
 }
 
@@ -29,192 +31,191 @@ function base64ToBytes(base64) {
     try {
         var binary = atob(cleaned);
         var bytes = [];
-        for (var i = 0; i < binary.length; i++) bytes.push(binary.charCodeAt(i));
+        for (var i = 0; i < binary.length; i++) {
+            bytes.push(binary.charCodeAt(i));
+        }
         return bytes;
-    } catch (e) { return []; }
+    } catch (e) {
+        return [];
+    }
+}
+
+function stringToBytes(str) {
+    var bytes = [];
+    for (var i = 0; i < str.length; i++) {
+        bytes.push(str.charCodeAt(i) & 0xff);
+    }
+    return bytes;
 }
 
 function bytesToString(bytes) {
     var result = '';
     for (var i = 0; i < bytes.length; i++) {
-        if (bytes[i] >= 32 && bytes[i] < 127) result += String.fromCharCode(bytes[i]);
+        if (bytes[i] >= 32 && bytes[i] < 127) {
+            result += String.fromCharCode(bytes[i]);
+        }
     }
     return result;
 }
 
-function bytesToHex(bytes) {
-    return bytes.map(function(b) { return (b < 16 ? '0' : '') + b.toString(16); }).join('');
+// ========== SALT VARIATIONS ==========
+
+function getSaltVariation1_DirectHex(saltHex) {
+    // Direkt hex decode
+    return hexToBytes(saltHex);
 }
 
-function rotateLeft(byte, n) { return ((byte << n) | (byte >> (8 - n))) & 0xff; }
-function rotateRight(byte, n) { return ((byte >> n) | (byte << (8 - n))) & 0xff; }
-
-// ========== 15 FARKLI DECRYPTION DENEMESİ ==========
-
-function attempt1_SimpleXor(ct, iv, salt, pass) {
-    var key = salt.slice(0, 32);
-    var res = [];
-    for (var i = 0; i < ct.length; i++) res.push(ct[i] ^ key[i % key.length] ^ iv[i % iv.length]);
-    return bytesToString(res);
+function getSaltVariation2_UpperThenHex(saltHex) {
+    // Önce uppercase yap, sonra hex decode
+    return hexToBytes(saltHex.toUpperCase());
 }
 
-function attempt2_FullSaltXor(ct, iv, salt, pass) {
-    var res = [];
-    for (var i = 0; i < ct.length; i++) res.push(ct[i] ^ salt[i % salt.length] ^ iv[i % iv.length]);
-    return bytesToString(res);
+function getSaltVariation3_LowerThenHex(saltHex) {
+    // Önce lowercase yap, sonra hex decode  
+    return hexToBytes(saltHex.toLowerCase());
 }
 
-function attempt3_PassphraseXor(ct, iv, salt, pass) {
-    var res = [];
-    for (var i = 0; i < ct.length; i++) res.push(ct[i] ^ pass[i % pass.length] ^ iv[i % iv.length]);
-    return bytesToString(res);
+function getSaltVariation4_ReverseHex(saltHex) {
+    // Hex string'i tersine çevir, sonra decode
+    return hexToBytes(saltHex.split('').reverse().join(''));
 }
 
-function attempt4_CombinedXor(ct, iv, salt, pass) {
-    var res = [];
-    for (var i = 0; i < ct.length; i++) {
-        var key = (salt[i % salt.length] + pass[i % pass.length]) & 0xff;
-        res.push(ct[i] ^ key ^ iv[i % iv.length]);
+function getSaltVariation5_SwapPairs(saltHex) {
+    // Her 2 karakteri swap et (ABCD -> BADC)
+    var swapped = '';
+    for (var i = 0; i < saltHex.length; i += 4) {
+        if (i + 3 < saltHex.length) {
+            swapped += saltHex[i+2] + saltHex[i+3] + saltHex[i] + saltHex[i+1];
+        }
     }
-    return bytesToString(res);
+    return hexToBytes(swapped);
 }
 
-function attempt5_SaltPassMix(ct, iv, salt, pass) {
+function getSaltVariation6_TakeEvery2nd(saltHex) {
+    // Her 2. karakteri al (1,3,5,7...)
+    var every2nd = '';
+    for (var i = 0; i < saltHex.length; i += 2) {
+        every2nd += saltHex[i];
+    }
+    return hexToBytes(every2nd);
+}
+
+function getSaltVariation7_Base64(saltHex) {
+    // Salt'i base64 olarak dene
+    try {
+        return base64ToBytes(saltHex);
+    } catch (e) {
+        return [];
+    }
+}
+
+function getSaltVariation8_XorWithPass(saltHex, pass) {
+    // Salt hex'ini passphrase ile XOR'la, sonra decode
+    var xored = '';
+    for (var i = 0; i < saltHex.length && i < pass.length; i++) {
+        var c = saltHex.charCodeAt(i) ^ pass.charCodeAt(i);
+        xored += String.fromCharCode(c);
+    }
+    // Sonra hex olarak dene
+    return hexToBytes(xored);
+}
+
+// ========== KEY DERIVATION VARIATIONS ==========
+
+function deriveKey1_Simple(salt, pass) {
+    // İlk 32 byte salt
+    var key = salt.slice(0, 32);
+    // Passphrase ile XOR'la
+    var passBytes = stringToBytes(pass);
+    for (var i = 0; i < key.length; i++) {
+        key[i] ^= passBytes[i % passBytes.length];
+    }
+    return key;
+}
+
+function deriveKey2_FullSalt(salt, pass) {
+    // Tüm salt'ı kullan, 32 byte'a indir
     var mixed = [];
-    for (var i = 0; i < 64; i++) mixed.push((salt[i % salt.length] ^ pass[i % pass.length]) & 0xff);
-    var res = [];
-    for (var i = 0; i < ct.length; i++) res.push(ct[i] ^ mixed[i % mixed.length] ^ iv[i % iv.length]);
-    return bytesToString(res);
+    var passBytes = stringToBytes(pass);
+    for (var i = 0; i < salt.length; i++) {
+        mixed.push((salt[i] + passBytes[i % passBytes.length]) & 0xff);
+    }
+    // İlk 32 byte al
+    return mixed.slice(0, 32);
 }
 
-function attempt6_ReversedCT(ct, iv, salt, pass) {
-    var rev = ct.slice().reverse();
-    var key = salt.slice(0, 32);
-    var res = [];
-    for (var i = 0; i < rev.length; i++) res.push(rev[i] ^ key[i % key.length]);
-    return bytesToString(res);
+function deriveKey3_HashLike(salt, pass) {
+    // Basit hash-like mixing
+    var passBytes = stringToBytes(pass);
+    var key = [];
+    for (var i = 0; i < 32; i++) {
+        var sum = 0;
+        for (var j = 0; j < salt.length; j += 32) {
+            if (i + j < salt.length) {
+                sum += salt[i + j];
+            }
+        }
+        key.push((sum + passBytes[i % passBytes.length]) & 0xff);
+    }
+    return key;
 }
 
-function attempt7_RotatedCT(ct, iv, salt, pass) {
-    var key = salt.slice(0, 32);
-    var res = [];
-    for (var i = 0; i < ct.length; i++) res.push(rotateLeft(ct[i], 3) ^ key[i % key.length] ^ iv[i % iv.length]);
-    return bytesToString(res);
-}
+// ========== DECRYPTION ==========
 
-function attempt8_Additive(ct, iv, salt, pass) {
+function simpleDecrypt(ct, iv, key) {
     var res = [];
     for (var i = 0; i < ct.length; i++) {
-        var key = (salt[i % salt.length] + pass[i % pass.length] + iv[i % iv.length]) & 0xff;
-        res.push((ct[i] - key + 256) & 0xff);
+        res.push(ct[i] ^ key[i % key.length] ^ iv[i % iv.length]);
     }
     return bytesToString(res);
 }
 
-function attempt9_SaltOnlyFirstHalf(ct, iv, salt, pass) {
-    var halfSalt = salt.slice(0, 128);
-    var res = [];
-    for (var i = 0; i < ct.length; i++) res.push(ct[i] ^ halfSalt[i % halfSalt.length] ^ iv[i % iv.length]);
-    return bytesToString(res);
-}
-
-function attempt10_SaltOnlySecondHalf(ct, iv, salt, pass) {
-    var halfSalt = salt.slice(128);
-    var res = [];
-    for (var i = 0; i < ct.length; i++) res.push(ct[i] ^ halfSalt[i % halfSalt.length] ^ iv[i % iv.length]);
-    return bytesToString(res);
-}
-
-function attempt11_Every2ndByteSalt(ct, iv, salt, pass) {
-    var res = [];
-    for (var i = 0; i < ct.length; i++) {
-        var s = salt[(i * 2) % salt.length];
-        res.push(ct[i] ^ s ^ iv[i % iv.length]);
-    }
-    return bytesToString(res);
-}
-
-function attempt12_SaltHashSimple(ct, iv, salt, pass) {
-    var hash = 0;
-    for (var i = 0; i < salt.length; i++) hash = (hash + salt[i]) & 0xff;
-    var res = [];
-    for (var i = 0; i < ct.length; i++) res.push(ct[i] ^ hash ^ iv[i % iv.length] ^ pass[i % pass.length]);
-    return bytesToString(res);
-}
-
-function attempt13_CtrModeLike(ct, iv, salt, pass) {
-    var key = salt.slice(0, 32);
-    var res = [];
-    for (var i = 0; i < ct.length; i++) {
-        var counter = (iv[i % iv.length] + i + pass[i % pass.length]) & 0xff;
-        res.push(ct[i] ^ key[i % key.length] ^ counter);
-    }
-    return bytesToString(res);
-}
-
-function attempt14_NoIV(ct, iv, salt, pass) {
-    var key = salt.slice(0, 32);
-    var res = [];
-    for (var i = 0; i < ct.length; i++) res.push(ct[i] ^ key[i % key.length]);
-    return bytesToString(res);
-}
-
-function attempt15_SaltAsKeyDirect(ct, iv, salt, pass) {
-    // Salt'ı direkt key olarak kullan (32 byte al)
-    var key = salt.slice(0, 32);
-    var res = [];
-    for (var i = 0; i < ct.length; i++) {
-        // CBC-like: önceki sonucu da XOR'la
-        var prev = i > 0 ? res[i-1] : iv[i % iv.length];
-        res.push(ct[i] ^ key[i % key.length] ^ prev);
-    }
-    return bytesToString(res);
-}
-
-// ========== TÜM DENEMELERİ ÇALIŞTIR ==========
-
-function tryAllDecryptions(ciphertext, ivHex, saltHex) {
+function tryAllVariations(ciphertext, ivHex, saltHex) {
     var ct = base64ToBytes(ciphertext);
     var iv = hexToBytes(ivHex);
-    var salt = hexToBytes(saltHex);
-    var pass = [];
-    for (var i = 0; i < PASSPHRASE.length; i++) pass.push(PASSPHRASE.charCodeAt(i) & 0xff);
+    var pass = PASSPHRASE;
     
-    var attempts = [
-        { name: '01-SimpleXor-32byte', fn: attempt1_SimpleXor },
-        { name: '02-FullSaltXor-256byte', fn: attempt2_FullSaltXor },
-        { name: '03-PassphraseXor', fn: attempt3_PassphraseXor },
-        { name: '04-CombinedXor', fn: attempt4_CombinedXor },
-        { name: '05-SaltPassMix', fn: attempt5_SaltPassMix },
-        { name: '06-ReversedCT', fn: attempt6_ReversedCT },
-        { name: '07-RotatedCT', fn: attempt7_RotatedCT },
-        { name: '08-Additive', fn: attempt8_Additive },
-        { name: '09-SaltFirstHalf', fn: attempt9_SaltOnlyFirstHalf },
-        { name: '10-SaltSecondHalf', fn: attempt10_SaltOnlySecondHalf },
-        { name: '11-Every2ndByte', fn: attempt11_Every2ndByteSalt },
-        { name: '12-SaltHash', fn: attempt12_SaltHashSimple },
-        { name: '13-CtrMode', fn: attempt13_CtrModeLike },
-        { name: '14-NoIV', fn: attempt14_NoIV },
-        { name: '15-SaltKeyDirect-CBC', fn: attempt15_SaltAsKeyDirect }
+    var saltVars = [
+        { name: 'V1-DirectHex', fn: getSaltVariation1_DirectHex },
+        { name: 'V2-UpperHex', fn: getSaltVariation2_UpperThenHex },
+        { name: 'V3-LowerHex', fn: getSaltVariation3_LowerThenHex },
+        { name: 'V4-ReverseHex', fn: getSaltVariation4_ReverseHex },
+        { name: 'V5-SwapPairs', fn: getSaltVariation5_SwapPairs },
+        { name: 'V6-Every2nd', fn: getSaltVariation6_TakeEvery2nd },
+        { name: 'V7-Base64', fn: getSaltVariation7_Base64 },
+        { name: 'V8-XorWithPass', fn: function(s) { return getSaltVariation8_XorWithPass(s, pass); } }
+    ];
+    
+    var keyVars = [
+        { name: 'K1-Simple', fn: deriveKey1_Simple },
+        { name: 'K2-FullSalt', fn: deriveKey2_FullSalt },
+        { name: 'K3-HashLike', fn: deriveKey3_HashLike }
     ];
     
     var logs = [];
-    logs.push('\n=== 15 DECRYPTION ATTEMPTS ===');
-    logs.push('CT: ' + ct.length + ' bytes, IV: ' + iv.length + ' bytes, Salt: ' + salt.length + ' bytes');
-    logs.push('Pass: ' + pass.length + ' bytes');
-    logs.push('Salt[0-7]: ' + salt.slice(0, 8).join(','));
-    logs.push('IV[0-7]: ' + iv.slice(0, 8).join(','));
-    logs.push('CT[0-7]: ' + ct.slice(0, 8).join(','));
+    logs.push('\n=== SALT & KEY VARIATIONS ===');
+    logs.push('CT: ' + ct.length + ', IV: ' + iv.length);
+    logs.push('SaltHex: ' + saltHex.substring(0, 50) + '...');
     
     var foundUrl = null;
     
-    for (var i = 0; i < attempts.length; i++) {
-        try {
-            var result = attempts[i].fn(ct, iv, salt, pass);
+    for (var s = 0; s < saltVars.length; s++) {
+        var salt = saltVars[s].fn(saltHex);
+        if (salt.length === 0) {
+            logs.push('\n[' + saltVars[s].name + '] Invalid salt');
+            continue;
+        }
+        
+        for (var k = 0; k < keyVars.length; k++) {
+            var key = keyVars[k].fn(salt, pass);
+            var result = simpleDecrypt(ct, iv, key);
+            
             var hasUrl = result.indexOf('http') >= 0 || result.indexOf('//') >= 0;
-            var status = hasUrl ? '✓✓✓ URL FOUND!' : '✗';
-            logs.push('\n[' + attempts[i].name + '] ' + status);
-            logs.push('Result: ' + result.substring(0, 60));
+            var marker = hasUrl ? '✓✓✓' : '✗';
+            
+            logs.push('\n[' + saltVars[s].name + ' + ' + keyVars[k].name + '] ' + marker);
+            logs.push('SaltLen: ' + salt.length + ', KeyLen: ' + key.length);
+            logs.push('Result: ' + result.substring(0, 50));
             
             if (hasUrl && !foundUrl) {
                 foundUrl = result.replace(/\\\//g, '/');
@@ -222,13 +223,11 @@ function tryAllDecryptions(ciphertext, ivHex, saltHex) {
                 else if (foundUrl.indexOf('//') === 0) foundUrl = 'https:' + foundUrl;
                 else if (foundUrl.indexOf('http') !== 0) foundUrl = 'https://' + foundUrl;
             }
-        } catch (e) {
-            logs.push('\n[' + attempts[i].name + '] ERROR: ' + e.message);
         }
     }
     
-    logs.push('\n=== BEST RESULT ===');
-    logs.push(foundUrl ? 'URL: ' + foundUrl : 'NO VALID URL FOUND');
+    logs.push('\n=== FINAL ===');
+    logs.push(foundUrl ? 'FOUND: ' + foundUrl : 'NOTHING FOUND');
     
     return { logs: logs.join('\n'), url: foundUrl };
 }
@@ -267,9 +266,7 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                 var encryptedText = encryptedDiv.text();
                 var data = JSON.parse(encryptedText);
                 
-                var result = tryAllDecryptions(data.ciphertext, data.iv, data.salt);
-                
-                // Tek seferde tüm loglar
+                var result = tryAllVariations(data.ciphertext, data.iv, data.salt);
                 console.error('[DiziPal] ' + result.logs);
                 
                 if (result.url) {
