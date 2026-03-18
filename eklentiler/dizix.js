@@ -1,10 +1,11 @@
 /**
- * Dizixo Nuvio Local Scraper - v3.0
+ * Dizixo Nuvio Local Scraper - v3.1 (Hata Onarılmış Versiyon)
  * Kısıtlamalar: async/await YASAK, Promise zorunlu.
  */
 
 var cheerio = require("cheerio-without-node-native");
 
+// 1. DAHA GÜÇLÜ HEADER YAPISI
 const WORKING_HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     'Accept': 'application/json, text/plain, */*',
@@ -41,9 +42,10 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                 var year = (data.release_date || data.first_air_date || "").split('-')[0];
                 var query = data.title || data.name;
                 
-                // Dizixo API Arama Parametresi (Tahmini: action=search)
-                // Site React oldugu icin genellikle /api?action=search&q= sorgusu kullanir
+                // Dizixo Arama API - Genellikle ?action=search veya benzeri bir endpoint kullanır
                 var searchUrl = 'https://www.dizixo.com/api?action=search&q=' + encodeURIComponent(query);
+
+                console.log("Dizixo: Arama yapiliyor -> " + query);
 
                 return fetch(searchUrl, { headers: WORKING_HEADERS })
                     .then(function(res) { return res.json(); })
@@ -54,28 +56,39 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
             .then(function(searchResult) {
                 var streams = [];
                 var targetId = "";
+                var apiData = [];
 
-                // API SONUCLARINI TARA (Dizixo JSON döner)
-                if (searchResult.results && Array.isArray(searchResult.results)) {
-                    for (var i = 0; i < searchResult.results.length; i++) {
-                        var item = searchResult.results[i];
-                        var itemTitle = (item.title || item.name || "").toLowerCase();
-                        var itemYear = (item.year || item.release_date || "").toString();
+                // LOG HATASI ÇÖZÜMÜ: Gelen veri Obje mi Liste mi kontrol et
+                // "Expected BEGIN_ARRAY but was BEGIN_OBJECT" hatasını önler.
+                if (Array.isArray(searchResult.results)) {
+                    apiData = searchResult.results;
+                } else if (searchResult.results && Array.isArray(searchResult.results.data)) {
+                    apiData = searchResult.results.data;
+                } else if (searchResult.results && typeof searchResult.results === 'object') {
+                    // Tek bir sonuç geldiyse diziye çevir
+                    apiData = [searchResult.results];
+                }
 
-                        if (itemTitle.includes(searchResult.title.toLowerCase()) && (itemYear.includes(searchResult.year) || searchResult.year === "")) {
-                            targetId = item.id;
-                            break;
-                        }
+                // İÇERİK EŞLEŞTİRME (ID BULMA)
+                for (var i = 0; i < apiData.length; i++) {
+                    var item = apiData[i];
+                    var itemTitle = (item.title || item.name || "").toLowerCase();
+                    var searchTitle = searchResult.title.toLowerCase();
+                    
+                    // İsim veya slug üzerinden eşleşme kontrolü
+                    if (itemTitle.includes(searchTitle) || searchTitle.includes(itemTitle)) {
+                        targetId = item.id || item.slug;
+                        console.log("Dizixo: Eslesme bulundu -> ID: " + targetId);
+                        break;
                     }
                 }
 
                 if (!targetId) {
-                    console.error("Dizixo Hata: Uygun icerik ID'si bulunamadi.");
-                    return resolve([]);
+                    console.error("Dizixo Hata: '" + searchResult.title + "' icin uygun ID bulunamadi.");
+                    return resolve([]); 
                 }
 
-                // YAYIN LINKI ICIN API CAGRISI
-                // Dizixo API yapisinda stream almak icin genellikle video_id veya content_id kullanilir
+                // STREAM (YAYIN) ALMA
                 var streamUrl = 'https://www.dizixo.com/api?action=getStream&id=' + targetId;
                 if (!isMovie) {
                     streamUrl += '&season=' + seasonNum + '&episode=' + episodeNum;
@@ -83,20 +96,25 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
 
                 return fetch(streamUrl, { headers: WORKING_HEADERS })
                     .then(function(res) { return res.json(); })
-                    .then(function(streamData) {
-                        
-                        // Stream verisi genellikle 'url' veya 'link' icinde gelir
-                        if (streamData && streamData.url) {
+                    .then(function(streamJson) {
+                        // Dizixo API genellikle 'url', 'link' veya 'data.url' döner
+                        var videoUrl = "";
+                        if (streamJson.url) videoUrl = streamJson.url;
+                        else if (streamJson.data && streamJson.data.url) videoUrl = streamJson.data.url;
+                        else if (streamJson.link) videoUrl = streamJson.link;
+
+                        if (videoUrl) {
                             streams.push({
-                                name: "Dizixo - " + (streamData.server || "HLS"),
-                                title: searchResult.title + " (" + searchResult.year + ")",
-                                url: streamData.url,
-                                quality: streamData.quality || "1080p",
+                                name: "Dizixo HQ",
+                                title: searchResult.title + " (S" + seasonNum + " E" + episodeNum + ")",
+                                url: videoUrl,
+                                quality: "1080p",
                                 headers: WORKING_HEADERS,
                                 provider: "DizixoScraper"
                             });
+                            console.log("Dizixo: Yayın başarıyla eklendi.");
                         } else {
-                            console.error("Dizixo Hata: Video adresi API'den donmedi.");
+                            console.error("Dizixo Hata: API'den video linki donmedi.");
                         }
 
                         resolve(streams);
@@ -104,11 +122,12 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
             })
             .catch(function(err) {
                 console.error('Dizixo Scraper Kritik Hata:', err.message);
-                resolve([]); 
+                resolve([]); // Hata anında uygulamanın çökmemesi için boş dizi dön
             });
     });
 }
 
+// Export işlemleri
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = { getStreams: getStreams };
 } else {
