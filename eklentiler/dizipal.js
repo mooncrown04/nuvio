@@ -1,6 +1,6 @@
 /**
- * DiziPal v42 - ES5/QuickJS Uyumlu
- * Nuvio/QuickJS için: async/await YOK, Promise tabanlı
+ * DiziPal v44 - URL Format Optimized
+ * Calisan ornek: /bolum/a-knight-in-the-making-1x1
  */
 
 var cheerio = require("cheerio-without-node-native");
@@ -15,61 +15,105 @@ var HEADERS = {
     'Referer': BASE_URL + '/'
 };
 
-// String replace helper
+// Calisan URL'den: "A Knight of the Seven Kingdoms" -> "a-knight-in-the-making"
+// Bu farkli bir slug - muhtemelen DiziPal'in kendi cevirisi/versiyonu
+var TITLE_ALIASES = {
+    // Bilinen farkli slug'lar (manuel eklenebilir)
+    "a knight of the seven kingdoms": "a-knight-in-the-making",
+    "the rookie": "the-rookie", // varsayilan
+    // TMDB basligi -> DiziPal slug mapping
+};
+
 function slugify(str) {
     if (!str) return '';
-    var map = {
-        'ğ': 'g', 'ü': 'u', 'ş': 's', 'ı': 'i', 'ö': 'o', 'ç': 'c',
-        'Ğ': 'G', 'Ü': 'U', 'Ş': 'S', 'İ': 'I', 'Ö': 'O', 'Ç': 'C'
-    };
-    var res = str.toLowerCase();
-    for (var key in map) {
-        res = res.split(key).join(map[key]);
-    }
-    return res.replace(/[^a-z0-9]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+    return str.toLowerCase()
+        .replace(/[^a-z0-9\s-]/g, '') // Ozel karakterleri temizle (Türkçe karakterleri koru)
+        .replace(/\s+/g, '-')
+        .replace(/-+/g, '-')
+        .replace(/^-|-$/g, '');
 }
 
 function generateSlugs(title, originalTitle, isMovie, season, episode) {
     var slugs = [];
-    var titles = [title, originalTitle];
-    var uniqueTitles = [];
+    var titles = [];
     
-    // Unique titles only
+    if (title) titles.push(title);
+    if (originalTitle && originalTitle !== title) titles.push(originalTitle);
+    
+    // Bilinen alias'lari ekle
     for (var i = 0; i < titles.length; i++) {
-        if (titles[i] && uniqueTitles.indexOf(titles[i]) === -1) {
-            uniqueTitles.push(titles[i]);
+        var key = titles[i].toLowerCase();
+        if (TITLE_ALIASES[key]) {
+            titles.push(TITLE_ALIASES[key].replace(/-/g, ' '));
         }
     }
     
-    for (var i = 0; i < uniqueTitles.length; i++) {
-        var t = uniqueTitles[i];
+    // Essiz yap
+    var unique = [];
+    for (var i = 0; i < titles.length; i++) {
+        if (unique.indexOf(titles[i]) === -1) unique.push(titles[i]);
+    }
+    titles = unique;
+    
+    for (var i = 0; i < titles.length; i++) {
+        var t = titles[i];
         var s = slugify(t);
         
         if (isMovie) {
             slugs.push('/film/' + s);
-            slugs.push('/movie/' + s);
             slugs.push('/izle/' + s);
         } else {
-            // Dizi formatları
+            // Calisan format: /bolum/a-knight-in-the-making-1x1
             slugs.push('/bolum/' + s + '-' + season + 'x' + episode);
+            // Alternatifler
             slugs.push('/bolum/' + s + '-' + season + '-sezon-' + episode + '-bolum');
             slugs.push('/dizi/' + s + '/' + season + '-sezon/' + episode + '-bolum');
-            slugs.push('/' + s + '/' + season + 'x' + episode);
         }
     }
+    
     return slugs;
 }
 
-function extractFromHtml(html, baseUrl) {
+function extractStreams(html, baseUrl) {
     var streams = [];
     
-    // 1. Direkt m3u8/mp4 ara
-    var hlsRegex = /["'](https?:\/\/[^"']+\.m3u8[^"']*)["']/gi;
-    var mp4Regex = /["'](https?:\/\/[^"']+\.mp4[^"']*)["']/gi;
+    // 1. Iframe'ler (oynatıcılar)
+    var iframeRegex = /<iframe[^>]+src=["']([^"']+)["']/gi;
     var match;
+    while ((match = iframeRegex.exec(html)) !== null) {
+        var src = match[1];
+        if (src.indexOf('http') !== 0) {
+            src = baseUrl + (src.indexOf('/') === 0 ? '' : '/') + src;
+        }
+        streams.push({
+            name: 'DiziPal Player',
+            url: src,
+            quality: 'Auto',
+            referer: baseUrl,
+            provider: 'dizipal'
+        });
+    }
     
+    // 2. Video tag'leri
+    var videoRegex = /<video[^>]+src=["']([^"']+)["']/gi;
+    while ((match = videoRegex.exec(html)) !== null) {
+        streams.push({
+            name: 'DiziPal Direct',
+            url: match[1],
+            quality: 'Auto',
+            provider: 'dizipal'
+        });
+    }
+    
+    // 3. m3u8/mp4 linkleri (script icinde)
+    var hlsRegex = /["'](https?:\/\/[^"']+\.m3u8[^"']*)["']/gi;
     while ((match = hlsRegex.exec(html)) !== null) {
-        if (match[1] && streams.length < 10) {
+        // Duplicate kontrolu
+        var exists = false;
+        for (var j = 0; j < streams.length; j++) {
+            if (streams[j].url === match[1]) exists = true;
+        }
+        if (!exists) {
             streams.push({
                 name: 'DiziPal HLS',
                 url: match[1],
@@ -79,60 +123,23 @@ function extractFromHtml(html, baseUrl) {
         }
     }
     
-    // 2. Iframe src'leri
-    var iframeRegex = /<iframe[^>]+src=["']([^"']+)["']/gi;
-    while ((match = iframeRegex.exec(html)) !== null) {
-        var src = match[1];
-        if (src && (src.indexOf('player') !== -1 || src.indexOf('video') !== -1)) {
-            // Relative URL fix
-            if (src.indexOf('http') !== 0) {
-                src = baseUrl + (src.indexOf('/') === 0 ? '' : '/') + src;
-            }
-            streams.push({
-                name: 'DiziPal Player',
-                url: src,
-                quality: 'Auto',
-                referer: baseUrl,
-                provider: 'dizipal'
-            });
-        }
-    }
-    
-    // 3. JSON embedded data
+    // 4. JSON video verisi
     var jsonMatch = html.match(/var\s+video\s*=\s*({[^;]+});/);
     if (jsonMatch) {
         try {
-            var videoData = JSON.parse(jsonMatch[1]);
-            if (videoData.url || videoData.file) {
+            var data = JSON.parse(jsonMatch[1]);
+            if (data.url || data.file) {
                 streams.push({
                     name: 'DiziPal Source',
-                    url: videoData.url || videoData.file,
-                    quality: videoData.quality || 'Auto',
+                    url: data.url || data.file,
+                    quality: data.quality || 'Auto',
                     provider: 'dizipal'
                 });
             }
-        } catch (e) {
-            // Parse hatası, yoksay
-        }
+        } catch (e) {}
     }
     
     return streams;
-}
-
-function tryFetch(url, headers) {
-    return new Promise(function(resolve, reject) {
-        fetch(url, { headers: headers, redirect: 'follow' })
-            .then(function(res) {
-                if (!res.ok) throw new Error('HTTP ' + res.status);
-                return res.text();
-            })
-            .then(function(html) {
-                resolve(html);
-            })
-            .catch(function(err) {
-                reject(err);
-            });
-    });
 }
 
 function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
@@ -142,7 +149,7 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
             (isMovie ? 'movie' : 'tv') + '/' + tmdbId + 
             '?language=tr-TR&api_key=' + TMDB_KEY;
 
-        console.error('[DiziPal] Basladi: ' + tmdbId);
+        console.error('[DiziPal] TMDB: ' + tmdbId);
 
         fetch(tmdbUrl)
             .then(function(res) { return res.json(); })
@@ -150,54 +157,67 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                 var title = tmdbData.title || tmdbData.name;
                 var originalTitle = tmdbData.original_title || tmdbData.original_name;
                 
-                if (!title) throw new Error('Baslik yok');
+                if (!title) throw new Error('Baslik bulunamadi');
+
+                console.error('[DiziPal] Baslik: ' + title + ' | Orijinal: ' + originalTitle);
 
                 var slugs = generateSlugs(title, originalTitle, isMovie, seasonNum, episodeNum);
                 console.error('[DiziPal] Slug sayisi: ' + slugs.length);
 
-                var attemptIndex = 0;
-                var allStreams = [];
-
-                function tryNextSlug() {
-                    if (attemptIndex >= slugs.length) {
-                        console.error('[DiziPal] Toplam bulunan: ' + allStreams.length);
-                        resolve(allStreams);
+                var index = 0;
+                
+                function tryNext() {
+                    if (index >= slugs.length) {
+                        console.error('[DiziPal] Bulunamadi: 0 kaynak');
+                        resolve([]);
                         return;
                     }
 
-                    var path = slugs[attemptIndex];
+                    var path = slugs[index];
                     var url = BASE_URL + path;
-                    attemptIndex++;
+                    index++;
 
                     console.error('[DiziPal] Deneniyor: ' + url);
 
-                    tryFetch(url, HEADERS)
+                    fetch(url, { headers: HEADERS })
+                        .then(function(res) {
+                            if (!res.ok) {
+                                console.error('[DiziPal] HTTP ' + res.status);
+                                throw new Error('HTTP ' + res.status);
+                            }
+                            return res.text();
+                        })
                         .then(function(html) {
-                            // Cloudflare check
+                            // Cloudflare kontrolu
                             if (html.indexOf('cf-browser-verification') !== -1 || 
                                 html.indexOf('Checking your browser') !== -1) {
-                                console.error('[DiziPal] Cloudflare engeli');
-                                tryNextSlug(); // Sonrakini dene
+                                console.error('[DiziPal] Cloudflare engeli!');
+                                resolve([]); // Cloudflare varsa devam etme
                                 return;
                             }
 
-                            var found = extractFromHtml(html, BASE_URL);
+                            var streams = extractStreams(html, BASE_URL);
                             
-                            if (found.length > 0) {
-                                console.error('[DiziPal] Basarili! Kayit: ' + found.length);
-                                allStreams = allStreams.concat(found);
-                                resolve(allStreams); // İlk başarılıda dur
+                            if (streams.length > 0) {
+                                console.error('[DiziPal] Basarili: ' + streams.length + ' kaynak');
+                                resolve(streams);
                             } else {
-                                tryNextSlug(); // Sonrakini dene
+                                // Sayfada baska link varsa bul
+                                var altMatch = html.match(/href=["'](\/bolum\/[^"']+-(?:\d+x\d+))["']/);
+                                if (altMatch && slugs.indexOf(altMatch[1]) === -1) {
+                                    console.error('[DiziPal] Alternatif bulundu: ' + altMatch[1]);
+                                    slugs.push(altMatch[1]);
+                                }
+                                tryNext();
                             }
                         })
                         .catch(function(err) {
-                            console.error('[DiziPal] Fetch hatasi: ' + err.message);
-                            tryNextSlug(); // Sonrakini dene
+                            console.error('[DiziPal] Hata: ' + err.message);
+                            tryNext();
                         });
                 }
 
-                tryNextSlug();
+                tryNext();
             })
             .catch(function(err) {
                 console.error('[DiziPal] Kritik hata: ' + err.message);
