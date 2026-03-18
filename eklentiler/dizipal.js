@@ -1,5 +1,5 @@
 /**
- * DiziPal 1543 - Full Stream Recovery
+ * DiziPal 1543 - Fixed Source2 Fetch & Headers
  */
 
 var PASSPHRASE = "3hPn4uCjTVtfYWcjIcoJQ4cL1WWk1qxXI39egLYOmNv6IblA7eKJz68uU3eLzux1biZLCms0quEjTYniGv5z1JcKbNIsDQFSeIZOBZJz4is6pD7UyWDggWWzTLBQbHcQFpBQdClnuQaMNUHtLHTpzCvZy33p6I7wFBvL4fnXBYH84aUIyWGTRvM2G5cfoNf4705tO2kv";
@@ -40,29 +40,37 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
             
             var iframe = decryptData(m[1]);
             if (!iframe) return [];
+            // URL içindeki tırnakları ve kaçış karakterlerini temizle
+            iframe = iframe.replace(/[\\"]/g, "").trim();
             if (iframe.indexOf("//") === 0) iframe = "https:" + iframe;
             
             console.error("[DiziPal] Iframe: " + iframe);
 
-            // ÖNEMLİ: Iframe'e giderken referer ekliyoruz
             return fetch(iframe, { headers: { 'Referer': data.url } })
                 .then(function(r) { return r.text(); })
                 .then(function(p) {
-                    var pid = p.match(/window\.openPlayer\s*\(\s*['"]([^'"]+)['"]/);
-                    if (!pid) return [];
+                    var pidMatch = p.match(/window\.openPlayer\s*\(\s*['"]([^'"]+)['"]/);
+                    if (!pidMatch) {
+                        console.error("[DiziPal] Playlist ID bulunamadi!");
+                        return [];
+                    }
+                    var pid = pidMatch[1];
+                    var origin = iframe.split('/').slice(0, 3).join('/');
                     
-                    var org = iframe.split('/').slice(0, 3).join('/');
-                    // source2.php isteği için tam teşekküllü başlıklar
-                    return fetch(org + "/source2.php?v=" + pid[1], { 
+                    // source2.php isteği - Player gibi davranıyoruz
+                    return fetch(origin + "/source2.php?v=" + pid, { 
                         headers: { 
                             'Referer': iframe,
                             'X-Requested-With': 'XMLHttpRequest',
-                            'Accept': 'application/json'
+                            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36'
                         } 
                     })
                     .then(function(r) { return r.json(); })
                     .then(function(j) {
-                        if (!j.file) return [];
+                        if (!j.file) {
+                            console.error("[DiziPal] source2.php'den dosya gelmedi!");
+                            return [];
+                        }
                         var s = j.file.replace(/\\/g, "").replace("m.php", "master.m3u8");
                         console.error("[DiziPal] STREAM OK: " + s);
                         
@@ -70,15 +78,16 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                             name: "DiziPal (DPlayer)", 
                             url: s, 
                             type: 'm3u8',
-                            headers: { 'Referer': org + '/', 'Origin': org }
+                            headers: { 'Referer': origin + '/', 'Origin': origin }
                         }];
                     });
                 });
         })
         .catch(function(e) { 
-            console.error("[DiziPal] Kritik Hata: " + e.message);
+            console.error("[DiziPal] Hata: " + e.message);
             return []; 
         });
 }
 
 globalThis.getStreams = getStreams;
+if (typeof module !== 'undefined') { module.exports = { getStreams: getStreams }; }
