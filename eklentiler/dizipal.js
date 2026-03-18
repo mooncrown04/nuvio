@@ -1,61 +1,89 @@
 var cheerio = require("cheerio-without-node-native");
 
 async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
+    const baseUrl = "https://dizipal1543.com"; 
+    console.error("Dizipal_Debug: Baslatiliyor... TMDB ID: " + tmdbId);
+
     try {
-        // GÜNCEL DOMAIN (Gönderdiğin dosyadan alınan)
-        const baseUrl = "https://dizipal1543.com"; 
-        
         const isMovie = mediaType === 'movie' || mediaType === 'film';
         const tmdbUrl = `https://api.themoviedb.org/3/${isMovie ? 'movie' : 'tv'}/${tmdbId}?api_key=4ef0d7355d9ffb5151e987764708ce96&language=tr-TR`;
         
-        const tmdbRes = await fetch(tmdbUrl).catch(() => null);
+        const tmdbRes = await fetch(tmdbUrl).catch(e => {
+            console.error("Dizipal_Debug: TMDB Fetch Hatasi: " + e.message);
+            return null;
+        });
+        
         if (!tmdbRes) return [];
         const tmdbData = await tmdbRes.json();
         const title = tmdbData.title || tmdbData.name;
+        console.error("Dizipal_Debug: Aranan Baslik: " + title);
 
-        // 1. ADIM: Sitede Arama Yaparak Gerçek Linki Bul
+        // 1. ADIM: Arama Motorunu Test Et
         const searchUrl = `${baseUrl}/search/${encodeURIComponent(title)}`;
-        const searchRes = await fetch(searchUrl, {
-            headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36' }
-        }).catch(() => null);
+        console.error("Dizipal_Debug: Arama Yapiliyor: " + searchUrl);
+        
+        const searchRes = await fetch(searchUrl).catch(e => {
+            console.error("Dizipal_Debug: Arama Fetch Hatasi: " + e.message);
+            return null;
+        });
 
         let finalUrl = "";
         if (searchRes && searchRes.ok) {
             const searchHtml = await searchRes.text();
             const $ = cheerio.load(searchHtml);
-            // Arama sonuçlarından ilk eşleşen linki al
             const firstResult = $('.video-block a').first().attr('href');
+            
             if (firstResult) {
                 finalUrl = firstResult.startsWith('http') ? firstResult : baseUrl + firstResult;
-                // Dizi ise bölüm yapısını ekle (Örn: /bolum/konusanlar-1x11-c05 yapısına uygun)
                 if (!isMovie) {
                     finalUrl = finalUrl.replace('/dizi/', '/bolum/') + `-${seasonNum}x${episodeNum}`;
                 }
+                console.error("Dizipal_Debug: Arama Sonucu Bulundu: " + finalUrl);
+            } else {
+                console.error("Dizipal_Debug: Arama Yapildi Ama Link Bulunamadi.");
             }
         }
 
-        // 2. ADIM: Arama başarısız olursa manuel slug oluştur (Yedek)
+        // 2. ADIM: Yedek Slug Denemesi
         if (!finalUrl) {
             const slug = title.toLowerCase().replace(/ı/g, 'i').replace(/ğ/g, 'g').replace(/ü/g, 'u').replace(/ş/g, 's').replace(/ö/g, 'o').replace(/ç/g, 'c').replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, '-').trim();
             finalUrl = `${baseUrl}/${isMovie ? 'film' : 'bolum'}/${slug}${isMovie ? '' : '-' + seasonNum + 'x' + episodeNum}`;
+            console.error("Dizipal_Debug: Yedek URL Olusturuldu: " + finalUrl);
         }
 
-        // 3. ADIM: Sayfayı çek ve şifreli veriyi (ciphertext) bul
-        const res = await fetch(finalUrl).catch(() => null);
-        if (!res || !res.ok) return [];
+        // 3. ADIM: Sayfa Icerigini Kontrol Et
+        const res = await fetch(finalUrl).catch(e => {
+            console.error("Dizipal_Debug: Sayfa Fetch Hatasi: " + e.message);
+            return null;
+        });
+
+        if (!res || !res.ok) {
+            console.error("Dizipal_Debug: Sayfa Bulunamadi (404) veya Baglanti Reddedildi.");
+            return [];
+        }
+
         const html = await res.text();
+        console.error("Dizipal_Debug: Sayfa Yuklendi, Sifreli Veri Araniyor...");
         
-        // Şifreli veriyi ayıkla
         const match = html.match(/\{&quot;ciphertext&quot;:.*?&quot;\}/) || html.match(/\{"ciphertext":.*?"\}/);
         
         if (match) {
+            console.error("Dizipal_Debug: Ciphertext Yakalandi!");
             const cleanData = match[0].replace(/&quot;/g, '"').replace(/&amp;/g, '&');
             const streamUrl = decrypt(JSON.parse(cleanData));
+            
             if (streamUrl) {
-                return [{ name: "DiziPal (V3)", url: streamUrl, quality: 'Auto', provider: 'dizipal' }];
+                console.error("Dizipal_Debug: Sifre Cozuldu, Link: " + streamUrl);
+                return [{ name: "DiziPal (Debug)", url: streamUrl, quality: 'Auto', provider: 'dizipal' }];
+            } else {
+                console.error("Dizipal_Debug: Sifre Cozme (Decrypt) Basarisiz.");
             }
+        } else {
+            console.error("Dizipal_Debug: Sayfada Ciphertext Bulunamadi. Site Yapisi Degismis Olabilir.");
         }
-    } catch (e) { console.log("Dizipal Error:", e); }
+    } catch (e) { 
+        console.error("Dizipal_Debug: Kritik Hata: " + e.toString());
+    }
     return [];
 }
 
