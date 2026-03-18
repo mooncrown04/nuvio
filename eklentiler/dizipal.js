@@ -1,102 +1,143 @@
 /**
- * DiziPal v59 - Target: A Knight of the Seven Kingdoms (ve benzeri yeni yapılar)
- * URL Format: /dizi/[slug]/sezon-[n]/bolum-[n]
+ * DiziPal v60 - Final Optimized Resolver
+ * Target: https://dizipal1227.com/dizi/...
  */
 
-const cheerio = require("cheerio-without-node-native");
+var cheerio = require("cheerio-without-node-native");
 
-// Sabitler (Sitenin güncel haline göre güncellendi)
-const BASE_URL = 'https://dizipal1227.com'; 
-const PASSPHRASE = "3hPn4uCjTVtfYWcjIcoJQ4cL1WWk1qxXI39egLYOmNv6IblA7eKJz68uU3eLzux1biZLCms0quEjTYniGv5z1JcKbNIsDQFSeIZOBZJz4is6pD7UyWDggWWzTLBQbHcQFpBQdClnuQaMNUHtLHTpzCvZy33p6I7wFBvL4fnXBYH84aUIyWGTRvM2G5cfoNf4705tO2kv";
+// ========== YAPILANDIRMA ==========
+var BASE_URL = 'https://dizipal1227.com';
+var TMDB_KEY = '4ef0d7355d9ffb5151e987764708ce96';
+var PASSPHRASE = "3hPn4uCjTVtfYWcjIcoJQ4cL1WWk1qxXI39egLYOmNv6IblA7eKJz68uU3eLzux1biZLCms0quEjTYniGv5z1JcKbNIsDQFSeIZOBZJz4is6pD7UyWDggWWzTLBQbHcQFpBQdClnuQaMNUHtLHTpzCvZy33p6I7wFBvL4fnXBYH84aUIyWGTRvM2G5cfoNf4705tO2kv";
 
-const HEADERS = {
+var HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-    'Referer': BASE_URL + '/',
-    'Accept-Language': 'tr-TR,tr;q=0.9'
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+    'Accept-Language': 'tr-TR,tr;q=0.9,en;q=0.8',
+    'Referer': BASE_URL + '/'
 };
 
-// Yardımcı Fonksiyonlar (Öncekiyle aynı mantık, hızlı ve güvenli)
-const utils = {
-    hexToBytes: (hex) => {
-        let bytes = [];
-        for (let i = 0; i < hex.length; i += 2) bytes.push(parseInt(hex.substr(i, 2), 16));
+// ========== YARDIMCI ARAÇLAR ==========
+var utils = {
+    hexToBytes: function(hex) {
+        var bytes = [];
+        for (var i = 0; i < hex.length; i += 2) bytes.push(parseInt(hex.substr(i, 2), 16));
         return bytes;
     },
-    base64ToBytes: (b64) => {
+    base64ToBytes: function(base64) {
         try {
-            let bin = (typeof atob !== 'undefined') ? atob(b64.replace(/\\/g, '')) : Buffer.from(b64.replace(/\\/g, ''), 'base64').toString('binary');
-            return Array.from(bin).map(c => c.charCodeAt(0));
+            var cleaned = base64.replace(/\\/g, '');
+            var binary = (typeof atob !== 'undefined') ? atob(cleaned) : Buffer.from(cleaned, 'base64').toString('binary');
+            var bytes = [];
+            for (var i = 0; i < binary.length; i++) bytes.push(binary.charCodeAt(i));
+            return bytes;
         } catch (e) { return []; }
     },
-    bytesToStr: (bytes) => bytes.map(b => (b >= 32 && b < 127) ? String.fromCharCode(b) : '').join('')
+    bytesToString: function(bytes) {
+        return bytes.map(function(b) {
+            return (b >= 32 && b < 127) ? String.fromCharCode(b) : '';
+        }).join('');
+    },
+    slugify: function(text) {
+        var trMap = {'ç':'c','ğ':'g','ş':'s','ı':'i','ö':'o','ü':'u'};
+        return text.toLowerCase()
+            .replace(/[çğşıöü]/g, function(m) { return trMap[m]; })
+            .replace(/[^a-z0-9\s-]/g, '')
+            .replace(/\s+/g, '-')
+            .replace(/-+/g, '-')
+            .trim();
+    }
 };
 
-// Şifre Çözme Motoru
-function decryptDiziPal(cipher, ivHex, saltHex) {
-    const ct = utils.base64ToBytes(cipher);
-    const iv = utils.hexToBytes(ivHex);
-    const passBytes = Array.from(PASSPHRASE).map(c => c.charCodeAt(0));
+// ========== ŞİFRE ÇÖZME MOTORU ==========
+function decryptData(ciphertext, ivHex, saltHex) {
+    var ct = utils.base64ToBytes(ciphertext);
+    var iv = utils.hexToBytes(ivHex);
+    var passBytes = utils.base64ToBytes(btoa(PASSPHRASE)); // Byte array conversion
 
-    // Farklı Salt ve Key varyasyonlarını sırayla dene
-    const variations = [
-        (s) => utils.hexToBytes(s), // Direct Hex
-        (s) => utils.hexToBytes(s.toUpperCase()), // Upper Hex
-        (s) => utils.hexToBytes(s.split('').reverse().join('')) // Reverse Hex
+    // Salt Varyasyonları
+    var saltMethods = [
+        function(s) { return utils.hexToBytes(s); }, // V1: Direct
+        function(s) { return utils.hexToBytes(s.toUpperCase()); }, // V2: Upper
+        function(s) { return utils.hexToBytes(s.split('').reverse().join('')); } // V3: Reverse
     ];
 
-    for (let variant of variations) {
-        let salt = variant(saltHex);
+    for (var i = 0; i < saltMethods.length; i++) {
+        var salt = saltMethods[i](saltHex);
         if (!salt.length) continue;
 
-        // Key Derivation (Simple XOR ve Full Mix)
-        let keys = [
-            salt.slice(0, 32).map((b, i) => b ^ passBytes[i % passBytes.length]),
-            Array.from({length: 32}, (_, i) => (salt[i % salt.length] + passBytes[i % passBytes.length]) & 0xff)
+        // Key Varyasyonları (Simple & Full)
+        var keys = [
+            salt.slice(0, 32).map(function(b, idx) { return b ^ PASSPHRASE.charCodeAt(idx % PASSPHRASE.length); }),
+            Array.from({length: 32}, function(_, idx) { return (salt[idx % salt.length] + PASSPHRASE.charCodeAt(idx % PASSPHRASE.length)) & 0xff; })
         ];
 
-        for (let key of keys) {
-            let res = ct.map((b, i) => b ^ key[i % key.length] ^ iv[i % iv.length]);
-            let decoded = utils.bytesToStr(res);
+        for (var j = 0; j < keys.length; j++) {
+            var key = keys[j];
+            var res = [];
+            for (var k = 0; k < ct.length; k++) {
+                res.push(ct[k] ^ key[k % key.length] ^ iv[k % iv.length]);
+            }
+            var resultStr = utils.bytesToString(res);
             
-            if (decoded.includes('http')) {
-                let match = decoded.match(/https?:\/\/[^\s"']+/);
-                if (match) return match[0];
+            if (resultStr.indexOf('http') >= 0) {
+                var match = resultStr.match(/https?:\/\/[^\s"']+/);
+                if (match) return match[0].replace(/\\\//g, '/');
             }
         }
     }
     return null;
 }
 
-// Ana Fonksiyon
-async function getDizipalSource(customPath) {
+// ========== ANA GİRİŞ NOKTASI (getStreams) ==========
+async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
     try {
-        // Dinamik URL oluşturma (Örn: /dizi/a-knight-of-the-seven-kingdoms/sezon-1/bolum-4)
-        const targetUrl = customPath.startsWith('http') ? customPath : `${BASE_URL}${customPath}`;
+        var isMovie = mediaType === 'movie' || mediaType === 'film';
         
-        const response = await fetch(targetUrl, { headers: HEADERS });
-        const html = await response.text();
-        const $ = cheerio.load(html);
+        // 1. TMDB'den orijinal ismi al ve slug oluştur
+        var tmdbUrl = 'https://api.themoviedb.org/3/' + (isMovie ? 'movie' : 'tv') + '/' + tmdbId + '?language=tr-TR&api_key=' + TMDB_KEY;
+        var tmdbRes = await fetch(tmdbUrl);
+        var tmdbData = await tmdbRes.json();
+        var slug = utils.slugify(tmdbData.title || tmdbData.name);
 
-        const jsonData = $('div[data-rm-k=true]').text();
-        if (!jsonData) return { error: "Encrypted data not found" };
+        // 2. DiziPal URL Yapısını kur
+        var targetPath = isMovie 
+            ? '/film/' + slug 
+            : '/dizi/' + slug + '/sezon-' + seasonNum + '/bolum-' + episodeNum;
+        
+        var targetUrl = BASE_URL + targetPath;
+        console.log('[DiziPal] Fetching: ' + targetUrl);
 
-        const { ciphertext, iv, salt } = JSON.parse(jsonData);
-        const sourceUrl = decryptDiziPal(ciphertext, iv, salt);
+        // 3. Sayfayı çek ve veriyi parse et
+        var response = await fetch(targetUrl, { headers: HEADERS });
+        var html = await response.text();
+        var $ = cheerio.load(html);
 
-        if (sourceUrl) {
-            return {
-                provider: "DiziPal",
-                url: sourceUrl,
-                type: sourceUrl.includes('.m3u8') ? 'hls' : 'direct'
-            };
+        var encryptedDiv = $('div[data-rm-k=true]');
+        if (encryptedDiv.length === 0) return [];
+
+        var data = JSON.parse(encryptedDiv.text());
+        
+        // 4. Şifreyi çöz
+        var streamUrl = decryptData(data.ciphertext, data.iv, data.salt);
+
+        if (streamUrl) {
+            return [{
+                name: "DiziPal (V60)",
+                url: streamUrl,
+                quality: 'Auto',
+                provider: 'dizipal'
+            }];
         }
     } catch (err) {
-        return { error: err.message };
+        console.error('[DiziPal Error] ' + err.message);
     }
-    return { error: "Decryption failed" };
+    return [];
 }
 
-// Kullanım Örneği:
-// getDizipalSource('/dizi/a-knight-of-the-seven-kingdoms/sezon-1/bolum-4').then(console.log);
-
-module.exports = { getDizipalSource };
+// ========== EXPORTS (KRİTİK KISIM) ==========
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = { getStreams: getStreams };
+} else {
+    globalThis.getStreams = getStreams;
+}
