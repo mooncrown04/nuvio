@@ -2,6 +2,9 @@ var cheerio = require("cheerio-without-node-native");
 
 async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
     try {
+        // GÜNCEL DOMAIN (Gönderdiğin dosyadan alınan)
+        const baseUrl = "https://dizipal1543.com"; 
+        
         const isMovie = mediaType === 'movie' || mediaType === 'film';
         const tmdbUrl = `https://api.themoviedb.org/3/${isMovie ? 'movie' : 'tv'}/${tmdbId}?api_key=4ef0d7355d9ffb5151e987764708ce96&language=tr-TR`;
         
@@ -10,45 +13,49 @@ async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
         const tmdbData = await tmdbRes.json();
         const title = tmdbData.title || tmdbData.name;
 
-        // Daha agresif temizlik: Sadece harf ve rakam
-        const slug = title.toLowerCase()
-            .replace(/ı/g, 'i').replace(/ğ/g, 'g').replace(/ü/g, 'u').replace(/ş/g, 's').replace(/ö/g, 'o').replace(/ç/g, 'c')
-            .replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, '-').trim();
-
-        const url = `https://dizipal1227.com/${isMovie ? 'film' : 'dizi'}/${slug}${isMovie ? '' : '/sezon-' + seasonNum + '/bolum-' + episodeNum}`;
-
-        // Siteye istek atarken cihaz bilgisini Android olarak set ediyoruz
-        const res = await fetch(url, {
-            headers: {
-                'User-Agent': 'Mozilla/5.0 (Linux; Android 11; Fire TV) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.210 Mobile Safari/537.36',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-                'Referer': 'https://dizipal1227.com/'
-            }
+        // 1. ADIM: Sitede Arama Yaparak Gerçek Linki Bul
+        const searchUrl = `${baseUrl}/search/${encodeURIComponent(title)}`;
+        const searchRes = await fetch(searchUrl, {
+            headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36' }
         }).catch(() => null);
 
-        if (!res || !res.ok) return [];
+        let finalUrl = "";
+        if (searchRes && searchRes.ok) {
+            const searchHtml = await searchRes.text();
+            const $ = cheerio.load(searchHtml);
+            // Arama sonuçlarından ilk eşleşen linki al
+            const firstResult = $('.video-block a').first().attr('href');
+            if (firstResult) {
+                finalUrl = firstResult.startsWith('http') ? firstResult : baseUrl + firstResult;
+                // Dizi ise bölüm yapısını ekle (Örn: /bolum/konusanlar-1x11-c05 yapısına uygun)
+                if (!isMovie) {
+                    finalUrl = finalUrl.replace('/dizi/', '/bolum/') + `-${seasonNum}x${episodeNum}`;
+                }
+            }
+        }
 
+        // 2. ADIM: Arama başarısız olursa manuel slug oluştur (Yedek)
+        if (!finalUrl) {
+            const slug = title.toLowerCase().replace(/ı/g, 'i').replace(/ğ/g, 'g').replace(/ü/g, 'u').replace(/ş/g, 's').replace(/ö/g, 'o').replace(/ç/g, 'c').replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, '-').trim();
+            finalUrl = `${baseUrl}/${isMovie ? 'film' : 'bolum'}/${slug}${isMovie ? '' : '-' + seasonNum + 'x' + episodeNum}`;
+        }
+
+        // 3. ADIM: Sayfayı çek ve şifreli veriyi (ciphertext) bul
+        const res = await fetch(finalUrl).catch(() => null);
+        if (!res || !res.ok) return [];
         const html = await res.text();
         
-        // Şifreli veriyi yakala
+        // Şifreli veriyi ayıkla
         const match = html.match(/\{&quot;ciphertext&quot;:.*?&quot;\}/) || html.match(/\{"ciphertext":.*?"\}/);
         
         if (match) {
             const cleanData = match[0].replace(/&quot;/g, '"').replace(/&amp;/g, '&');
             const streamUrl = decrypt(JSON.parse(cleanData));
-            
-            if (streamUrl && streamUrl.startsWith('http')) {
-                return [{
-                    name: "DiziPal (Full HD)",
-                    url: streamUrl,
-                    quality: '1080p',
-                    provider: 'dizipal'
-                }];
+            if (streamUrl) {
+                return [{ name: "DiziPal (V3)", url: streamUrl, quality: 'Auto', provider: 'dizipal' }];
             }
         }
-    } catch (e) {
-        // Hata durumunda hiçbir şey döndürme ki uygulama çökmesin
-    }
+    } catch (e) { console.log("Dizipal Error:", e); }
     return [];
 }
 
