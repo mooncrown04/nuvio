@@ -3,8 +3,8 @@
   "version": "0.4",
   "scrapers": [  
       {
-      "id": "m3u",
-      "name": "MoOnCrOwN m3u",
+      "id": "dizix",
+      "name": "Dizix",
       "description": "Statik Katalog Uyumlu M3U Scraper",
       "logo": "https://picon.pics/TR/Ulusal/Atv.png",
       "version": "1.0.1",
