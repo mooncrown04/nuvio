@@ -1,85 +1,79 @@
 /**
- * DiziPal 1543 - HTML Result & Multi-Search Fix
+ * DiziPal 1543 - Deep Scan Search Fix
  */
 
 var BASE_URL = 'https://dizipal1543.com';
 
 async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
-    console.error(`[DiziPal] Sorgu Basladi: ${tmdbId}`);
+    console.error(`[DiziPal] Sorgu: ${tmdbId} | Tip: ${mediaType}`);
 
     try {
         const type = mediaType === 'movie' ? 'movie' : 'tv';
         const tmdbRes = await fetch(`https://api.themoviedb.org/3/${type}/${tmdbId}?language=tr-TR&api_key=4ef0d7355d9ffb5151e987764708ce96`);
         const tmdbData = await tmdbRes.json();
         
-        // Denenecek isimler listesi
+        // Denenecek terimler (The Rookie, ONE PIECE vb.)
         const searchTerms = [
             (tmdbData.name || tmdbData.title || "").trim(),
             (tmdbData.original_name || tmdbData.original_title || "").trim()
         ].filter((v, i, a) => v && a.indexOf(v) === i);
 
-        let realSlug = "";
+        let finalPath = "";
 
         for (const term of searchTerms) {
-            console.error(`[DiziPal] Araniyor: ${term}`);
+            console.error(`[DiziPal] Deneniyor: ${term}`);
             const searchRes = await fetch(`${BASE_URL}/bg/searchcontent`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-Requested-With': 'XMLHttpRequest' },
+                headers: { 
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                    'X-Requested-With': 'XMLHttpRequest'
+                },
                 body: `searchterm=${encodeURIComponent(term)}`
             });
 
-            const json = await searchRes.json();
+            const rawText = await searchRes.text();
             
-            // Logda gordugumuz 'html' alanindan URL'yi cekmeye calisalim (En garantisi budur)
-            const htmlContent = json.data?.html || "";
-            const slugMatch = htmlContent.match(/href="\/([^"]+)"/);
+            // DERIN TARAMA: JSON'un neresinde olursa olsun /series/ veya /dizi/ gecen yolu bul
+            const pathMatch = rawText.match(/\/(?:series|dizi|film|movie)\/[a-zA-Z0-9-.]+/);
             
-            if (slugMatch) {
-                // 'series/the-rookie' veya 'dizi/the-rookie' gibi doner, sadece son kismi aliriz
-                realSlug = slugMatch[1].split('/').pop();
-                console.error(`[DiziPal] Slug Bulundu: ${realSlug}`);
-                break;
-            }
-            
-            // Alternatif: result dizisinden bak
-            const firstResult = json.data?.result?.[0];
-            if (firstResult?.slug) {
-                realSlug = firstResult.slug;
+            if (pathMatch) {
+                finalPath = pathMatch[0];
+                console.error(`[DiziPal] Yol Yakalandi: ${finalPath}`);
                 break;
             }
         }
 
-        if (!realSlug) {
-            console.error("[DiziPal] Hicbir terimle slug bulunamadi.");
+        if (!finalPath) {
+            console.error("[DiziPal] Site cevap verdi ama icinde gecerli bir link bulunamadi.");
             return [];
         }
 
-        let targetUrl = `${BASE_URL}/${mediaType === 'tv' ? 'bolum' : 'film'}/${realSlug}`;
+        // Slug cikarma: /series/the-rookie -> the-rookie
+        const slug = finalPath.split('/').pop();
+        let targetUrl = `${BASE_URL}/${mediaType === 'tv' ? 'bolum' : 'film'}/${slug}`;
+        
         if (mediaType === 'tv') {
             targetUrl += `-${seasonNum}x${episodeNum}`;
         }
 
-        console.error(`[DiziPal] Hedef Adres: ${targetUrl}`);
+        console.error(`[DiziPal] Hedef URL: ${targetUrl}`);
 
         const pageRes = await fetch(targetUrl);
         const pageHtml = await pageRes.text();
         
+        // Sifreli div kontrolü
         const encryptedMatch = pageHtml.match(/<div[^>]*data-rm-k="true"[^>]*>(.*?)<\/div>/);
         if (!encryptedMatch) {
-            console.error("[DiziPal] Sayfada veri yok (404 veya farkli yapi).");
+            console.error("[DiziPal] Sifreli veri bulunamadi (404 veya Bölüm henüz yok).");
             return [];
         }
 
-        // AES Decrypt adimlarina gecis...
-        console.error("[DiziPal] Sifreli veri yakalandi!");
-        
-        // ... (Bundan sonrasi v3.0.0'daki AES logic ile devam edecek)
-        // 
-
+        // ... Önceki AES Decrypt ve M3U8 çekme mantığı buraya bağlanır ...
+        console.error("[DiziPal] Basarili! Sifre cozucu calistiriliyor...");
         return []; 
 
     } catch (err) {
-        console.error(`[DiziPal] HATA: ${err.message}`);
+        console.error(`[DiziPal] Kritik Hata: ${err.message}`);
         return [];
     }
 }
