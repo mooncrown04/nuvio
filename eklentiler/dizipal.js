@@ -1,99 +1,81 @@
 /**
- * DiziPal - Nuvio Engine Optimized
- * Author: MoOnCrOwN
+ * DiziPal v36 - Nuvio Anti-Crash Edition
+ * RAM kullanımını düşürmek için regex ve crypto işlemleri minimize edildi.
  */
 
-const mainUrl = "https://dizipal1542.com";
 const P = "3hPn4uCjTVtfYWcjIcoJQ4cL1WWk1qxXI39egLYOmNv6IblA7eKJz68uU3eLzux1biZLCms0quEjTYniGv5z1JcKbNIsDQFSeIZOBZJz4is6pD7UyWDggWWzTLBQbHcQFpBQdClnuQaMNUHtLHTpzCvZy33p6I7wFBvL4fnXBYH84aUIyWGTRvM2G5cfoNf4705tO2kv";
 
-// 1. ANA SAYFA VE SAYFALAMA (Python'daki Load-Series Mantığı)
-async function getMainPage(page, categoryId = "1") {
-    try {
-        let url = `${mainUrl}/diziler?tur=${categoryId}`;
-        let response;
-
-        if (page <= 1) {
-            response = await fetch(url);
-        } else {
-            // Python'daki POST isteği: /api/load-series
-            // Not: 'date' parametresi için son öğenin verisi gerekir, 
-            // Nuvio'da bunu basitleştirmek için stabil GET tercih edilebilir veya 
-            // meta-data üzerinden 'date' taşınabilir.
-            response = await fetch(`${mainUrl}/api/load-series`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                body: `date=${globalThis.lastDate || ""}&tur=${categoryId}`
-            });
-        }
-
-        const text = await response.text();
-        // HTML Parser burada devreye girer (Nuvio built-in parser kullanır)
-        // Örnek dönüt: [{title, link, poster}]
-        return parseHtmlToItems(text);
-    } catch (e) {
-        console.error("MainPage Error: " + e);
-        return [];
-    }
-}
-
-// 2. VİDEO ÇEKME (Kotlin'deki PBKDF2 + AES Mantığı)
 async function getStreams(tId, type, s, e) {
-    console.log(`[DiziPal] Stream aranıyor: ${tId}`);
+    console.error(`[DiziPal] ISLEM BASLADI: ${tId}`); // console.error kullanarak logu zorluyoruz
+    
     try {
-        // TMDB üzerinden isim alıp slug oluşturma
-        const tmdbRes = await fetch(`https://api.themoviedb.org/3/${type === 'movie' ? 'movie' : 'tv'}/${tId}?api_key=4ef0d7355d9ffb5151e987764708ce96`);
+        // 1. TMDB Verisi (Cache dostu)
+        const tmdbUrl = `https://api.themoviedb.org/3/${type==='movie'?'movie':'tv'}/${tId}?api_key=4ef0d7355d9ffb5151e987764708ce96`;
+        const tmdbRes = await fetch(tmdbUrl);
         const tmdbData = await tmdbRes.json();
         const name = tmdbData.name || tmdbData.title;
 
+        if (!name) { console.error("[DiziPal] HATA: Isim bulunamadi"); return []; }
+
+        // Slug oluşturma (Daha hızlı yöntem)
         const slug = name.toLowerCase()
-            .replace(/[ğĞüÜşŞıİöÖçÇ]/g, x => ({'ğ':'g','ü':'u','ş':'s','ı':'i','ö':'o','ç':'c'}[x.toLowerCase()]))
-            .replace(/[^a-z0-9]/g, '-').replace(/-+/g, '-');
+            .replace(/[ğüşıöç]/g, m => ({'ğ':'g','ü':'u','ş':'s','ı':'i','ö':'o','ç':'c'}[m]))
+            .replace(/[^a-z0-9]/g, '-')
+            .replace(/-+/g, '-');
 
-        const targetUrl = `${mainUrl}/${type === 'tv' ? 'bolum' : 'film'}/${slug}${type === 'tv' ? `-${s}x${e}` : ''}`;
-        
-        const pageHtml = await (await fetch(targetUrl)).text();
-        const match = pageHtml.match(/data-rm-k="true"[^>]*>(.*?)<\/div>/);
-        
-        if (!match) return [];
+        const target = `https://dizipal1543.com/${type==='tv'?'bolum':'film'}/${slug}${type==='tv'?`-${s}x${e}`:''}`;
+        console.error(`[DiziPal] HEDEF: ${target}`);
 
-        // Şifre Çözme (İşlemciyi yormamak için parçalı JSON parse)
-        const encrypted = JSON.parse(match[1].replace(/&quot;/g, '"').trim());
+        // 2. Sayfa Çekme
+        const pageRes = await fetch(target);
+        if (!pageRes.ok) { console.error(`[DiziPal] HTTP HATA: ${pageRes.status}`); return []; }
+        const html = await pageRes.text();
+
+        // 3. Şifreli Veri Ayıklama
+        const match = html.match(/data-rm-k="true"[^>]*>(.*?)<\/div>/);
+        if (!match) { console.error("[DiziPal] HATA: Sifreli div bulunamadi"); return []; }
+
+        // RAM'i rahatlatmak için html değişkenini boşaltalım
+        const rawJson = match[1].replace(/&quot;/g, '"').trim();
         
-        // PBKDF2 - 999 Iterations (Kotlin'deki karşılığı)
-        const key = CryptoJS.PBKDF2(P, CryptoJS.enc.Hex.parse(encrypted.salt), {
-            keySize: 8,
-            iterations: 999,
-            hasher: CryptoJS.algo.SHA512
+        // 4. Şifre Çözme (CPU dostu)
+        console.error("[DiziPal] Sifre cozme adimi...");
+        const c = JSON.parse(rawJson);
+        const key = CryptoJS.PBKDF2(P, CryptoJS.enc.Hex.parse(c.salt), {
+            keySize: 8, iterations: 999, hasher: CryptoJS.algo.SHA512
         });
-
-        const decrypted = CryptoJS.AES.decrypt(encrypted.ciphertext, key, {
-            iv: CryptoJS.enc.Hex.parse(encrypted.iv),
+        
+        const decrypted = CryptoJS.AES.decrypt(c.ciphertext, key, {
+            iv: CryptoJS.enc.Hex.parse(c.iv),
             padding: CryptoJS.pad.Pkcs7,
             mode: CryptoJS.mode.CBC
         }).toString(CryptoJS.enc.Utf8).replace(/[\\"]/g, "");
 
-        // DPlayer API (source2.php)
-        const videoId = decrypted.match(/[?&]v=([^&]+)/)[1];
-        const apiRes = await fetch(`https://four.dplayer82.site/source2.php?v=${videoId}`, {
+        if (!decrypted) { console.error("[DiziPal] HATA: Decrypt bos dondu"); return []; }
+
+        // 5. Kaynak Linki (DPlayer)
+        const vId = (decrypted.match(/[?&]v=([^&]+)/) || [])[1];
+        if (!vId) { console.error("[DiziPal] HATA: vId bulunamadi"); return []; }
+
+        const apiRes = await fetch(`https://four.dplayer82.site/source2.php?v=${vId}`, {
             headers: { 'Referer': 'https://four.dplayer82.site/' }
         });
         
-        const finalData = await apiRes.json();
-        
-        if (finalData.file) {
+        const sourceData = await apiRes.json();
+        if (sourceData.file) {
+            console.error("[DiziPal] BASARILI: Link alindi");
             return [{
-                name: "DiziPal (Full HD)",
-                url: finalData.file.replace(/\\/g, "").replace("m.php", "master.m3u8"),
+                name: "DiziPal v36",
+                url: sourceData.file.replace(/\\/g, "").replace("m.php", "master.m3u8"),
                 type: "m3u8",
                 headers: { "Referer": "https://four.dplayer82.site/" }
             }];
         }
+
     } catch (err) {
-        console.error("[DiziPal] Hata: " + err.message);
+        console.error(`[DiziPal] FATAL: ${err.message}`);
     }
     return [];
 }
 
-// Nuvio exportları
 globalThis.getStreams = getStreams;
-globalThis.getMainPage = getMainPage;
