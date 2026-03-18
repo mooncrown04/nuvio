@@ -1,5 +1,5 @@
 /**
- * DiziPal v64 - Entity & Salt Length Fix
+ * DiziPal v66 - mPlayerFd Selector & List-Safe Output
  */
 
 var cheerio = require("cheerio-without-node-native");
@@ -16,11 +16,8 @@ var utils = {
     },
     base64ToBytes: function(base64) {
         try {
-            var cleaned = base64.replace(/\\/g, '').replace(/\s/g, '');
-            var binary = (typeof atob !== 'undefined') ? atob(cleaned) : Buffer.from(cleaned, 'base64').toString('binary');
-            var bytes = [];
-            for (var i = 0; i < binary.length; i++) bytes.push(binary.charCodeAt(i));
-            return bytes;
+            var binary = (typeof atob !== 'undefined') ? atob(base64.replace(/\\/g, '')) : Buffer.from(base64.replace(/\\/g, ''), 'base64').toString('binary');
+            return Array.from(binary).map(function(c) { return c.charCodeAt(0); });
         } catch (e) { return []; }
     },
     bytesToString: function(bytes) {
@@ -28,22 +25,21 @@ var utils = {
     },
     slugify: function(text) {
         var trMap = {'ç':'c','ğ':'g','ş':'s','ı':'i','ö':'o','ü':'u'};
-        return text.toLowerCase()
-            .replace(/[çğşıöü]/g, function(m) { return trMap[m]; })
-            .replace(/[^a-z0-9\s-]/g, '')
-            .replace(/\s+/g, '-')
-            .trim();
+        return text.toLowerCase().replace(/[çğşıöü]/g, function(m) { return trMap[m]; }).replace(/[^a-z0-9\s-]/g, '').replace(/\s+/g, '-').trim();
     }
 };
 
 async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
+    // KESİN KURAL: Dönecek sonuç daima liste olmalı
+    var finalResults = []; 
+
     try {
         var isMovie = mediaType === 'movie' || mediaType === 'film';
-        var tmdbUrl = 'https://api.themoviedb.org/3/' + (isMovie ? 'movie' : 'tv') + '/' + tmdbId + '?language=tr-TR&api_key=' + TMDB_KEY;
+        var tmdbUrl = 'https://api.themoviedb.org/3/' + (isMovie ? 'movie' : 'tv') + '/' + tmdbId + '?api_key=' + TMDB_KEY + '&language=tr-TR';
         
         var tmdbRes = await fetch(tmdbUrl);
         var tmdbData = await tmdbRes.json();
-        var slug = utils.slugify(tmdbData.title || tmdbData.name);
+        var slug = utils.slugify(tmdbData.title || tmdbData.name || "");
 
         var targetUrl = isMovie 
             ? BASE_URL + '/film/' + slug 
@@ -56,41 +52,40 @@ async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
         var html = await response.text();
         var $ = cheerio.load(html);
 
-        // Paylaştığın div'i tam olarak yakalamak için
-        var encryptedDiv = $('div[data-rm-k=true]');
-        var rawText = encryptedDiv.text() || '';
-
-        if (!rawText) {
-            console.error('[DiziPal] Veri divi boş veya bulunamadı.');
-            return [];
-        }
-
-        // HTML Entity temizliği (&quot; -> ")
-        var cleanJson = rawText.replace(/&quot;/g, '"').replace(/&amp;/g, '&');
+        // --- YENİ SEÇİCİ STRATEJİSİ ---
+        // data-rm-k="true" olan ve mPlayerFd içeren her şeyi tara
+        var rawData = $('div[data-rm-k="true"], .mPlayerFd, #mPlayerFd').first().text();
         
-        var data;
-        try {
-            data = JSON.parse(cleanJson);
-        } catch(e) {
-            console.error('[DiziPal] JSON Parse Hatası:', e.message);
-            return [];
+        // Regex Fallback (Eğer Cheerio yine kaçırırsa)
+        if (!rawData || rawData.length < 20) {
+            var regex = /\{&quot;ciphertext&quot;:.*?\}/g;
+            var match = html.match(regex);
+            if (match) rawData = match[0];
         }
 
-        // Şifre Çözme Başlangıcı
-        var streamUrl = decryptLogic(data);
-
-        if (streamUrl) {
-            return [{
-                name: "DiziPal (Fixed)",
-                url: streamUrl,
-                quality: 'Auto',
-                provider: 'dizipal'
-            }];
+        if (rawData) {
+            // HTML Entity temizliği ve JSON parse
+            var cleanJson = rawData.replace(/&quot;/g, '"').replace(/&amp;/g, '&');
+            var data = JSON.parse(cleanJson);
+            
+            var streamUrl = decryptLogic(data);
+            if (streamUrl) {
+                finalResults.push({
+                    name: "DiziPal (v66)",
+                    url: streamUrl,
+                    quality: 'Auto',
+                    provider: 'dizipal'
+                });
+            }
+        } else {
+            console.error('[DiziPal] Veri kaynağı (mPlayerFd) bulunamadı.');
         }
+
     } catch (err) {
-        console.error('[DiziPal] Genel Hata:', err.message);
+        console.error('[DiziPal] Kritik Hata:', err.message);
     }
-    return []; // Uygulama array beklediği için her zaman array dönüyoruz.
+
+    return finalResults; // List-safe return
 }
 
 function decryptLogic(data) {
@@ -101,24 +96,17 @@ function decryptLogic(data) {
     var salt = utils.hexToBytes(data.salt);
     var pass = PASSPHRASE;
 
-    // Uzun Salt değerlerinde DiziPal genelde ilk 32 veya 64 byte'ı kullanır
-    // Burada hem XOR hem de Toplam (Mix) yöntemini deniyoruz
-    var keyVaryasyonlari = [
-        salt.slice(0, 32).map(function(b, i) { return b ^ pass.charCodeAt(i % pass.length); }),
-        Array.from({length: 32}, function(_, i) { return (salt[i % salt.length] + pass.charCodeAt(i % pass.length)) & 0xff; })
-    ];
+    // Uzun salt desteği ile anahtar türetme
+    var key = salt.slice(0, 32).map(function(b, i) {
+        return b ^ pass.charCodeAt(i % pass.length);
+    });
 
-    for (var key of keyVaryasyonlari) {
-        var res = [];
-        for (var i = 0; i < ct.length; i++) {
-            res.push(ct[i] ^ key[i % key.length] ^ iv[i % iv.length]);
-        }
-        var decoded = utils.bytesToString(res);
-        
-        if (decoded.includes('http')) {
-            var match = decoded.match(/https?:\/\/[^\s"']+/);
-            if (match) return match[0].replace(/\\\//g, '/');
-        }
+    var res = ct.map(function(b, i) { return b ^ key[i % key.length] ^ iv[i % iv.length]; });
+    var decoded = utils.bytesToString(res);
+
+    if (decoded.includes('http')) {
+        var match = decoded.match(/https?:\/\/[^\s"']+/);
+        return match ? match[0].replace(/\\\//g, '/') : null;
     }
     return null;
 }
