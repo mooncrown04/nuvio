@@ -1,49 +1,64 @@
 /**
- * DiziPal v75 - Zero Console Output
+ * DiziPal v76 - Visual Debugger (Hatalar uygulama ekranında görünür)
  */
 var cheerio = require("cheerio-without-node-native");
 
 async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
+    var debugResults = [];
+
     try {
         var isMovie = mediaType === 'movie' || mediaType === 'film';
         var tmdbUrl = "https://api.themoviedb.org/3/" + (isMovie ? "movie" : "tv") + "/" + tmdbId + "?api_key=4ef0d7355d9ffb5151e987764708ce96&language=tr-TR";
         
-        var tmdbRes = await fetch(tmdbUrl).catch(function() { return null; });
-        if (!tmdbRes) return [];
-        
-        var tmdbData = await tmdbRes.json().catch(function() { return {}; });
-        var title = tmdbData.title || tmdbData.name;
-        if (!title) return [];
+        var tmdbRes = await fetch(tmdbUrl).catch(function(e) { 
+            return { error: "TMDB_FETCH_ERR: " + e.message }; 
+        });
 
+        if (tmdbRes.error) {
+            debugResults.push({ name: "HATA: " + tmdbRes.error, url: "http://0.0.0.0" });
+            return debugResults;
+        }
+
+        var tmdbData = await tmdbRes.json();
+        var title = tmdbData.title || tmdbData.name;
         var slug = title.toLowerCase()
             .replace(/ç/g, 'c').replace(/ğ/g, 'g').replace(/ş/g, 's').replace(/ı/g, 'i').replace(/ö/g, 'o').replace(/ü/g, 'u')
             .replace(/[^a-z0-9\s-]/g, '').replace(/\s+/g, '-').trim();
 
         var url = "https://dizipal1227.com/" + (isMovie ? "film/" : "dizi/") + slug + (isMovie ? "" : "/sezon-" + seasonNum + "/bolum-" + episodeNum);
 
-        var res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' } }).catch(function() { return null; });
-        if (!res || !res.ok) return [];
-        
-        var html = await res.text().catch(function() { return ""; });
+        var res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' } }).catch(function(e) {
+            return { error: "SITE_FETCH_ERR: " + e.message };
+        });
+
+        if (res.error) {
+            debugResults.push({ name: "HATA: " + res.error, url: "http://0.0.0.0" });
+            return debugResults;
+        }
+
+        var html = await res.text();
         var m = html.match(/\{&quot;ciphertext&quot;:.*?&quot;\}/) || html.match(/\{"ciphertext":.*?"\}/);
         
-        if (m) {
-            var clean = m[0].replace(/&quot;/g, '"').replace(/&amp;/g, '&');
-            var data = JSON.parse(clean);
-            var streamUrl = decrypt(data); 
-            if (streamUrl) {
-                return [{
-                    name: "DiziPal",
-                    url: streamUrl,
-                    quality: 'Auto',
-                    provider: 'dizipal'
-                }];
-            }
+        if (!m) {
+            debugResults.push({ name: "HATA: Şifreli veri (ciphertext) bulunamadı", url: "http://0.0.0.0" });
+            return debugResults;
         }
-    } catch (e) {
-        // Sessiz hata yönetimi
+
+        var clean = m[0].replace(/&quot;/g, '"').replace(/&amp;/g, '&');
+        var data = JSON.parse(clean);
+        var streamUrl = decrypt(data); 
+
+        if (streamUrl) {
+            return [{ name: "DiziPal (Çözüldü)", url: streamUrl, quality: 'Auto', provider: 'dizipal' }];
+        } else {
+            debugResults.push({ name: "HATA: Decrypt Başarısız (Link Çözülemedi)", url: "http://0.0.0.0" });
+        }
+
+    } catch (globalE) {
+        debugResults.push({ name: "KRITIK_HATA: " + globalE.message, url: "http://0.0.0.0" });
     }
-    return []; 
+
+    return debugResults; 
 }
 
 function decrypt(data) {
@@ -60,6 +75,4 @@ function decrypt(data) {
     } catch (e) { return null; }
 }
 
-if (typeof module !== 'undefined') {
-    module.exports = { getStreams: getStreams };
-}
+if (typeof module !== 'undefined') module.exports = { getStreams: getStreams };
