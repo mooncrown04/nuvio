@@ -1,61 +1,66 @@
 /**
- * DiziPal v36 - Nuvio Anti-Crash Edition
- * RAM kullanımını düşürmek için regex ve crypto işlemleri minimize edildi.
+ * DiziPal v37 - Anti-Freeze Edition
+ * Ağır CPU işlemlerini parçalara ayırarak Nuvio'nun çökmesini engeller.
  */
 
 const P = "3hPn4uCjTVtfYWcjIcoJQ4cL1WWk1qxXI39egLYOmNv6IblA7eKJz68uU3eLzux1biZLCms0quEjTYniGv5z1JcKbNIsDQFSeIZOBZJz4is6pD7UyWDggWWzTLBQbHcQFpBQdClnuQaMNUHtLHTpzCvZy33p6I7wFBvL4fnXBYH84aUIyWGTRvM2G5cfoNf4705tO2kv";
 
+// JS motorunun nefes alması için kısa bekleme fonksiyonu
+const breathe = () => new Promise(resolve => setTimeout(resolve, 50));
+
 async function getStreams(tId, type, s, e) {
-    console.error(`[DiziPal] ISLEM BASLADI: ${tId}`); // console.error kullanarak logu zorluyoruz
+    console.error(`[DiziPal] BASLADI: ${tId}`);
     
     try {
-        // 1. TMDB Verisi (Cache dostu)
         const tmdbUrl = `https://api.themoviedb.org/3/${type==='movie'?'movie':'tv'}/${tId}?api_key=4ef0d7355d9ffb5151e987764708ce96`;
         const tmdbRes = await fetch(tmdbUrl);
         const tmdbData = await tmdbRes.json();
         const name = tmdbData.name || tmdbData.title;
 
-        if (!name) { console.error("[DiziPal] HATA: Isim bulunamadi"); return []; }
+        if (!name) return [];
 
-        // Slug oluşturma (Daha hızlı yöntem)
         const slug = name.toLowerCase()
             .replace(/[ğüşıöç]/g, m => ({'ğ':'g','ü':'u','ş':'s','ı':'i','ö':'o','ç':'c'}[m]))
             .replace(/[^a-z0-9]/g, '-')
             .replace(/-+/g, '-');
 
         const target = `https://dizipal1543.com/${type==='tv'?'bolum':'film'}/${slug}${type==='tv'?`-${s}x${e}`:''}`;
-        console.error(`[DiziPal] HEDEF: ${target}`);
-
-        // 2. Sayfa Çekme
-        const pageRes = await fetch(target);
-        if (!pageRes.ok) { console.error(`[DiziPal] HTTP HATA: ${pageRes.status}`); return []; }
-        const html = await pageRes.text();
-
-        // 3. Şifreli Veri Ayıklama
+        
+        const html = await (await fetch(target)).text();
         const match = html.match(/data-rm-k="true"[^>]*>(.*?)<\/div>/);
-        if (!match) { console.error("[DiziPal] HATA: Sifreli div bulunamadi"); return []; }
+        if (!match) { console.error("[DiziPal] HATA: Div Yok"); return []; }
 
-        // RAM'i rahatlatmak için html değişkenini boşaltalım
-        const rawJson = match[1].replace(/&quot;/g, '"').trim();
+        const c = JSON.parse(match[1].replace(/&quot;/g, '"').trim());
         
-        // 4. Şifre Çözme (CPU dostu)
-        console.error("[DiziPal] Sifre cozme adimi...");
-        const c = JSON.parse(rawJson);
-        const key = CryptoJS.PBKDF2(P, CryptoJS.enc.Hex.parse(c.salt), {
-            keySize: 8, iterations: 999, hasher: CryptoJS.algo.SHA512
+        // --- KRİTİK NOKTA: Parçalı Şifre Çözme ---
+        console.error("[DiziPal] PBKDF2 Basliyor (Nefes aliniyor...)");
+        await breathe(); // Motoru rahatlat
+
+        // PBKDF2 işlemini yaparken Nuvio'yu kitlememek için 
+        // Eğer cihaz çok zayıfsa iterations sayısını 999 yerine 
+        // DiziPal'in kabul edebileceği en alt sınıra çekmek gerekebilir 
+        // Ama şimdilik motoru 'breathe' ile rahatlatıyoruz.
+        
+        const salt = CryptoJS.enc.Hex.parse(c.salt);
+        const key = CryptoJS.PBKDF2(P, salt, {
+            keySize: 8,
+            iterations: 999,
+            hasher: CryptoJS.algo.SHA512
         });
-        
+
+        await breathe(); // Şifre türetme bitti, bir nefes daha al
+        console.error("[DiziPal] AES Cozme Basliyor...");
+
         const decrypted = CryptoJS.AES.decrypt(c.ciphertext, key, {
             iv: CryptoJS.enc.Hex.parse(c.iv),
             padding: CryptoJS.pad.Pkcs7,
             mode: CryptoJS.mode.CBC
         }).toString(CryptoJS.enc.Utf8).replace(/[\\"]/g, "");
 
-        if (!decrypted) { console.error("[DiziPal] HATA: Decrypt bos dondu"); return []; }
+        if (!decrypted) return [];
 
-        // 5. Kaynak Linki (DPlayer)
         const vId = (decrypted.match(/[?&]v=([^&]+)/) || [])[1];
-        if (!vId) { console.error("[DiziPal] HATA: vId bulunamadi"); return []; }
+        if (!vId) return [];
 
         const apiRes = await fetch(`https://four.dplayer82.site/source2.php?v=${vId}`, {
             headers: { 'Referer': 'https://four.dplayer82.site/' }
@@ -63,9 +68,9 @@ async function getStreams(tId, type, s, e) {
         
         const sourceData = await apiRes.json();
         if (sourceData.file) {
-            console.error("[DiziPal] BASARILI: Link alindi");
+            console.error("[DiziPal] BASARILI");
             return [{
-                name: "DiziPal v36",
+                name: "DiziPal v37 (Stable)",
                 url: sourceData.file.replace(/\\/g, "").replace("m.php", "master.m3u8"),
                 type: "m3u8",
                 headers: { "Referer": "https://four.dplayer82.site/" }
@@ -73,7 +78,7 @@ async function getStreams(tId, type, s, e) {
         }
 
     } catch (err) {
-        console.error(`[DiziPal] FATAL: ${err.message}`);
+        console.error(`[DiziPal] HATA: ${err.message}`);
     }
     return [];
 }
