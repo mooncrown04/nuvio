@@ -1,22 +1,13 @@
 /**
- * Nuvio Hibrit Scraper - v4.0 (Zırhlı & Kesin Dizi Çıkışı)
- * Kısıtlamalar: async/await YASAK, Promise zorunlu.
+ * Nuvio Scraper - v4.1 (Minimalist & Array Fix)
  */
 
 var cheerio = require("cheerio-without-node-native");
 
-const WORKING_HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Accept': 'application/json, text/plain, */*',
-    'Referer': 'https://www.dizixo.com/',
-    'Origin': 'https://www.dizixo.com',
-    'X-Requested-With': 'XMLHttpRequest'
-};
-
 function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
     return new Promise(function(resolve, reject) {
-        // ÇIKIŞ GARANTİSİ: Ne olursa olsun bu değişken bir dizi (Array) kalacak.
-        var streamsResult = []; 
+        // Çıkış değişkenini en başta boş dizi yapıyoruz
+        var results = []; 
         var isMovie = mediaType === 'movie';
 
         var tmdbUrl = 'https://api.themoviedb.org/3/' + (isMovie ? 'movie' : 'tv') + '/' + tmdbId + '?language=tr-TR&api_key=4ef0d7355d9ffb5151e987764708ce96';
@@ -25,73 +16,61 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
             .then(function(res) { return res.json(); })
             .then(function(data) {
                 var query = data.title || data.name;
+                // Dizixo API
                 var searchUrl = 'https://www.dizixo.com/api?action=search&q=' + encodeURIComponent(query);
                 
-                return fetch(searchUrl, { headers: WORKING_HEADERS })
-                    .then(function(res) { return res.json(); })
-                    .then(function(json) {
-                        return { results: json, title: query };
-                    });
+                return fetch(searchUrl, { 
+                    headers: { 'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json' } 
+                })
+                .then(function(res) { return res.json(); })
+                .then(function(json) {
+                    return { results: json, title: query };
+                });
             })
-            .then(function(searchResult) {
+            .then(function(searchObj) {
                 var targetId = "";
-                var apiData = [];
+                var items = [];
 
-                // 1. JSON PARSE GÜVENLİĞİ
-                var raw = searchResult.results;
-                if (Array.isArray(raw)) {
-                    apiData = raw;
-                } else if (raw && raw.data && Array.isArray(raw.data)) {
-                    apiData = raw.data;
-                } else if (raw && typeof raw === 'object') {
-                    apiData = [raw]; // Tekil objeyi diziye zorla
-                }
+                // 1. JSON Listesi Kontrolü
+                if (Array.isArray(searchObj.results)) items = searchObj.results;
+                else if (searchObj.results && searchObj.results.data) items = searchObj.results.data;
+                else if (typeof searchObj.results === 'object') items = [searchObj.results];
 
-                // 2. EŞLEŞME (Katil Makine - 1265609)
-                var cleanSearch = (searchResult.title || "").toLowerCase().trim();
-                for (var i = 0; i < apiData.length; i++) {
-                    var item = apiData[i];
-                    var itemTitle = (item.title || item.name || "").toLowerCase().trim();
-                    
-                    if (itemTitle.indexOf(cleanSearch) !== -1 || item.id == "1265609") {
-                        targetId = item.id || item.movie_id;
+                // 2. ID Bulma (Katil Makine: 1265609)
+                for (var i = 0; i < items.length; i++) {
+                    var it = items[i];
+                    var title = (it.title || it.name || "").toLowerCase();
+                    if (title.indexOf(searchObj.title.toLowerCase()) !== -1 || it.id == "1265609") {
+                        targetId = it.id;
                         break;
                     }
                 }
 
-                // ID Bulunamazsa GÜVENLİ ÇIKIŞ (Boş dizi döndürerek)
-                if (!targetId) {
-                    console.log("Dizixo: Eslesme yok.");
-                    return resolve([]); 
-                }
+                if (!targetId) return resolve([]); 
 
-                // 3. YAYIN ALMA
+                // 3. Yayın Alma
                 var streamUrl = 'https://www.dizixo.com/api?action=getStream&id=' + targetId;
                 if (!isMovie) streamUrl += '&season=' + seasonNum + '&episode=' + episodeNum;
 
-                return fetch(streamUrl, { headers: WORKING_HEADERS })
+                return fetch(streamUrl)
                     .then(function(res) { return res.json(); })
-                    .then(function(streamJson) {
-                        var videoUrl = streamJson.url || (streamJson.data && streamJson.data.url) || streamJson.link;
+                    .then(function(sJson) {
+                        var link = sJson.url || (sJson.data && sJson.data.url) || sJson.link;
 
-                        if (videoUrl) {
-                            streamsResult.push({
-                                name: "Dizixo HQ",
-                                title: searchResult.title,
-                                url: videoUrl,
-                                quality: "1080p",
-                                headers: WORKING_HEADERS,
-                                provider: "Dizixo"
+                        if (link) {
+                            // En sade obje yapısı (Java'nın anlaması için en güvenlisi)
+                            results.push({
+                                name: "Dizixo",
+                                title: searchObj.title,
+                                url: link,
+                                quality: "1080p"
                             });
                         }
-                        // BAŞARILI SONUÇ
-                        resolve(streamsResult);
-                    })
-                    .catch(function() { resolve([]); }); // Stream fetch hatası
+                        resolve(results);
+                    });
             })
-            .catch(function(err) {
-                console.error('Kritik Hata:', err.message);
-                // ASLA REJECT ETME: Java tarafı reject edildiğinde de bu hatayı verebilir.
+            .catch(function() {
+                // Hata olsa dahi boş dizi [] döndür, asla obje {} döndürme!
                 resolve([]); 
             });
     });
