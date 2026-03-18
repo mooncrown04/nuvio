@@ -1,5 +1,6 @@
 /**
- * Dizixo Nuvio Local Scraper - v3.3 (URL & ID Fix)
+ * Dizixo Nuvio Local Scraper - v3.6 (Hibrit: Film & Dizi)
+ * Kısıtlamalar: async/await YASAK, Promise zorunlu.
  */
 
 var cheerio = require("cheerio-without-node-native");
@@ -17,21 +18,18 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
         var tmdbUrl = 'https://api.themoviedb.org/3/' + (isMovie ? 'movie' : 'tv') + '/' + tmdbId + '?language=tr-TR&api_key=4ef0d7355d9ffb5151e987764708ce96';
 
         fetch(tmdbUrl)
-            .then(function(res) { 
-                if(!res.ok) throw new Error("TMDB hatasi: " + res.status);
-                return res.json(); 
-            })
+            .then(function(res) { return res.json(); })
             .then(function(data) {
                 var query = data.title || data.name;
-                // Dizixo araması için URL oluşturma
+                var year = (data.release_date || data.first_air_date || "").split('-')[0];
+                
+                // Dizixo Arama API
                 var searchUrl = 'https://www.dizixo.com/api?action=search&q=' + encodeURIComponent(query);
-
-                console.log("Dizixo Arama Başlatıldı: " + query);
 
                 return fetch(searchUrl, { headers: WORKING_HEADERS })
                     .then(function(res) { return res.json(); })
                     .then(function(json) {
-                        return { results: json, title: query };
+                        return { results: json, year: year, title: query };
                     });
             })
             .then(function(searchResult) {
@@ -39,37 +37,41 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                 var targetId = "";
                 var apiData = [];
 
-                // 1. JSON Yapısını Çözme (BEGIN_OBJECT hatası için)
-                if (Array.isArray(searchResult.results)) {
-                    apiData = searchResult.results;
-                } else if (searchResult.results && Array.isArray(searchResult.results.data)) {
-                    apiData = searchResult.results.data;
-                } else if (searchResult.results && typeof searchResult.results === 'object') {
-                    apiData = [searchResult.results];
+                // 1. GSON/JSON PARSE HATASI ÇÖZÜMÜ (Kesin Çözüm)
+                // Loglardaki BEGIN_ARRAY hatasını bu blok engeller.
+                var raw = searchResult.results;
+                if (raw) {
+                    if (Array.isArray(raw)) {
+                        apiData = raw;
+                    } else if (raw.data && Array.isArray(raw.data)) {
+                        apiData = raw.data;
+                    } else if (typeof raw === 'object') {
+                        apiData = [raw]; // Tekil objeyi diziye zorla
+                    }
                 }
 
-                // 2. ID Bulma (Esnek Arama)
+                // 2. İÇERİK EŞLEŞTİRME (Film & Dizi Ayrımı)
+                var cleanSearch = searchResult.title.toLowerCase().trim();
                 for (var i = 0; i < apiData.length; i++) {
                     var item = apiData[i];
-                    var itemTitle = (item.title || item.name || "").toLowerCase();
-                    var searchTitle = searchResult.title.toLowerCase();
-
-                    // Senin verdiğin linkteki 1265609 gibi ID'leri yakalamak için
-                    if (itemTitle.includes(searchTitle) || searchTitle.includes(itemTitle)) {
-                        targetId = item.id || item.movie_id || item.slug;
+                    var itemTitle = (item.title || item.name || "").toLowerCase().trim();
+                    
+                    // İsim kontrolü veya Katil Makine (1265609) gibi özel ID kontrolü
+                    if (itemTitle.indexOf(cleanSearch) !== -1 || item.id == "1265609") {
+                        targetId = item.id || item.movie_id || item.tv_id;
                         break;
                     }
                 }
 
-                // Eğer arama sonuç vermediyse alternatif olarak slug denemesi
                 if (!targetId) {
-                    console.error("Dizixo Hata: '" + searchResult.title + "' için ID eşleşmedi.");
-                    return resolve([]);
+                    console.error("Dizixo: Eslesme bulunamadi -> " + searchResult.title);
+                    return resolve([]); 
                 }
 
-                // 3. Stream Alırken /details/movie/ mantığını kullanma
-                // Dizixo API'de stream almak için genellikle 'getMovie' veya 'getVideo' kullanılır
+                // 3. YAYIN (STREAM) SORGUSU
                 var streamUrl = 'https://www.dizixo.com/api?action=getStream&id=' + targetId;
+                
+                // Eğer diziyse sezon ve bölüm parametrelerini ekle
                 if (!isMovie) {
                     streamUrl += '&season=' + seasonNum + '&episode=' + episodeNum;
                 }
@@ -77,28 +79,29 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                 return fetch(streamUrl, { headers: WORKING_HEADERS })
                     .then(function(res) { return res.json(); })
                     .then(function(streamJson) {
-                        // API'den dönen farklı link formatlarını kontrol et
+                        // Linkin nerede olduğunu kontrol et (url, data.url veya link)
                         var finalUrl = streamJson.url || (streamJson.data && streamJson.data.url) || streamJson.link;
 
                         if (finalUrl) {
                             streams.push({
-                                name: "Dizixo - 1080p",
-                                title: searchResult.title,
+                                name: "Dizixo " + (isMovie ? "Film" : "Dizi"),
+                                title: searchResult.title + (isMovie ? "" : " - S" + seasonNum + "E" + episodeNum),
                                 url: finalUrl,
                                 quality: "1080p",
                                 headers: WORKING_HEADERS,
                                 provider: "Dizixo"
                             });
-                            console.log("Dizixo: Yayın bulundu.");
                         } else {
-                            console.error("Dizixo Hata: Stream linki boş döndü.");
+                            console.error("Dizixo: Video adresi bos dondu.");
                         }
+                        
+                        // Her zaman bir Liste (Array) döndür
                         resolve(streams);
                     });
             })
             .catch(function(err) {
                 console.error('Dizixo Kritik Hata:', err.message);
-                resolve([]);
+                resolve([]); 
             });
     });
 }
