@@ -1,48 +1,58 @@
 var cheerio = require("cheerio-without-node-native");
 
 async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
-    var debugResults = [];
-
     try {
         var isMovie = mediaType === 'movie' || mediaType === 'film';
         var tmdbUrl = "https://api.themoviedb.org/3/" + (isMovie ? "movie" : "tv") + "/" + tmdbId + "?api_key=4ef0d7355d9ffb5151e987764708ce96&language=tr-TR";
         
-        // TMDB KONTROL
-        var tmdbRes = await fetch(tmdbUrl).catch(function(e) { return { error: "AĞ_HATASI_TMDB" }; });
-        if (tmdbRes.error) return [{ name: "HATA: TMDB'ye bağlanamadı", url: "http://error.com" }];
+        var tmdbRes = await fetch(tmdbUrl).catch(function() { return null; });
+        if (!tmdbRes) return [{ name: "ADIM 1: TMDB Baglantisi Yok", url: "http://error.com" }];
 
-        var tmdbData = await tmdbRes.json().catch(function() { return {}; });
+        var tmdbData = await tmdbRes.json();
         var title = tmdbData.title || tmdbData.name;
-        if (!title) return [{ name: "HATA: Film adı TMDB'den alınamadı", url: "http://error.com" }];
+        
+        // Slug temizliği (DiziPal formatı)
+        var slug = title.toLowerCase()
+            .replace(/ç/g,'c').replace(/ğ/g,'g').replace(/ş/g,'s').replace(/ı/g,'i').replace(/ö/g,'o').replace(/ü/g,'u')
+            .replace(/[^a-z0-9\s-]/g,'').replace(/\s+/g,'-').trim();
 
-        var slug = title.toLowerCase().replace(/ç/g,'c').replace(/ğ/g,'g').replace(/ş/g,'s').replace(/ı/g,'i').replace(/ö/g,'o').replace(/ü/g,'u').replace(/[^a-z0-9\s-]/g,'').replace(/\s+/g,'-').trim();
-        var url = "https://dizipal1227.com/" + (isMovie ? "film/" : "dizi/") + slug + (isMovie ? "" : "/sezon-" + seasonNum + "/bolum-" + episodeNum);
+        var targetUrl = "https://dizipal1227.com/" + (isMovie ? "film/" : "dizi/") + slug + (isMovie ? "" : "/sezon-" + seasonNum + "/bolum-" + episodeNum);
 
-        // SİTE BAĞLANTI KONTROL
-        var res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' } }).catch(function(e) { 
-            return { error: "SSL_VEYA_BAGLANTI_HATASI" }; 
-        });
+        // ASIL KRİTİK NOKTA: Siteye gidiş
+        var res = await fetch(targetUrl, { 
+            headers: { 
+                'User-Agent': 'Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36',
+                'Referer': 'https://dizipal1227.com/'
+            } 
+        }).catch(function(e) { return { error: e.message }; });
 
-        if (res.error) return [{ name: "HATA: Siteye ulaşılamıyor (SSL/Engel)", url: "http://error.com" }];
-        if (!res.ok) return [{ name: "HATA: Site 404/Hata döndürdü", url: "http://error.com" }];
+        if (res.error) return [{ name: "ADIM 2: SSL/Sertifika Hatasi", url: "http://error.com" }];
+        
+        var html = await res.text();
+        
+        // Log yerine isimde gösteriyoruz
+        if (html.includes("Cloudflare") || html.includes("Ray ID")) {
+            return [{ name: "ADIM 3: Cloudflare Engeli (Bot)", url: "http://error.com" }];
+        }
 
-        var html = await res.text().catch(function() { return ""; });
         var m = html.match(/\{&quot;ciphertext&quot;:.*?&quot;\}/) || html.match(/\{"ciphertext":.*?"\}/);
         
-        if (!m) return [{ name: "HATA: Kaynak kodda video verisi yok", url: "http://error.com" }];
+        if (!m) {
+            // Ciphertext yoksa sayfa içeriğine dair ipucu ver
+            var hint = html.length > 100 ? "Sayfa Yuklendi ama Video Yok" : "Sayfa Bos Dondu";
+            return [{ name: "ADIM 4: " + hint, url: "http://error.com" }];
+        }
 
-        var clean = m[0].replace(/&quot;/g, '"').replace(/&amp;/g, '&');
-        var data = JSON.parse(clean);
-        var streamUrl = decrypt(data); 
+        var streamUrl = decrypt(JSON.parse(m[0].replace(/&quot;/g, '"').replace(/&amp;/g, '&'))); 
 
         if (streamUrl) {
             return [{ name: "DiziPal: " + title, url: streamUrl, quality: 'Auto', provider: 'dizipal' }];
         } else {
-            return [{ name: "HATA: Şifre çözme (Decrypt) başarısız", url: "http://error.com" }];
+            return [{ name: "ADIM 5: Sifre Cozulemedi (Key Yanlis)", url: "http://error.com" }];
         }
 
     } catch (e) {
-        return [{ name: "KRİTİK HATA: " + e.message.substring(0, 20), url: "http://error.com" }];
+        return [{ name: "HATA: " + e.message.substring(0, 15), url: "http://error.com" }];
     }
 }
 
