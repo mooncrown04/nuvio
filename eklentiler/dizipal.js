@@ -1,86 +1,107 @@
 /**
- * DiziPal v37 - Anti-Freeze Edition
- * Ağır CPU işlemlerini parçalara ayırarak Nuvio'nun çökmesini engeller.
+ * DiziPal Nuvio Local Scraper
+ * Mimari: SineWix/DiziYou uyumlu Promise yapısı.
+ * Kısıtlama: async/await kullanılmamıştır.
  */
 
-const P = "3hPn4uCjTVtfYWcjIcoJQ4cL1WWk1qxXI39egLYOmNv6IblA7eKJz68uU3eLzux1biZLCms0quEjTYniGv5z1JcKbNIsDQFSeIZOBZJz4is6pD7UyWDggWWzTLBQbHcQFpBQdClnuQaMNUHtLHTpzCvZy33p6I7wFBvL4fnXBYH84aUIyWGTRvM2G5cfoNf4705tO2kv";
+var cheerio = require("cheerio-without-node-native");
 
-// JS motorunun nefes alması için kısa bekleme fonksiyonu
-const breathe = () => new Promise(resolve => setTimeout(resolve, 50));
+var BASE_URL = 'https://dizipal1543.com'; // Güncel adresi buradan değiştirin
+var CRYPTO_P = "3hPn4uCjTVtfYWcjIcoJQ4cL1WWk1qxXI39egLYOmNv6IblA7eKJz68uU3eLzux1biZLCms0quEjTYniGv5z1JcKbNIsDQFSeIZOBZJz4is6pD7UyWDggWWzTLBQbHcQFpBQdClnuQaMNUHtLHTpzCvZy33p6I7wFBvL4fnXBYH84aUIyWGTRvM2G5cfoNf4705tO2kv";
 
-async function getStreams(tId, type, s, e) {
-    console.error(`[DiziPal] BASLADI: ${tId}`);
-    
-    try {
-        const tmdbUrl = `https://api.themoviedb.org/3/${type==='movie'?'movie':'tv'}/${tId}?api_key=4ef0d7355d9ffb5151e987764708ce96`;
-        const tmdbRes = await fetch(tmdbUrl);
-        const tmdbData = await tmdbRes.json();
-        const name = tmdbData.name || tmdbData.title;
+var HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+    'Referer': BASE_URL + '/'
+};
 
-        if (!name) return [];
+function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
+    return new Promise(function(resolve, reject) {
+        var isMovie = mediaType === 'movie';
+        var tmdbUrl = 'https://api.themoviedb.org/3/' + (isMovie ? 'movie' : 'tv') + '/' + tmdbId + '?language=tr-TR&api_key=4ef0d7355d9ffb5151e987764708ce96';
 
-        const slug = name.toLowerCase()
-            .replace(/[ğüşıöç]/g, m => ({'ğ':'g','ü':'u','ş':'s','ı':'i','ö':'o','ç':'c'}[m]))
-            .replace(/[^a-z0-9]/g, '-')
-            .replace(/-+/g, '-');
+        console.log('[DiziPal] Başlatılıyor ID:', tmdbId);
 
-        const target = `https://dizipal1543.com/${type==='tv'?'bolum':'film'}/${slug}${type==='tv'?`-${s}x${e}`:''}`;
-        
-        const html = await (await fetch(target)).text();
-        const match = html.match(/data-rm-k="true"[^>]*>(.*?)<\/div>/);
-        if (!match) { console.error("[DiziPal] HATA: Div Yok"); return []; }
+        fetch(tmdbUrl)
+            .then(function(res) { return res.json(); })
+            .then(function(data) {
+                var title = data.title || data.name;
+                if (!title) throw new Error('TMDB ismi bulunamadı');
 
-        const c = JSON.parse(match[1].replace(/&quot;/g, '"').trim());
-        
-        // --- KRİTİK NOKTA: Parçalı Şifre Çözme ---
-        console.error("[DiziPal] PBKDF2 Basliyor (Nefes aliniyor...)");
-        await breathe(); // Motoru rahatlat
+                // Türkçe karakter temizleme (Slug Oluşturma)
+                var slug = title.toLowerCase()
+                    .replace(/[ğ]/g, 'g').replace(/[ü]/g, 'u').replace(/[ş]/g, 's')
+                    .replace(/[ı]/g, 'i').replace(/[ö]/g, 'o').replace(/[ç]/g, 'c')
+                    .replace(/[^a-z0-9]/g, '-').replace(/-+/g, '-');
 
-        // PBKDF2 işlemini yaparken Nuvio'yu kitlememek için 
-        // Eğer cihaz çok zayıfsa iterations sayısını 999 yerine 
-        // DiziPal'in kabul edebileceği en alt sınıra çekmek gerekebilir 
-        // Ama şimdilik motoru 'breathe' ile rahatlatıyoruz.
-        
-        const salt = CryptoJS.enc.Hex.parse(c.salt);
-        const key = CryptoJS.PBKDF2(P, salt, {
-            keySize: 8,
-            iterations: 999,
-            hasher: CryptoJS.algo.SHA512
-        });
+                var targetPath = isMovie ? '/film/' + slug : '/bolum/' + slug + '-' + seasonNum + 'x' + episodeNum;
+                var targetUrl = BASE_URL + targetPath;
+                
+                console.log('[DiziPal] Hedef URL:', targetUrl);
+                return fetch(targetUrl, { headers: HEADERS });
+            })
+            .then(function(res) { return res.text(); })
+            .then(function(html) {
+                // Şifreli veriyi ayıkla
+                var match = html.match(/data-rm-k="true"[^>]*>(.*?)<\/div>/);
+                if (!match) {
+                    console.log('[DiziPal] Şifreli içerik bulunamadı (Bölüm henüz eklenmemiş olabilir).');
+                    return resolve([]);
+                }
 
-        await breathe(); // Şifre türetme bitti, bir nefes daha al
-        console.error("[DiziPal] AES Cozme Basliyor...");
+                var encryptedData = JSON.parse(match[1].replace(/&quot;/g, '"').trim());
+                
+                // PBKDF2 ve AES İşlemi (Blocking ama setTimeout hatası vermez)
+                console.log('[DiziPal] Şifre çözülüyor...');
+                var salt = CryptoJS.enc.Hex.parse(encryptedData.salt);
+                var iv = CryptoJS.enc.Hex.parse(encryptedData.iv);
+                
+                var key = CryptoJS.PBKDF2(CRYPTO_P, salt, {
+                    keySize: 8,
+                    iterations: 999,
+                    hasher: CryptoJS.algo.SHA512
+                });
 
-        const decrypted = CryptoJS.AES.decrypt(c.ciphertext, key, {
-            iv: CryptoJS.enc.Hex.parse(c.iv),
-            padding: CryptoJS.pad.Pkcs7,
-            mode: CryptoJS.mode.CBC
-        }).toString(CryptoJS.enc.Utf8).replace(/[\\"]/g, "");
+                var decrypted = CryptoJS.AES.decrypt(encryptedData.ciphertext, key, {
+                    iv: iv,
+                    padding: CryptoJS.pad.Pkcs7,
+                    mode: CryptoJS.mode.CBC
+                }).toString(CryptoJS.enc.Utf8).replace(/[\\"]/g, "");
 
-        if (!decrypted) return [];
+                var videoIdMatch = decrypted.match(/[?&]v=([^&]+)/);
+                if (!videoIdMatch) return resolve([]);
 
-        const vId = (decrypted.match(/[?&]v=([^&]+)/) || [])[1];
-        if (!vId) return [];
+                var videoId = videoIdMatch[1];
+                var apiUrl = 'https://four.dplayer82.site/source2.php?v=' + videoId;
 
-        const apiRes = await fetch(`https://four.dplayer82.site/source2.php?v=${vId}`, {
-            headers: { 'Referer': 'https://four.dplayer82.site/' }
-        });
-        
-        const sourceData = await apiRes.json();
-        if (sourceData.file) {
-            console.error("[DiziPal] BASARILI");
-            return [{
-                name: "DiziPal v37 (Stable)",
-                url: sourceData.file.replace(/\\/g, "").replace("m.php", "master.m3u8"),
-                type: "m3u8",
-                headers: { "Referer": "https://four.dplayer82.site/" }
-            }];
-        }
-
-    } catch (err) {
-        console.error(`[DiziPal] HATA: ${err.message}`);
-    }
-    return [];
+                return fetch(apiUrl, { headers: { 'Referer': 'https://four.dplayer82.site/' } });
+            })
+            .then(function(res) { return res.json(); })
+            .then(function(source) {
+                if (source && source.file) {
+                    var finalUrl = source.file.replace(/\\/g, "").replace("m.php", "master.m3u8");
+                    
+                    resolve([{
+                        name: '⌜ DiziPal ⌟',
+                        url: finalUrl,
+                        quality: 'Auto',
+                        headers: { 'Referer': 'https://four.dplayer82.site/' },
+                        provider: 'dizipal'
+                    }]);
+                } else {
+                    resolve([]);
+                }
+            })
+            .catch(function(err) {
+                console.error('[DiziPal] Hata:', err.message);
+                resolve([]);
+            });
+    });
 }
 
-globalThis.getStreams = getStreams;
+// Nuvio Export Yapısı
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = { getStreams: getStreams };
+} else {
+    global.getStreams = getStreams;
+}
