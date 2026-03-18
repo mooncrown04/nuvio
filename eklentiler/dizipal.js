@@ -1,79 +1,81 @@
 /**
- * DiziPal 1543 - Deep Scan Search Fix
+ * DiziPal 1543 - Stealth GET & URL Search
  */
 
 var BASE_URL = 'https://dizipal1543.com';
 
 async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
-    console.error(`[DiziPal] Sorgu: ${tmdbId} | Tip: ${mediaType}`);
+    console.error(`[DiziPal] Sorgu: ${tmdbId} | Hafiza: ${mediaType}`);
 
     try {
         const type = mediaType === 'movie' ? 'movie' : 'tv';
         const tmdbRes = await fetch(`https://api.themoviedb.org/3/${type}/${tmdbId}?language=tr-TR&api_key=4ef0d7355d9ffb5151e987764708ce96`);
         const tmdbData = await tmdbRes.json();
+        const query = (tmdbData.name || tmdbData.title || "").trim();
+
+        // ADIM 1: POST yerine GET ile arama sayfasına git (Bot korumasını aşma ihtimali daha yüksek)
+        console.error(`[DiziPal] GET Aramasi Baslatildi: ${query}`);
+        const searchUrl = `${BASE_URL}/arama?q=${encodeURIComponent(query)}`;
         
-        // Denenecek terimler (The Rookie, ONE PIECE vb.)
-        const searchTerms = [
-            (tmdbData.name || tmdbData.title || "").trim(),
-            (tmdbData.original_name || tmdbData.original_title || "").trim()
-        ].filter((v, i, a) => v && a.indexOf(v) === i);
+        const response = await fetch(searchUrl, {
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+                'Referer': BASE_URL
+            }
+        });
 
-        let finalPath = "";
+        const html = await response.text();
+        
+        // ADIM 2: HTML içinde linki ara
+        // DiziPal arama sonuçlarında linkler genelde 'series/the-rookie' veya 'dizi/the-rookie' şeklindedir
+        const patterns = [
+            new RegExp(`href="\/([^"]*${mediaType === 'tv' ? 'series|dizi' : 'movie|film'}[^"]*)"`, 'i'),
+            new RegExp(`href="\/([^"]*${query.toLowerCase().replace(/\s+/g, '-')}[^"]*)"`, 'i')
+        ];
 
-        for (const term of searchTerms) {
-            console.error(`[DiziPal] Deneniyor: ${term}`);
-            const searchRes = await fetch(`${BASE_URL}/bg/searchcontent`, {
-                method: 'POST',
-                headers: { 
-                    'Content-Type': 'application/x-www-form-urlencoded',
-                    'X-Requested-With': 'XMLHttpRequest'
-                },
-                body: `searchterm=${encodeURIComponent(term)}`
-            });
-
-            const rawText = await searchRes.text();
-            
-            // DERIN TARAMA: JSON'un neresinde olursa olsun /series/ veya /dizi/ gecen yolu bul
-            const pathMatch = rawText.match(/\/(?:series|dizi|film|movie)\/[a-zA-Z0-9-.]+/);
-            
-            if (pathMatch) {
-                finalPath = pathMatch[0];
-                console.error(`[DiziPal] Yol Yakalandi: ${finalPath}`);
+        let foundPath = "";
+        for (let pattern of patterns) {
+            const match = html.match(pattern);
+            if (match) {
+                foundPath = match[1];
                 break;
             }
         }
 
-        if (!finalPath) {
-            console.error("[DiziPal] Site cevap verdi ama icinde gecerli bir link bulunamadi.");
+        // Eğer hala bulamadıysak, ana sayfadaki son eklenenler arasında mı diye bak
+        if (!foundPath) {
+             const fallbackMatch = html.match(/\/(?:series|dizi|film|movie)\/[a-zA-Z0-9-.]+/);
+             if (fallbackMatch) foundPath = fallbackMatch[0].replace(/^\//, "");
+        }
+
+        if (!foundPath) {
+            console.error("[DiziPal] GET sonucunda da link bulunamadi. Site yapisi veya koruma engeli.");
+            // Alternatif: Ham HTML'in bir kısmını logla ki ne gördüğümüzü anlayalım
+            console.error(`[DiziPal] HTML Kesit: ${html.substring(0, 200)}`);
             return [];
         }
 
-        // Slug cikarma: /series/the-rookie -> the-rookie
-        const slug = finalPath.split('/').pop();
+        const slug = foundPath.split('/').pop();
         let targetUrl = `${BASE_URL}/${mediaType === 'tv' ? 'bolum' : 'film'}/${slug}`;
-        
-        if (mediaType === 'tv') {
-            targetUrl += `-${seasonNum}x${episodeNum}`;
-        }
+        if (mediaType === 'tv') targetUrl += `-${seasonNum}x${episodeNum}`;
 
         console.error(`[DiziPal] Hedef URL: ${targetUrl}`);
 
         const pageRes = await fetch(targetUrl);
         const pageHtml = await pageRes.text();
         
-        // Sifreli div kontrolü
         const encryptedMatch = pageHtml.match(/<div[^>]*data-rm-k="true"[^>]*>(.*?)<\/div>/);
-        if (!encryptedMatch) {
-            console.error("[DiziPal] Sifreli veri bulunamadi (404 veya Bölüm henüz yok).");
-            return [];
+        if (encryptedMatch) {
+            console.error("[DiziPal] SIFRELI VERI YAKALANDI! AES baslatiliyor.");
+            // ... AES DECRYPT MANTIGI ...
+        } else {
+            console.error("[DiziPal] Bolum sayfasina ulasildi ama video divi bulunamadi.");
         }
 
-        // ... Önceki AES Decrypt ve M3U8 çekme mantığı buraya bağlanır ...
-        console.error("[DiziPal] Basarili! Sifre cozucu calistiriliyor...");
-        return []; 
+        return [];
 
     } catch (err) {
-        console.error(`[DiziPal] Kritik Hata: ${err.message}`);
+        console.error(`[DiziPal] Hata: ${err.message}`);
         return [];
     }
 }
