@@ -1,11 +1,42 @@
 /**
- * DiziPal 1543 - Stealth GET & URL Search
+ * DiziPal 1543 - Full Functional Plugin
+ * Powered by MoonCrown Fix
  */
 
-var BASE_URL = 'https://dizipal1543.com';
+const BASE_URL = 'https://dizipal1543.com';
+const PASSPHRASE = "3hPn4uCjTVtfYWcjIcoJQ4cL1WWk1qxXI39egLYOmNv6IblA7eKJz68uU3eLzux1biZLCms0quEjTYniGv5z1JcKbNIsDQFSeIZOBZJz4is6pD7UyWDggWWzTLBQbHcQFpBQdClnuQaMNUHtLHTpzCvZy33p6I7wFBvL4fnXBYH84aUIyWGTRvM2G5cfoNf4705tO2kv";
+
+// AES Sifre Cozucu Fonksiyon
+function decryptData(rawJson) {
+    try {
+        const ct = rawJson.match(/"ciphertext"\s*:\s*"([^"]+)"/)?.[1];
+        const ivHex = rawJson.match(/"iv"\s*:\s*"([^"]+)"/)?.[1];
+        const saltHex = rawJson.match(/"salt"\s*:\s*"([^"]+)"/)?.[1];
+
+        if (!ct || !ivHex || !saltHex) return null;
+
+        const salt = CryptoJS.enc.Hex.parse(saltHex);
+        const iv = CryptoJS.enc.Hex.parse(ivHex);
+        const key = CryptoJS.PBKDF2(PASSPHRASE, salt, {
+            keySize: 256 / 32,
+            iterations: 999,
+            hasher: CryptoJS.algo.SHA512
+        });
+
+        const decrypted = CryptoJS.AES.decrypt(ct, key, {
+            iv: iv,
+            padding: CryptoJS.pad.Pkcs7,
+            mode: CryptoJS.mode.CBC
+        });
+
+        return decrypted.toString(CryptoJS.enc.Utf8).replace(/\\/g, "");
+    } catch (e) {
+        return null;
+    }
+}
 
 async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
-    console.error(`[DiziPal] Sorgu: ${tmdbId} | Hafiza: ${mediaType}`);
+    console.error(`[DiziPal] Sorgu: ${tmdbId} | Sezon: ${seasonNum} | Bolum: ${episodeNum}`);
 
     try {
         const type = mediaType === 'movie' ? 'movie' : 'tv';
@@ -13,66 +44,65 @@ async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
         const tmdbData = await tmdbRes.json();
         const query = (tmdbData.name || tmdbData.title || "").trim();
 
-        // ADIM 1: POST yerine GET ile arama sayfasına git (Bot korumasını aşma ihtimali daha yüksek)
-        console.error(`[DiziPal] GET Aramasi Baslatildi: ${query}`);
+        // 1. Arama Yap ve Slug Bul
         const searchUrl = `${BASE_URL}/arama?q=${encodeURIComponent(query)}`;
-        
-        const response = await fetch(searchUrl, {
-            headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-                'Referer': BASE_URL
-            }
+        const searchRes = await fetch(searchUrl, {
+            headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36' }
         });
-
-        const html = await response.text();
+        const searchHtml = await searchRes.text();
         
-        // ADIM 2: HTML içinde linki ara
-        // DiziPal arama sonuçlarında linkler genelde 'series/the-rookie' veya 'dizi/the-rookie' şeklindedir
-        const patterns = [
-            new RegExp(`href="\/([^"]*${mediaType === 'tv' ? 'series|dizi' : 'movie|film'}[^"]*)"`, 'i'),
-            new RegExp(`href="\/([^"]*${query.toLowerCase().replace(/\s+/g, '-')}[^"]*)"`, 'i')
-        ];
+        const pathMatch = searchHtml.match(new RegExp(`href="\/([^"]*${mediaType === 'tv' ? 'series|dizi' : 'movie|film'}[^"]*)"`, 'i'));
+        let slug = pathMatch ? pathMatch[1].split('/').pop() : query.toLowerCase().replace(/\s+/g, '-');
 
-        let foundPath = "";
-        for (let pattern of patterns) {
-            const match = html.match(pattern);
-            if (match) {
-                foundPath = match[1];
-                break;
-            }
-        }
-
-        // Eğer hala bulamadıysak, ana sayfadaki son eklenenler arasında mı diye bak
-        if (!foundPath) {
-             const fallbackMatch = html.match(/\/(?:series|dizi|film|movie)\/[a-zA-Z0-9-.]+/);
-             if (fallbackMatch) foundPath = fallbackMatch[0].replace(/^\//, "");
-        }
-
-        if (!foundPath) {
-            console.error("[DiziPal] GET sonucunda da link bulunamadi. Site yapisi veya koruma engeli.");
-            // Alternatif: Ham HTML'in bir kısmını logla ki ne gördüğümüzü anlayalım
-            console.error(`[DiziPal] HTML Kesit: ${html.substring(0, 200)}`);
-            return [];
-        }
-
-        const slug = foundPath.split('/').pop();
+        // 2. Bolum Sayfasına Git
         let targetUrl = `${BASE_URL}/${mediaType === 'tv' ? 'bolum' : 'film'}/${slug}`;
         if (mediaType === 'tv') targetUrl += `-${seasonNum}x${episodeNum}`;
 
-        console.error(`[DiziPal] Hedef URL: ${targetUrl}`);
-
+        console.error(`[DiziPal] Hedef: ${targetUrl}`);
         const pageRes = await fetch(targetUrl);
         const pageHtml = await pageRes.text();
         
-        const encryptedMatch = pageHtml.match(/<div[^>]*data-rm-k="true"[^>]*>(.*?)<\/div>/);
-        if (encryptedMatch) {
-            console.error("[DiziPal] SIFRELI VERI YAKALANDI! AES baslatiliyor.");
-            // ... AES DECRYPT MANTIGI ...
-        } else {
-            console.error("[DiziPal] Bolum sayfasina ulasildi ama video divi bulunamadi.");
-        }
+        const encryptedDiv = pageHtml.match(/<div[^>]*data-rm-k="true"[^>]*>(.*?)<\/div>/);
+        if (!encryptedDiv) return [];
 
-        return [];
+        // 3. Iframe URL Coz
+        let iframeUrl = decryptData(encryptedDiv[1]);
+        if (!iframeUrl) return [];
+        if (iframeUrl.startsWith("//")) iframeUrl = "https:" + iframeUrl;
+
+        console.error(`[DiziPal] Player: ${iframeUrl}`);
+
+        // 4. Player Iceriginden Video ID Yakala
+        const playerRes = await fetch(iframeUrl, { headers: { 'Referer': targetUrl } });
+        const playerHtml = await playerRes.text();
+        const playlistId = playerHtml.match(/window\.openPlayer\s*\(\s*['"]([^'"]+)['"]/)?.[1];
+        
+        if (!playlistId) return [];
+
+        // 5. API'den Master M3U8 Linkini Al
+        const playerOrigin = new URL(iframeUrl).origin;
+        const apiRes = await fetch(`${playerOrigin}/source2.php?v=${playlistId}`, { 
+            headers: { 'Referer': iframeUrl, 'X-Requested-With': 'XMLHttpRequest' } 
+        });
+        const apiJson = await apiRes.json();
+        
+        if (!apiJson.file) return [];
+        let streamUrl = apiJson.file.replace(/\\/g, "").replace("m.php", "master.m3u8");
+
+        console.error(`[DiziPal] Stream OK: ${streamUrl}`);
+
+        // Nuvio/Cloudstream Return
+        return [{
+            name: "DiziPal (DPlayer)",
+            url: streamUrl,
+            quality: 1080,
+            type: 'm3u8',
+            headers: { 
+                'Referer': iframeUrl,
+                'Origin': playerOrigin,
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            }
+        }];
 
     } catch (err) {
         console.error(`[DiziPal] Hata: ${err.message}`);
