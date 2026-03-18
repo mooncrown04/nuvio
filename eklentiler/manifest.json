@@ -1,30 +1,20 @@
 {
-  "id": "german-dub-finder",
-  "name": "German Dub",
-  "version": "1.0.0",
-  "description": "German dubbed movies and series",
-  "author": "Fortune",
-  "icon": "https://flagcdn.com/w320/de.png",
-  "catalogs": [
+  "name": "MoOnCrOwN",
+  "version": "0.4",
+  "scrapers": [  
+      
     {
-      "id": "german-movies",
-      "name": "German Movies",
-      "type": "movie"
-    },
-    {
-      "id": "german-series", 
-      "name": "German Series",
-      "type": "series"
+      "id": "dizipal",
+      "name": "MoOnCrOwN dizipal",
+      "description": "Statik Katalog Uyumlu M3U Scraper",
+      "logo": "https://picon.pics/TR/Ulusal/Atv.png",
+      "version": "1.0.1",
+      "author": "mooncrown",
+      "supportedTypes": ["movie", "tv"],
+      "filename": "dizipal.js",
+      "enabled": true,
+      "formats": ["mp4", "mkv", "hls", "m3u8"],
+      "contentLanguage": ["tr"]
     }
-  ],
-  "resources": [
-    "catalog",
-    "meta",
-    "stream"
-  ],
-  "types": [
-    "movie",
-    "series"
-  ],
-  "idPrefixes": ["tmdb"]
+  ]
 }
