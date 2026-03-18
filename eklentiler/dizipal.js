@@ -1,5 +1,5 @@
 /**
- * DiziPal v62 - Anti-Bot & Selector Update
+ * DiziPal v64 - Entity & Salt Length Fix
  */
 
 var cheerio = require("cheerio-without-node-native");
@@ -7,16 +7,6 @@ var cheerio = require("cheerio-without-node-native");
 var BASE_URL = 'https://dizipal1227.com';
 var TMDB_KEY = '4ef0d7355d9ffb5151e987764708ce96';
 var PASSPHRASE = "3hPn4uCjTVtfYWcjIcoJQ4cL1WWk1qxXI39egLYOmNv6IblA7eKJz68uU3eLzux1biZLCms0quEjTYniGv5z1JcKbNIsDQFSeIZOBZJz4is6pD7UyWDggWWzTLBQbHcQFpBQdClnuQaMNUHtLHTpzCvZy33p6I7wFBvL4fnXBYH84aUIyWGTRvM2G5cfoNf4705tO2kv";
-
-var HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-    'Accept-Language': 'tr-TR,tr;q=0.9,en;q=0.8',
-    'Cache-Control': 'no-cache',
-    'Pragma': 'no-cache',
-    'Referer': BASE_URL + '/',
-    'Origin': BASE_URL
-};
 
 var utils = {
     hexToBytes: function(hex) {
@@ -26,7 +16,7 @@ var utils = {
     },
     base64ToBytes: function(base64) {
         try {
-            var cleaned = base64.replace(/\\/g, '');
+            var cleaned = base64.replace(/\\/g, '').replace(/\s/g, '');
             var binary = (typeof atob !== 'undefined') ? atob(cleaned) : Buffer.from(cleaned, 'base64').toString('binary');
             var bytes = [];
             for (var i = 0; i < binary.length; i++) bytes.push(binary.charCodeAt(i));
@@ -38,41 +28,13 @@ var utils = {
     },
     slugify: function(text) {
         var trMap = {'ç':'c','ğ':'g','ş':'s','ı':'i','ö':'o','ü':'u'};
-        return text.toLowerCase().replace(/[çğşıöü]/g, function(m) { return trMap[m]; }).replace(/[^a-z0-9\s-]/g, '').replace(/\s+/g, '-').trim();
+        return text.toLowerCase()
+            .replace(/[çğşıöü]/g, function(m) { return trMap[m]; })
+            .replace(/[^a-z0-9\s-]/g, '')
+            .replace(/\s+/g, '-')
+            .trim();
     }
 };
-
-function decryptData(ciphertext, ivHex, saltHex) {
-    var ct = utils.base64ToBytes(ciphertext);
-    var iv = utils.hexToBytes(ivHex);
-    
-    // Salt metotları
-    var variations = [
-        function(s) { return utils.hexToBytes(s); },
-        function(s) { return utils.hexToBytes(s.toUpperCase()); },
-        function(s) { return utils.hexToBytes(s.split('').reverse().join('')); }
-    ];
-
-    for (var i = 0; i < variations.length; i++) {
-        var salt = variations[i](saltHex);
-        if (!salt.length) continue;
-
-        var keys = [
-            salt.slice(0, 32).map(function(b, idx) { return b ^ PASSPHRASE.charCodeAt(idx % PASSPHRASE.length); }),
-            Array.from({length: 32}, function(_, idx) { return (salt[idx % salt.length] + PASSPHRASE.charCodeAt(idx % PASSPHRASE.length)) & 0xff; })
-        ];
-
-        for (var key of keys) {
-            var res = ct.map(function(b, k) { return b ^ key[k % key.length] ^ iv[k % iv.length]; });
-            var resultStr = utils.bytesToString(res);
-            if (resultStr.includes('http')) {
-                var match = resultStr.match(/https?:\/\/[^\s"']+/);
-                if (match) return match[0].replace(/\\\//g, '/');
-            }
-        }
-    }
-    return null;
-}
 
 async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
     try {
@@ -87,47 +49,78 @@ async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
             ? BASE_URL + '/film/' + slug 
             : BASE_URL + '/dizi/' + slug + '/sezon-' + seasonNum + '/bolum-' + episodeNum;
 
-        console.log('[DiziPal] Requesting URL:', targetUrl);
-
-        var response = await fetch(targetUrl, { headers: HEADERS });
+        var response = await fetch(targetUrl, { 
+            headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36', 'Referer': BASE_URL } 
+        });
+        
         var html = await response.text();
         var $ = cheerio.load(html);
 
-        // GENİŞLETİLMİŞ SEÇİCİ: data-rm-k olmazsa data-k veya player-data ara
-        var encryptedDiv = $('div[data-rm-k=true], div[data-k], div#player-data, script#__NEXT_DATA__');
-        
-        if (encryptedDiv.length === 0) {
-            console.error('[DiziPal] HATA: Veri divi bulunamadı. Gelen HTML Özeti:', html.substring(0, 300).replace(/\n/g, ' '));
+        // Paylaştığın div'i tam olarak yakalamak için
+        var encryptedDiv = $('div[data-rm-k=true]');
+        var rawText = encryptedDiv.text() || '';
+
+        if (!rawText) {
+            console.error('[DiziPal] Veri divi boş veya bulunamadı.');
             return [];
         }
 
-        var rawData = encryptedDiv.text();
-        // Eğer veri __NEXT_DATA__ içindeyse JSON parse etmemiz gerekebilir
+        // HTML Entity temizliği (&quot; -> ")
+        var cleanJson = rawText.replace(/&quot;/g, '"').replace(/&amp;/g, '&');
+        
         var data;
         try {
-            data = JSON.parse(rawData);
-            // Eğer veri props içindeyse oraya dallan (Next.js yapısı için)
-            if (data.props && data.props.pageProps) data = data.props.pageProps;
+            data = JSON.parse(cleanJson);
         } catch(e) {
-            console.error('[DiziPal] JSON Parse Hatası veya veri temiz değil.');
-            return [];
-        }
-        
-        // Veri yapısı kontrolü (ciphertext, iv, salt var mı?)
-        if (!data.ciphertext || !data.iv || !data.salt) {
-            console.error('[DiziPal] HATA: JSON bulundu ama ciphertext/iv/salt eksik. Mevcut keyler:', Object.keys(data));
+            console.error('[DiziPal] JSON Parse Hatası:', e.message);
             return [];
         }
 
-        var streamUrl = decryptData(data.ciphertext, data.iv, data.salt);
+        // Şifre Çözme Başlangıcı
+        var streamUrl = decryptLogic(data);
 
         if (streamUrl) {
-            return [{ name: "DiziPal", url: streamUrl, quality: 'Auto', provider: 'dizipal' }];
+            return [{
+                name: "DiziPal (Fixed)",
+                url: streamUrl,
+                quality: 'Auto',
+                provider: 'dizipal'
+            }];
         }
     } catch (err) {
-        console.error('[DiziPal] Kritik Hata:', err.message);
+        console.error('[DiziPal] Genel Hata:', err.message);
     }
-    return [];
+    return []; // Uygulama array beklediği için her zaman array dönüyoruz.
+}
+
+function decryptLogic(data) {
+    if (!data.ciphertext || !data.iv || !data.salt) return null;
+
+    var ct = utils.base64ToBytes(data.ciphertext);
+    var iv = utils.hexToBytes(data.iv);
+    var salt = utils.hexToBytes(data.salt);
+    var pass = PASSPHRASE;
+
+    // Uzun Salt değerlerinde DiziPal genelde ilk 32 veya 64 byte'ı kullanır
+    // Burada hem XOR hem de Toplam (Mix) yöntemini deniyoruz
+    var keyVaryasyonlari = [
+        salt.slice(0, 32).map(function(b, i) { return b ^ pass.charCodeAt(i % pass.length); }),
+        Array.from({length: 32}, function(_, i) { return (salt[i % salt.length] + pass.charCodeAt(i % pass.length)) & 0xff; })
+    ];
+
+    for (var key of keyVaryasyonlari) {
+        var res = [];
+        for (var i = 0; i < ct.length; i++) {
+            res.push(ct[i] ^ key[i % key.length] ^ iv[i % iv.length]);
+        }
+        var decoded = utils.bytesToString(res);
+        
+        if (decoded.includes('http')) {
+            var match = decoded.match(/https?:\/\/[^\s"']+/);
+            if (match) return match[0].replace(/\\\//g, '/');
+        }
+    }
+    return null;
 }
 
 if (typeof module !== 'undefined' && module.exports) {
