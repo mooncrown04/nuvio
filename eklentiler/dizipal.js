@@ -1,5 +1,5 @@
 /**
- * DiziPal 1543 - IMDB/TMDB Diagnostic Pro
+ * DiziPal 1543 - v27.0.0 Final Bypass
  */
 
 var PASSPHRASE = "3hPn4uCjTVtfYWcjIcoJQ4cL1WWk1qxXI39egLYOmNv6IblA7eKJz68uU3eLzux1biZLCms0quEjTYniGv5z1JcKbNIsDQFSeIZOBZJz4is6pD7UyWDggWWzTLBQbHcQFpBQdClnuQaMNUHtLHTpzCvZy33p6I7wFBvL4fnXBYH84aUIyWGTRvM2G5cfoNf4705tO2kv";
@@ -13,81 +13,75 @@ function decryptData(raw) {
         var key = CryptoJS.PBKDF2(PASSPHRASE, CryptoJS.enc.Hex.parse(sl), { keySize: 8, iterations: 999, hasher: CryptoJS.algo.SHA512 });
         var dec = CryptoJS.AES.decrypt(ct, key, { iv: CryptoJS.enc.Hex.parse(iv), padding: CryptoJS.pad.Pkcs7, mode: CryptoJS.mode.CBC });
         return dec.toString(CryptoJS.enc.Utf8).replace(/[\\"]/g, "").trim();
-    } catch (e) { 
-        console.error("[DiziPal] Sifre cozme hatasi: " + e.message);
-        return null; 
-    }
+    } catch (e) { return null; }
 }
 
 function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
     var BASE = 'https://dizipal1543.com';
-    var type = (mediaType === 'movie') ? 'movie' : 'tv';
-    var tmdbUrl = "https://api.themoviedb.org/3/" + type + "/" + tmdbId + "?language=tr-TR&api_key=4ef0d7355d9ffb5151e987764708ce96";
-
-    console.error("[DiziPal] Basliyor... TMDB ID: " + tmdbId);
+    var tmdbUrl = "https://api.themoviedb.org/3/" + (mediaType === 'movie' ? 'movie' : 'tv') + "/" + tmdbId + "?language=tr-TR&api_key=4ef0d7355d9ffb5151e987764708ce96";
 
     return fetch(tmdbUrl)
         .then(function(r) { return r.json(); })
         .then(function(tmdb) {
             var name = (tmdb.name || tmdb.title || "").trim();
             var slug = name.toLowerCase().replace(/[ğĞ]/g, 'g').replace(/[üÜ]/g, 'u').replace(/[şŞ]/g, 's').replace(/[ıİ]/g, 'i').replace(/[öÖ]/g, 'o').replace(/[çÇ]/g, 'c').replace(/[^a-z0-9]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+            var target = BASE + "/" + (mediaType === 'tv' ? 'bolum' : 'film') + "/" + slug + (mediaType === 'tv' ? "-" + seasonNum + "x" + episodeNum : "");
             
-            var target = BASE + "/" + (mediaType === 'tv' ? 'bolum' : 'film') + "/" + slug;
-            if (mediaType === 'tv') target += "-" + seasonNum + "x" + episodeNum;
-            
-            console.error("[DiziPal] Hedef Sayfa: " + target);
+            console.error("[DiziPal] Hedef: " + target);
             return fetch(target);
         })
-        .then(function(res) { 
-            console.error("[DiziPal] Sayfa cevabi alindi. Durum: " + res.status);
-            return res.text(); 
-        })
+        .then(function(res) { return res.text(); })
         .then(function(html) {
             var m = html.match(/<div[^>]*data-rm-k="true"[^>]*>(.*?)<\/div>/);
-            if (!m) {
-                console.error("[DiziPal] Sifreli div bulunamadi! HTML Boyutu: " + html.length);
-                return [];
-            }
+            if (!m) return [];
             
             var iframe = decryptData(m[1]);
             if (!iframe) return [];
+            iframe = iframe.replace(/[\\"]/g, "");
             if (iframe.indexOf("//") === 0) iframe = "https:" + iframe;
             
-            console.error("[DiziPal] Iframe Linki: " + iframe);
-
-            // Adım adım izleme: Iframe'den ID koparma denemesi
-            var pidFromUrl = iframe.match(/[?&]v=([^&]+)/);
-            var pid = pidFromUrl ? pidFromUrl[1] : null;
-
-            if (!pid) {
-                console.error("[DiziPal] URL'den PID koparilamadi!");
-                return [];
-            }
-
-            var origin = iframe.split('/').slice(0, 3).join('/');
-            var finalUrl = origin + "/source2.php?v=" + pid;
+            var pidMatch = iframe.match(/[?&]v=([^&]+)/);
+            if (!pidMatch) return [];
             
-            console.error("[DiziPal] Son Istek: " + finalUrl);
+            var pid = pidMatch[1];
+            var origin = iframe.split('/').slice(0, 3).join('/');
+            
+            console.error("[DiziPal] Kaynak Aliniyor: " + pid);
 
-            return fetch(finalUrl, { 
-                headers: { 
-                    'Referer': iframe, 
-                    'X-Requested-With': 'XMLHttpRequest' 
-                } 
+            return fetch(origin + "/source2.php?v=" + pid, {
+                method: 'GET',
+                headers: {
+                    'Accept': 'application/json, text/javascript, */*; q=0.01',
+                    'X-Requested-With': 'XMLHttpRequest',
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                    'Referer': iframe,
+                    'Origin': origin,
+                    'Sec-Fetch-Dest': 'empty',
+                    'Sec-Fetch-Mode': 'cors',
+                    'Sec-Fetch-Site': 'same-origin'
+                }
             })
             .then(function(r) { return r.json(); })
             .then(function(j) {
-                if (j.file) {
-                    var stream = j.file.replace(/\\/g, "").replace("m.php", "master.m3u8");
-                    console.error("[DiziPal] BAŞARILI! Stream: " + stream);
-                    return [{ name: "DiziPal", url: stream, type: 'm3u8', headers: { 'Referer': origin + '/' } }];
+                if (j && j.file) {
+                    var streamUrl = j.file.replace(/\\/g, "").replace("m.php", "master.m3u8");
+                    console.error("[DiziPal] BINGO! Master Link: " + streamUrl);
+                    return [{
+                        name: "DiziPal (DPlayer)",
+                        url: streamUrl,
+                        type: 'm3u8',
+                        headers: { 
+                            'Referer': origin + '/',
+                            'Origin': origin,
+                            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                        }
+                    }];
                 }
-                console.error("[DiziPal] source2.php bos dondu veya engellendi.");
                 return [];
             });
         })
         .catch(function(e) { 
-            console.error("[DiziPal] KRITIK HATA: " + e.message);
+            console.error("[DiziPal] Hata: " + e.message);
             return []; 
         });
 }
