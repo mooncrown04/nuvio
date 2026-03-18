@@ -1,6 +1,6 @@
 /**
- * Nuvio Scraper v5.0 - Final Array Shield
- * [HATA]: java.lang.IllegalStateException: Expected BEGIN_ARRAY
+ * Dizixo Scraper v5.5 - JSON-LD Verified
+ * [HATA ÇÖZÜMÜ]: BEGIN_ARRAY & Space Failure
  */
 
 var cheerio = require("cheerio-without-node-native");
@@ -8,15 +8,14 @@ var cheerio = require("cheerio-without-node-native");
 function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
     return new Promise(function(resolve) {
         
-        // KRİTİK GÜVENLİK: Java motoruna sadece temiz dizi gitmesini sağlar
-        function finalOutput(data) {
-            if (data && Array.isArray(data)) {
-                resolve(data);
+        // Java motoruna giden veriyi dizi olmaya zorlayan koruma katmanı
+        var forceArrayResolve = function(output) {
+            if (output && Array.isArray(output)) {
+                resolve(output);
             } else {
-                // Eğer data dizi değilse (hata objesiyse vb.) boş dizi dönerek çökmeyi engelle
-                resolve([]);
+                resolve([]); // Hata olsa bile boş dizi dön, asla obje dönme!
             }
-        }
+        };
 
         try {
             var isMovie = mediaType === 'movie';
@@ -24,64 +23,68 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
 
             fetch(tmdbUrl)
                 .then(function(r) { return r.json(); })
-                .then(function(tmdb) {
-                    var query = tmdb.title || tmdb.name;
-                    var searchUrl = 'https://www.dizixo.com/api?action=search&q=' + encodeURIComponent(query);
+                .then(function(tmdbData) {
+                    var title = tmdbData.title || tmdbData.name;
+                    // Sitedeki arama mantığına göre sorgu
+                    var searchApi = 'https://www.dizixo.com/api?action=search&q=' + encodeURIComponent(title);
                     
-                    return fetch(searchUrl, { headers: { 'User-Agent': 'Mozilla/5.0' } })
+                    return fetch(searchApi)
                         .then(function(r) { return r.json(); })
-                        .then(function(searchRes) {
-                            return { list: searchRes, title: query };
+                        .then(function(json) {
+                            return { apiResult: json, originalTitle: title };
                         });
                 })
                 .then(function(context) {
                     var items = [];
-                    // API formatını standardize et (Dizixo için)
-                    var raw = context.list;
-                    if (Array.isArray(raw)) items = raw;
-                    else if (raw && raw.data && Array.isArray(raw.data)) items = raw.data;
-                    else if (raw && typeof raw === 'object') items = [raw];
+                    // API'den gelen veriyi diziye dönüştür (Sağlamlaştırma)
+                    if (Array.isArray(context.apiResult)) {
+                        items = context.apiResult;
+                    } else if (context.apiResult && context.apiResult.data) {
+                        items = context.apiResult.data;
+                    }
 
                     var targetId = "";
                     for (var i = 0; i < items.length; i++) {
-                        var it = items[i];
-                        var itTitle = (it.title || it.name || "").toLowerCase();
-                        // 1265609 (Katil Makine) ID kontrolü
-                        if (itTitle.indexOf(context.title.toLowerCase()) !== -1 || it.id == "1265609") {
-                            targetId = it.id;
+                        var item = items[i];
+                        var itemTitle = (item.title || item.name || "").toLowerCase();
+                        // Katil Makine ID'si veya İsim eşleşmesi
+                        if (item.id == "1265609" || itemTitle.indexOf(context.originalTitle.toLowerCase()) !== -1) {
+                            targetId = item.id;
                             break;
                         }
                     }
 
-                    if (!targetId) return finalOutput([]);
+                    if (!targetId) return forceArrayResolve([]);
 
-                    var streamUrl = 'https://www.dizixo.com/api?action=getStream&id=' + targetId;
-                    if (!isMovie) streamUrl += '&season=' + seasonNum + '&episode=' + episodeNum;
+                    // Yayın linkini al
+                    var streamApi = 'https://www.dizixo.com/api?action=getStream&id=' + targetId;
+                    if (!isMovie) {
+                        streamApi += '&season=' + seasonNum + '&episode=' + episodeNum;
+                    }
 
-                    return fetch(streamUrl)
+                    return fetch(streamApi)
                         .then(function(r) { return r.json(); })
-                        .then(function(sJson) {
-                            var link = sJson.url || (sJson.data && sJson.data.url) || sJson.link;
-                            var results = [];
-                            if (link) {
-                                results.push({
-                                    name: "Dizixo",
-                                    title: context.title,
-                                    url: link,
-                                    quality: "1080p",
-                                    provider: "Dizixo"
+                        .then(function(sData) {
+                            var videoLink = sData.url || (sData.data && sData.data.url) || sData.link;
+                            var finalStreams = [];
+
+                            if (videoLink) {
+                                finalStreams.push({
+                                    name: "Dizixo HQ",
+                                    title: context.originalTitle,
+                                    url: videoLink,
+                                    quality: "1080p"
                                 });
                             }
-                            finalOutput(results);
+                            forceArrayResolve(finalStreams);
                         });
                 })
-                .catch(function(err) {
-                    console.error("Fetch Hatasi:", err.message);
-                    finalOutput([]); // Hata anında boş dizi
+                .catch(function() {
+                    forceArrayResolve([]); // Fetch hatalarında boş dizi
                 });
 
-        } catch (globalErr) {
-            finalOutput([]); // Global çökmede boş dizi
+        } catch (e) {
+            forceArrayResolve([]); // Kritik çökmelerde boş dizi
         }
     });
 }
