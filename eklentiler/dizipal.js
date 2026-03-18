@@ -1,5 +1,5 @@
 /**
- * DiziPal 1543 - Fast Fetch Edition
+ * DiziPal 1543 - Full Stream Recovery
  */
 
 var PASSPHRASE = "3hPn4uCjTVtfYWcjIcoJQ4cL1WWk1qxXI39egLYOmNv6IblA7eKJz68uU3eLzux1biZLCms0quEjTYniGv5z1JcKbNIsDQFSeIZOBZJz4is6pD7UyWDggWWzTLBQbHcQFpBQdClnuQaMNUHtLHTpzCvZy33p6I7wFBvL4fnXBYH84aUIyWGTRvM2G5cfoNf4705tO2kv";
@@ -12,7 +12,8 @@ function decryptData(raw) {
         var sl = c.match(/"salt"\s*:\s*"([^"]+)"/)[1];
         var key = CryptoJS.PBKDF2(PASSPHRASE, CryptoJS.enc.Hex.parse(sl), { keySize: 8, iterations: 999, hasher: CryptoJS.algo.SHA512 });
         var dec = CryptoJS.AES.decrypt(ct, key, { iv: CryptoJS.enc.Hex.parse(iv), padding: CryptoJS.pad.Pkcs7, mode: CryptoJS.mode.CBC });
-        return dec.toString(CryptoJS.enc.Utf8) || dec.toString(CryptoJS.enc.Latin1);
+        var res = dec.toString(CryptoJS.enc.Utf8) || dec.toString(CryptoJS.enc.Latin1);
+        return res ? res.replace(/[\\"]/g, "").trim() : null;
     } catch (e) { return null; }
 }
 
@@ -25,38 +26,59 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
         .then(function(tmdb) {
             var name = (tmdb.name || tmdb.title || "").trim();
             var slug = name.toLowerCase().replace(/[ğĞ]/g, 'g').replace(/[üÜ]/g, 'u').replace(/[şŞ]/g, 's').replace(/[ıİ]/g, 'i').replace(/[öÖ]/g, 'o').replace(/[çÇ]/g, 'c').replace(/[^a-z0-9]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
-            
             var target = BASE + "/" + (mediaType === 'tv' ? 'bolum' : 'film') + "/" + slug;
             if (mediaType === 'tv') target += "-" + seasonNum + "x" + episodeNum;
             
             console.error("[DiziPal] Hedef: " + target);
-            return fetch(target);
+            return fetch(target).then(function(res) { return res.text(); }).then(function(html) {
+                return { html: html, url: target };
+            });
         })
-        .then(function(res) { return res.text(); })
-        .then(function(html) {
-            var m = html.match(/<div[^>]*data-rm-k="true"[^>]*>(.*?)<\/div>/);
-            if (!m) { console.error("[DiziPal] Div yok, sayfa boyutu: " + html.length); return []; }
+        .then(function(data) {
+            var m = data.html.match(/<div[^>]*data-rm-k="true"[^>]*>(.*?)<\/div>/);
+            if (!m) return [];
             
             var iframe = decryptData(m[1]);
             if (!iframe) return [];
             if (iframe.indexOf("//") === 0) iframe = "https:" + iframe;
             
             console.error("[DiziPal] Iframe: " + iframe);
-            return fetch(iframe.replace(/[\\"]/g, "")).then(function(r) { return r.text(); }).then(function(p) {
-                var pid = p.match(/window\.openPlayer\s*\(\s*['"]([^'"]+)['"]/);
-                if (!pid) return [];
-                var org = iframe.split('/').slice(0, 3).join('/').replace(/[\\"]/g, "");
-                return fetch(org + "/source2.php?v=" + pid[1], { headers: { 'X-Requested-With': 'XMLHttpRequest' } })
+
+            // ÖNEMLİ: Iframe'e giderken referer ekliyoruz
+            return fetch(iframe, { headers: { 'Referer': data.url } })
+                .then(function(r) { return r.text(); })
+                .then(function(p) {
+                    var pid = p.match(/window\.openPlayer\s*\(\s*['"]([^'"]+)['"]/);
+                    if (!pid) return [];
+                    
+                    var org = iframe.split('/').slice(0, 3).join('/');
+                    // source2.php isteği için tam teşekküllü başlıklar
+                    return fetch(org + "/source2.php?v=" + pid[1], { 
+                        headers: { 
+                            'Referer': iframe,
+                            'X-Requested-With': 'XMLHttpRequest',
+                            'Accept': 'application/json'
+                        } 
+                    })
                     .then(function(r) { return r.json(); })
                     .then(function(j) {
                         if (!j.file) return [];
                         var s = j.file.replace(/\\/g, "").replace("m.php", "master.m3u8");
                         console.error("[DiziPal] STREAM OK: " + s);
-                        return [{ name: "DiziPal", url: s, type: 'm3u8' }];
+                        
+                        return [{ 
+                            name: "DiziPal (DPlayer)", 
+                            url: s, 
+                            type: 'm3u8',
+                            headers: { 'Referer': org + '/', 'Origin': org }
+                        }];
                     });
-            });
+                });
         })
-        .catch(function(e) { return []; });
+        .catch(function(e) { 
+            console.error("[DiziPal] Kritik Hata: " + e.message);
+            return []; 
+        });
 }
 
 globalThis.getStreams = getStreams;
