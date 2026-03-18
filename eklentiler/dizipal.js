@@ -1,23 +1,18 @@
 /**
- * DiziPal v60 - Final Optimized Resolver
- * Target: https://dizipal1227.com/dizi/...
+ * DiziPal v61 - Debug Enhanced Edition
  */
 
 var cheerio = require("cheerio-without-node-native");
 
-// ========== YAPILANDIRMA ==========
 var BASE_URL = 'https://dizipal1227.com';
 var TMDB_KEY = '4ef0d7355d9ffb5151e987764708ce96';
 var PASSPHRASE = "3hPn4uCjTVtfYWcjIcoJQ4cL1WWk1qxXI39egLYOmNv6IblA7eKJz68uU3eLzux1biZLCms0quEjTYniGv5z1JcKbNIsDQFSeIZOBZJz4is6pD7UyWDggWWzTLBQbHcQFpBQdClnuQaMNUHtLHTpzCvZy33p6I7wFBvL4fnXBYH84aUIyWGTRvM2G5cfoNf4705tO2kv";
 
 var HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-    'Accept-Language': 'tr-TR,tr;q=0.9,en;q=0.8',
     'Referer': BASE_URL + '/'
 };
 
-// ========== YARDIMCI ARAÇLAR ==========
 var utils = {
     hexToBytes: function(hex) {
         var bytes = [];
@@ -31,7 +26,10 @@ var utils = {
             var bytes = [];
             for (var i = 0; i < binary.length; i++) bytes.push(binary.charCodeAt(i));
             return bytes;
-        } catch (e) { return []; }
+        } catch (e) { 
+            console.error('[DiziPal] Base64 Decode Hatası:', e.message);
+            return []; 
+        }
     },
     bytesToString: function(bytes) {
         return bytes.map(function(b) {
@@ -49,31 +47,28 @@ var utils = {
     }
 };
 
-// ========== ŞİFRE ÇÖZME MOTORU ==========
 function decryptData(ciphertext, ivHex, saltHex) {
+    console.log('[DiziPal] Şifre çözme başlatıldı...');
     var ct = utils.base64ToBytes(ciphertext);
     var iv = utils.hexToBytes(ivHex);
-    var passBytes = utils.base64ToBytes(btoa(PASSPHRASE)); // Byte array conversion
-
-    // Salt Varyasyonları
+    
     var saltMethods = [
-        function(s) { return utils.hexToBytes(s); }, // V1: Direct
-        function(s) { return utils.hexToBytes(s.toUpperCase()); }, // V2: Upper
-        function(s) { return utils.hexToBytes(s.split('').reverse().join('')); } // V3: Reverse
+        { name: 'Direct', fn: function(s) { return utils.hexToBytes(s); } },
+        { name: 'Upper', fn: function(s) { return utils.hexToBytes(s.toUpperCase()); } },
+        { name: 'Reverse', fn: function(s) { return utils.hexToBytes(s.split('').reverse().join('')); } }
     ];
 
     for (var i = 0; i < saltMethods.length; i++) {
-        var salt = saltMethods[i](saltHex);
+        var salt = saltMethods[i].fn(saltHex);
         if (!salt.length) continue;
 
-        // Key Varyasyonları (Simple & Full)
         var keys = [
-            salt.slice(0, 32).map(function(b, idx) { return b ^ PASSPHRASE.charCodeAt(idx % PASSPHRASE.length); }),
-            Array.from({length: 32}, function(_, idx) { return (salt[idx % salt.length] + PASSPHRASE.charCodeAt(idx % PASSPHRASE.length)) & 0xff; })
+            { name: 'XOR', key: salt.slice(0, 32).map(function(b, idx) { return b ^ PASSPHRASE.charCodeAt(idx % PASSPHRASE.length); }) },
+            { name: 'Mix', key: Array.from({length: 32}, function(_, idx) { return (salt[idx % salt.length] + PASSPHRASE.charCodeAt(idx % PASSPHRASE.length)) & 0xff; }) }
         ];
 
         for (var j = 0; j < keys.length; j++) {
-            var key = keys[j];
+            var key = keys[j].key;
             var res = [];
             for (var k = 0; k < ct.length; k++) {
                 res.push(ct[k] ^ key[k % key.length] ^ iv[k % iv.length]);
@@ -81,61 +76,76 @@ function decryptData(ciphertext, ivHex, saltHex) {
             var resultStr = utils.bytesToString(res);
             
             if (resultStr.indexOf('http') >= 0) {
+                console.log('[DiziPal] Başarılı! Metod:', saltMethods[i].name, '+', keys[j].name);
                 var match = resultStr.match(/https?:\/\/[^\s"']+/);
                 if (match) return match[0].replace(/\\\//g, '/');
             }
         }
     }
+    console.error('[DiziPal] Şifre çözülemedi: Hiçbir varyasyon URL döndürmedi.');
     return null;
 }
 
-// ========== ANA GİRİŞ NOKTASI (getStreams) ==========
 async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
+    console.log('[DiziPal] getStreams çağrıldı. ID:', tmdbId, 'Tip:', mediaType);
     try {
         var isMovie = mediaType === 'movie' || mediaType === 'film';
         
-        // 1. TMDB'den orijinal ismi al ve slug oluştur
+        // TMDB İsteği
         var tmdbUrl = 'https://api.themoviedb.org/3/' + (isMovie ? 'movie' : 'tv') + '/' + tmdbId + '?language=tr-TR&api_key=' + TMDB_KEY;
+        console.log('[DiziPal] TMDB İsteği:', tmdbUrl);
+        
         var tmdbRes = await fetch(tmdbUrl);
+        if (!tmdbRes.ok) throw new Error('TMDB isteği başarısız: ' + tmdbRes.status);
+        
         var tmdbData = await tmdbRes.json();
         var slug = utils.slugify(tmdbData.title || tmdbData.name);
+        console.log('[DiziPal] Slug oluşturuldu:', slug);
 
-        // 2. DiziPal URL Yapısını kur
+        // Hedef URL
         var targetPath = isMovie 
             ? '/film/' + slug 
             : '/dizi/' + slug + '/sezon-' + seasonNum + '/bolum-' + episodeNum;
         
         var targetUrl = BASE_URL + targetPath;
-        console.log('[DiziPal] Fetching: ' + targetUrl);
+        console.log('[DiziPal] Hedef URL çekiliyor:', targetUrl);
 
-        // 3. Sayfayı çek ve veriyi parse et
         var response = await fetch(targetUrl, { headers: HEADERS });
+        if (!response.ok) {
+            console.error('[DiziPal] Sayfa çekilemedi. Durum:', response.status, 'URL:', targetUrl);
+            return [];
+        }
+
         var html = await response.text();
         var $ = cheerio.load(html);
 
         var encryptedDiv = $('div[data-rm-k=true]');
-        if (encryptedDiv.length === 0) return [];
+        if (encryptedDiv.length === 0) {
+            console.error('[DiziPal] HATA: Sayfada "data-rm-k=true" divi bulunamadı! Site yapısı değişmiş olabilir.');
+            return [];
+        }
 
-        var data = JSON.parse(encryptedDiv.text());
+        var encryptedText = encryptedDiv.text();
+        console.log('[DiziPal] Şifreli veri bulundu, uzunluk:', encryptedText.length);
         
-        // 4. Şifreyi çöz
+        var data = JSON.parse(encryptedText);
         var streamUrl = decryptData(data.ciphertext, data.iv, data.salt);
 
         if (streamUrl) {
+            console.log('[DiziPal] Akış URL adresi:', streamUrl);
             return [{
-                name: "DiziPal (V60)",
+                name: "DiziPal (Debug)",
                 url: streamUrl,
                 quality: 'Auto',
                 provider: 'dizipal'
             }];
         }
     } catch (err) {
-        console.error('[DiziPal Error] ' + err.message);
+        console.error('[DiziPal KRİTİK HATA]:', err.stack || err.message);
     }
     return [];
 }
 
-// ========== EXPORTS (KRİTİK KISIM) ==========
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = { getStreams: getStreams };
 } else {
