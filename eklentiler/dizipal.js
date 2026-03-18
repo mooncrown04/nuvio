@@ -1,5 +1,5 @@
 /**
- * DiziPal 1543 - Fast Bypass (No HTML Parsing)
+ * DiziPal 1543 - IMDB/TMDB Diagnostic Pro
  */
 
 var PASSPHRASE = "3hPn4uCjTVtfYWcjIcoJQ4cL1WWk1qxXI39egLYOmNv6IblA7eKJz68uU3eLzux1biZLCms0quEjTYniGv5z1JcKbNIsDQFSeIZOBZJz4is6pD7UyWDggWWzTLBQbHcQFpBQdClnuQaMNUHtLHTpzCvZy33p6I7wFBvL4fnXBYH84aUIyWGTRvM2G5cfoNf4705tO2kv";
@@ -13,57 +13,83 @@ function decryptData(raw) {
         var key = CryptoJS.PBKDF2(PASSPHRASE, CryptoJS.enc.Hex.parse(sl), { keySize: 8, iterations: 999, hasher: CryptoJS.algo.SHA512 });
         var dec = CryptoJS.AES.decrypt(ct, key, { iv: CryptoJS.enc.Hex.parse(iv), padding: CryptoJS.pad.Pkcs7, mode: CryptoJS.mode.CBC });
         return dec.toString(CryptoJS.enc.Utf8).replace(/[\\"]/g, "").trim();
-    } catch (e) { return null; }
+    } catch (e) { 
+        console.error("[DiziPal] Sifre cozme hatasi: " + e.message);
+        return null; 
+    }
 }
 
 function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
     var BASE = 'https://dizipal1543.com';
-    // HIZ İÇİN: TMDB ismini tahmin et veya arama URL'sini doğrudan oluştur
-    // Not: Bu kısım Nuvio'nun sağladığı context'e göre optimize edilebilir
-    
-    return fetch(BASE + "/arama?q=" + tmdbId) // TMDB ID ile arama denemesi (Dizipal'de bazen işe yarar)
-        .then(function(res) { return res.text(); })
+    var type = (mediaType === 'movie') ? 'movie' : 'tv';
+    var tmdbUrl = "https://api.themoviedb.org/3/" + type + "/" + tmdbId + "?language=tr-TR&api_key=4ef0d7355d9ffb5151e987764708ce96";
+
+    console.error("[DiziPal] Basliyor... TMDB ID: " + tmdbId);
+
+    return fetch(tmdbUrl)
+        .then(function(r) { return r.json(); })
+        .then(function(tmdb) {
+            var name = (tmdb.name || tmdb.title || "").trim();
+            var slug = name.toLowerCase().replace(/[ğĞ]/g, 'g').replace(/[üÜ]/g, 'u').replace(/[şŞ]/g, 's').replace(/[ıİ]/g, 'i').replace(/[öÖ]/g, 'o').replace(/[çÇ]/g, 'c').replace(/[^a-z0-9]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+            
+            var target = BASE + "/" + (mediaType === 'tv' ? 'bolum' : 'film') + "/" + slug;
+            if (mediaType === 'tv') target += "-" + seasonNum + "x" + episodeNum;
+            
+            console.error("[DiziPal] Hedef Sayfa: " + target);
+            return fetch(target);
+        })
+        .then(function(res) { 
+            console.error("[DiziPal] Sayfa cevabi alindi. Durum: " + res.status);
+            return res.text(); 
+        })
         .then(function(html) {
-            var divMatch = html.match(/<div[^>]*data-rm-k="true"[^>]*>(.*?)<\/div>/);
-            if (!divMatch) {
-                // Eğer arama sayfasında yoksa, dizi sayfasına gitmeyi dene (fallback)
-                // Bu kısım senin loglarda gördüğümüz '/bolum/the-rookie-1x5' yapısını kurar
-                return []; 
+            var m = html.match(/<div[^>]*data-rm-k="true"[^>]*>(.*?)<\/div>/);
+            if (!m) {
+                console.error("[DiziPal] Sifreli div bulunamadi! HTML Boyutu: " + html.length);
+                return [];
             }
             
-            var iframeUrl = decryptData(divMatch[1]);
-            if (!iframeUrl) return [];
-            iframeUrl = iframeUrl.replace(/[\\"]/g, "");
-            if (iframeUrl.indexOf("//") === 0) iframeUrl = "https:" + iframeUrl;
-
-            // --- NİTRO ADIM: Sayfayı okumadan ID'yi URL'den al ---
-            var pid = iframeUrl.match(/[?&]v=([^&]+)/);
-            if (!pid) return [];
-
-            var origin = iframeUrl.split('/').slice(0, 3).join('/');
+            var iframe = decryptData(m[1]);
+            if (!iframe) return [];
+            if (iframe.indexOf("//") === 0) iframe = "https:" + iframe;
             
-            console.error("[DiziPal] Hızlı İstek: " + pid[1]);
+            console.error("[DiziPal] Iframe Linki: " + iframe);
 
-            return fetch(origin + "/source2.php?v=" + pid[1], {
+            // Adım adım izleme: Iframe'den ID koparma denemesi
+            var pidFromUrl = iframe.match(/[?&]v=([^&]+)/);
+            var pid = pidFromUrl ? pidFromUrl[1] : null;
+
+            if (!pid) {
+                console.error("[DiziPal] URL'den PID koparilamadi!");
+                return [];
+            }
+
+            var origin = iframe.split('/').slice(0, 3).join('/');
+            var finalUrl = origin + "/source2.php?v=" + pid;
+            
+            console.error("[DiziPal] Son Istek: " + finalUrl);
+
+            return fetch(finalUrl, { 
                 headers: { 
-                    'Referer': iframeUrl,
-                    'X-Requested-With': 'XMLHttpRequest'
-                }
+                    'Referer': iframe, 
+                    'X-Requested-With': 'XMLHttpRequest' 
+                } 
             })
             .then(function(r) { return r.json(); })
             .then(function(j) {
-                if (!j.file) return [];
-                var stream = j.file.replace(/\\/g, "").replace("m.php", "master.m3u8");
-                console.error("[DiziPal] STREAM OK: " + stream);
-                return [{
-                    name: "DiziPal (Fast)",
-                    url: stream,
-                    type: 'm3u8',
-                    headers: { 'Referer': origin + '/' }
-                }];
+                if (j.file) {
+                    var stream = j.file.replace(/\\/g, "").replace("m.php", "master.m3u8");
+                    console.error("[DiziPal] BAŞARILI! Stream: " + stream);
+                    return [{ name: "DiziPal", url: stream, type: 'm3u8', headers: { 'Referer': origin + '/' } }];
+                }
+                console.error("[DiziPal] source2.php bos dondu veya engellendi.");
+                return [];
             });
         })
-        .catch(function() { return []; });
+        .catch(function(e) { 
+            console.error("[DiziPal] KRITIK HATA: " + e.message);
+            return []; 
+        });
 }
 
 globalThis.getStreams = getStreams;
