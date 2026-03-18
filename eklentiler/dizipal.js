@@ -1,6 +1,3 @@
-/**
- * DiziPal v76 - Visual Debugger (Hatalar uygulama ekranında görünür)
- */
 var cheerio = require("cheerio-without-node-native");
 
 async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
@@ -10,55 +7,43 @@ async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
         var isMovie = mediaType === 'movie' || mediaType === 'film';
         var tmdbUrl = "https://api.themoviedb.org/3/" + (isMovie ? "movie" : "tv") + "/" + tmdbId + "?api_key=4ef0d7355d9ffb5151e987764708ce96&language=tr-TR";
         
-        var tmdbRes = await fetch(tmdbUrl).catch(function(e) { 
-            return { error: "TMDB_FETCH_ERR: " + e.message }; 
-        });
+        // TMDB KONTROL
+        var tmdbRes = await fetch(tmdbUrl).catch(function(e) { return { error: "AĞ_HATASI_TMDB" }; });
+        if (tmdbRes.error) return [{ name: "HATA: TMDB'ye bağlanamadı", url: "http://error.com" }];
 
-        if (tmdbRes.error) {
-            debugResults.push({ name: "HATA: " + tmdbRes.error, url: "http://0.0.0.0" });
-            return debugResults;
-        }
-
-        var tmdbData = await tmdbRes.json();
+        var tmdbData = await tmdbRes.json().catch(function() { return {}; });
         var title = tmdbData.title || tmdbData.name;
-        var slug = title.toLowerCase()
-            .replace(/ç/g, 'c').replace(/ğ/g, 'g').replace(/ş/g, 's').replace(/ı/g, 'i').replace(/ö/g, 'o').replace(/ü/g, 'u')
-            .replace(/[^a-z0-9\s-]/g, '').replace(/\s+/g, '-').trim();
+        if (!title) return [{ name: "HATA: Film adı TMDB'den alınamadı", url: "http://error.com" }];
 
+        var slug = title.toLowerCase().replace(/ç/g,'c').replace(/ğ/g,'g').replace(/ş/g,'s').replace(/ı/g,'i').replace(/ö/g,'o').replace(/ü/g,'u').replace(/[^a-z0-9\s-]/g,'').replace(/\s+/g,'-').trim();
         var url = "https://dizipal1227.com/" + (isMovie ? "film/" : "dizi/") + slug + (isMovie ? "" : "/sezon-" + seasonNum + "/bolum-" + episodeNum);
 
-        var res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' } }).catch(function(e) {
-            return { error: "SITE_FETCH_ERR: " + e.message };
+        // SİTE BAĞLANTI KONTROL
+        var res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' } }).catch(function(e) { 
+            return { error: "SSL_VEYA_BAGLANTI_HATASI" }; 
         });
 
-        if (res.error) {
-            debugResults.push({ name: "HATA: " + res.error, url: "http://0.0.0.0" });
-            return debugResults;
-        }
+        if (res.error) return [{ name: "HATA: Siteye ulaşılamıyor (SSL/Engel)", url: "http://error.com" }];
+        if (!res.ok) return [{ name: "HATA: Site 404/Hata döndürdü", url: "http://error.com" }];
 
-        var html = await res.text();
+        var html = await res.text().catch(function() { return ""; });
         var m = html.match(/\{&quot;ciphertext&quot;:.*?&quot;\}/) || html.match(/\{"ciphertext":.*?"\}/);
         
-        if (!m) {
-            debugResults.push({ name: "HATA: Şifreli veri (ciphertext) bulunamadı", url: "http://0.0.0.0" });
-            return debugResults;
-        }
+        if (!m) return [{ name: "HATA: Kaynak kodda video verisi yok", url: "http://error.com" }];
 
         var clean = m[0].replace(/&quot;/g, '"').replace(/&amp;/g, '&');
         var data = JSON.parse(clean);
         var streamUrl = decrypt(data); 
 
         if (streamUrl) {
-            return [{ name: "DiziPal (Çözüldü)", url: streamUrl, quality: 'Auto', provider: 'dizipal' }];
+            return [{ name: "DiziPal: " + title, url: streamUrl, quality: 'Auto', provider: 'dizipal' }];
         } else {
-            debugResults.push({ name: "HATA: Decrypt Başarısız (Link Çözülemedi)", url: "http://0.0.0.0" });
+            return [{ name: "HATA: Şifre çözme (Decrypt) başarısız", url: "http://error.com" }];
         }
 
-    } catch (globalE) {
-        debugResults.push({ name: "KRITIK_HATA: " + globalE.message, url: "http://0.0.0.0" });
+    } catch (e) {
+        return [{ name: "KRİTİK HATA: " + e.message.substring(0, 20), url: "http://error.com" }];
     }
-
-    return debugResults; 
 }
 
 function decrypt(data) {
