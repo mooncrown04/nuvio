@@ -1,52 +1,49 @@
 /**
- * DiziPal 1543 - Robust Decryption Fix
+ * DiziPal 1543 - Logger & Debugger
  */
 
 var BASE_URL = 'https://dizipal1543.com';
 var PASSPHRASE = "3hPn4uCjTVtfYWcjIcoJQ4cL1WWk1qxXI39egLYOmNv6IblA7eKJz68uU3eLzux1biZLCms0quEjTYniGv5z1JcKbNIsDQFSeIZOBZJz4is6pD7UyWDggWWzTLBQbHcQFpBQdClnuQaMNUHtLHTpzCvZy33p6I7wFBvL4fnXBYH84aUIyWGTRvM2G5cfoNf4705tO2kv";
 
-function decryptData(rawJson) {
+function decryptData(rawContent) {
     try {
-        if (typeof CryptoJS === 'undefined') {
-            console.error("[DiziPal] KRITIK: CryptoJS bulunamadi!");
-            return null;
-        }
+        console.error(`[DiziPal] Gelen Ham Veri Uzunlugu: ${rawContent.length}`);
+        
+        // HTML Entity temizle ve temizlenmis hali logla
+        let clean = rawContent.replace(/&quot;/g, '"').replace(/&amp;/g, '&').trim();
+        console.error(`[DiziPal] Temizlenmis Veri (Ilk 100 Karakter): ${clean.substring(0, 100)}`);
 
-        // JSON hatasini onlemek icin manuel regex ile veri cekme
-        const ciphertext = rawJson.match(/"ciphertext"\s*:\s*"([^"]+)"/)?.[1];
-        const ivHex = rawJson.match(/"iv"\s*:\s*"([^"]+)"/)?.[1];
-        const saltHex = rawJson.match(/"salt"\s*:\s*"([^"]+)"/)?.[1];
+        // Degerleri cimbizla cek
+        const ct = clean.match(/"ciphertext"\s*:\s*"([^"]+)"/)?.[1];
+        const iv = clean.match(/"iv"\s*:\s*"([^"]+)"/)?.[1];
+        const salt = clean.match(/"salt"\s*:\s*"([^"]+)"/)?.[1];
 
-        if (!ciphertext || !ivHex || !saltHex) {
-            console.error("[DiziPal] Veri eksik: CT, IV veya Salt bulunamadi.");
-            return null;
-        }
+        // Hangi degerin eksik oldugunu spesifik olarak logla
+        if (!ct) console.error("[DiziPal] Eksik Parca: ciphertext bulunamadi!");
+        if (!iv) console.error("[DiziPal] Eksik Parca: iv bulunamadi!");
+        if (!salt) console.error("[DiziPal] Eksik Parca: salt bulunamadi!");
 
-        const salt = CryptoJS.enc.Hex.parse(saltHex);
-        const iv = CryptoJS.enc.Hex.parse(ivHex);
-        const key = CryptoJS.PBKDF2(PASSPHRASE, salt, {
-            keySize: 256 / 32,
-            iterations: 999,
-            hasher: CryptoJS.algo.SHA512
+        if (!ct || !iv || !salt) return null;
+
+        const key = CryptoJS.PBKDF2(PASSPHRASE, CryptoJS.enc.Hex.parse(salt), {
+            keySize: 256 / 32, iterations: 999, hasher: CryptoJS.algo.SHA512
         });
 
-        const decrypted = CryptoJS.AES.decrypt(ciphertext, key, {
-            iv: iv,
-            padding: CryptoJS.pad.Pkcs7,
-            mode: CryptoJS.mode.CBC
+        const decrypted = CryptoJS.AES.decrypt(ct, key, {
+            iv: CryptoJS.enc.Hex.parse(iv), padding: CryptoJS.pad.Pkcs7, mode: CryptoJS.mode.CBC
         });
 
-        const decryptedStr = decrypted.toString(CryptoJS.enc.Utf8);
-        return decryptedStr ? decryptedStr.replace(/\\/g, "").replace(/"/g, "") : null;
+        const result = decrypted.toString(CryptoJS.enc.Utf8);
+        return result ? result.replace(/[\\"]/g, "") : null;
 
     } catch (e) {
-        console.error("[DiziPal] Sifre Cozme Hatasi: " + e.message);
+        console.error(`[DiziPal] KRITIK HATA (Decrypt): ${e.message}`);
         return null;
     }
 }
 
 async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
-    console.error(`[DiziPal] Sorgu: ${tmdbId} | S${seasonNum}E${episodeNum}`);
+    console.error(`[DiziPal] ISTEK: ${tmdbId} | S${seasonNum}E${episodeNum}`);
 
     try {
         const type = mediaType === 'movie' ? 'movie' : 'tv';
@@ -54,7 +51,7 @@ async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
         const tmdbData = await tmdbRes.json();
         const query = (tmdbData.name || tmdbData.title || "").trim();
 
-        // 1. Arama (GET)
+        // GET ile Arama
         const searchRes = await fetch(`${BASE_URL}/arama?q=${encodeURIComponent(query)}`, {
             headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
         });
@@ -62,54 +59,31 @@ async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
         const pathMatch = searchHtml.match(new RegExp(`href="\/([^"]*${mediaType === 'tv' ? 'series|dizi' : 'movie|film'}[^"]*)"`, 'i'));
         let slug = pathMatch ? pathMatch[1].split('/').pop() : query.toLowerCase().replace(/\s+/g, '-');
 
-        // 2. Sayfa Yukle
         let targetUrl = `${BASE_URL}/${mediaType === 'tv' ? 'bolum' : 'film'}/${slug}`;
         if (mediaType === 'tv') targetUrl += `-${seasonNum}x${episodeNum}`;
         
-        console.error(`[DiziPal] Adres: ${targetUrl}`);
+        console.error(`[DiziPal] Sayfa Hedefi: ${targetUrl}`);
         const pageRes = await fetch(targetUrl);
         const pageHtml = await pageRes.text();
-        const encryptedDiv = pageHtml.match(/<div[^>]*data-rm-k="true"[^>]*>(.*?)<\/div>/);
         
-        if (!encryptedDiv) {
-            console.error("[DiziPal] data-rm-k divi yok.");
+        // Div'in ham halini yakala
+        const divMatch = pageHtml.match(/<div[^>]*data-rm-k="true"[^>]*>(.*?)<\/div>/);
+        
+        if (!divMatch) {
+            console.error("[DiziPal] HATA: data-rm-k div'i sayfada yok! (Sayfa HTML uzunlugu: " + pageHtml.length + ")");
             return [];
         }
 
-        // 3. Iframe'e Ulas
-        let iframeUrl = decryptData(encryptedDiv[1]);
+        let iframeUrl = decryptData(divMatch[1]);
         if (!iframeUrl) return [];
-        if (iframeUrl.startsWith("//")) iframeUrl = "https:" + iframeUrl;
         
-        console.error(`[DiziPal] Iframe URL: ${iframeUrl}`);
-
-        // 4. Player ve Stream URL (Master Playlist)
-        const playerRes = await fetch(iframeUrl, { headers: { 'Referer': targetUrl } });
-        const playerHtml = await playerRes.text();
-        const playlistId = playerHtml.match(/window\.openPlayer\s*\(\s*['"]([^'"]+)['"]/)?.[1];
+        console.error(`[DiziPal] COZULEN URL: ${iframeUrl}`);
         
-        if (playlistId) {
-            const playerOrigin = new URL(iframeUrl).origin;
-            const apiRes = await fetch(`${playerOrigin}/source2.php?v=${playlistId}`, { 
-                headers: { 'Referer': iframeUrl, 'X-Requested-With': 'XMLHttpRequest' } 
-            });
-            const apiJson = await apiRes.json();
-            
-            if (apiJson.file) {
-                const streamUrl = apiJson.file.replace(/\\/g, "").replace("m.php", "master.m3u8");
-                console.error(`[DiziPal] BASARILI: ${streamUrl}`);
-                
-                return [{
-                    name: "DiziPal (DPlayer)",
-                    url: streamUrl,
-                    type: 'm3u8',
-                    headers: { 'Referer': iframeUrl, 'Origin': playerOrigin }
-                }];
-            }
-        }
+        // ... (Bundan sonrasi playlist ID ve stream çekme)
+        return []; 
 
     } catch (err) {
-        console.error(`[DiziPal] Beklenmedik Hata: ${err.message}`);
+        console.error(`[DiziPal] ANA HATA: ${err.message}`);
     }
     return [];
 }
