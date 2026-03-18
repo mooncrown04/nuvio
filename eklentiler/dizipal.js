@@ -1,3 +1,4 @@
+//ayt
 var cheerio = require("cheerio-without-node-native");
 
 async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
@@ -26,65 +27,51 @@ async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
             const streamUrl = decrypt(JSON.parse(cleanData));
             
             if (streamUrl && streamUrl.startsWith('http')) {
-                return [{ 
-                    name: "DiziPal (Full HD)", 
-                    url: streamUrl, 
-                    quality: '1080p', 
-                    provider: 'dizipal' 
-                }];
+                return [{ name: "DiziPal (V3)", url: streamUrl, quality: 'Auto', provider: 'dizipal' }];
             } else {
-                console.error("Dizipal_Debug: Gecersiz Link: " + streamUrl);
+                console.error("Dizipal_Debug: Cozumleme Sonucu Gecersiz: " + (streamUrl ? "Format Hatasi" : "Null"));
             }
         }
-    } catch (e) {
-        console.error("Dizipal_Debug: Kritik Hata: " + e.message);
-    }
+    } catch (e) { console.error("Dizipal_Debug: Kritik Hata: " + e.message); }
     return [];
+}
+
+// Manuel Base64 Çözücü (atob hatalarını önlemek için)
+function base64ToBytes(b64) {
+    const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let str = b64.replace(/[=]/g, "");
+    let bytes = new Uint8Array((str.length * 3) >> 2);
+    for (let i = 0, j = 0; i < str.length; i += 4) {
+        let n = (chars.indexOf(str[i]) << 18) | (chars.indexOf(str[i + 1]) << 12) | 
+                ((chars.indexOf(str[i + 2]) | 0) << 6) | (chars.indexOf(str[i + 3]) | 0);
+        bytes[j++] = (n >> 16) & 0xFF;
+        if (j < bytes.length) bytes[j++] = (n >> 8) & 0xFF;
+        if (j < bytes.length) bytes[j++] = n & 0xFF;
+    }
+    return bytes;
 }
 
 function decrypt(data) {
     const P = "3hPn4uCjTVtfYWcjIcoJQ4cL1WWk1qxXI39egLYOmNv6IblA7eKJz68uU3eLzux1biZLCms0quEjTYniGv5z1JcKbNIsDQFSeIZOBZJz4is6pD7UyWDggWWzTLBQbHcQFpBQdClnuQaMNUHtLHTpzCvZy33p6I7wFBvL4fnXBYH84aUIyWGTRvM2G5cfoNf4705tO2kv";
     
     try {
-        // 1. Base64 verisini hazırla ve Padding (==) ekle
-        let b64 = data.ciphertext.replace(/\\/g, '').replace(/\s/g, '');
-        while (b64.length % 4 !== 0) b64 += '=';
+        const ct = base64ToBytes(data.ciphertext.replace(/\\/g, '').replace(/\s/g, ''));
+        const iv = data.iv.match(/.{1,2}/g).map(h => parseInt(h, 16));
+        const salt = data.salt.match(/.{1,2}/g).map(h => parseInt(h, 16));
 
-        // 2. Binary dönüşümü
-        const binaryStr = atob(b64);
-        const ct = new Uint8Array(binaryStr.length);
-        for (let i = 0; i < binaryStr.length; i++) {
-            ct[i] = binaryStr.charCodeAt(i);
-        }
-
-        // 3. IV ve SALT
-        const iv = new Uint8Array(data.iv.match(/.{1,2}/g).map(h => parseInt(h, 16)));
-        const salt = new Uint8Array(data.salt.match(/.{1,2}/g).map(h => parseInt(h, 16)));
-
-        // 4. Anahtar Üretimi (32 byte)
-        const key = new Uint8Array(32);
-        for (let i = 0; i < 32; i++) {
-            key[i] = salt[i] ^ P.charCodeAt(i % P.length);
-        }
-
-        // 5. XOR Çözümü ve String İnşası
+        const key = salt.slice(0, 32).map((b, i) => b ^ P.charCodeAt(i % P.length));
+        
         let decrypted = "";
         for (let i = 0; i < ct.length; i++) {
-            const byte = ct[i] ^ key[i % key.length] ^ iv[i % iv.length];
-            // Sadece anlamlı karakterleri ekle (Null byte temizliği)
-            if (byte > 0) decrypted += String.fromCharCode(byte);
+            const b = ct[i] ^ key[i % key.length] ^ iv[i % iv.length];
+            if (b >= 32 && b <= 126) decrypted += String.fromCharCode(b);
         }
 
-        // 6. Link Ayıklama (Gelişmiş Regex)
-        const linkMatch = decrypted.match(/https?:\/\/[^"'\s<>\\^`{|}[\]]+/);
+        const linkMatch = decrypted.match(/https?:\/\/[^\s"']+/);
         if (linkMatch) {
-            let finalLink = linkMatch[0].replace(/\\\//g, '/');
-            // Link sonundaki olası bozuklukları temizle
-            return finalLink.split(/[ "']/)[0];
+            return linkMatch[0].replace(/\\\//g, '/').split(/[\\\\"']/)[0];
         }
-    } catch (e) {
-        console.error("Dizipal_Debug: Decrypt Hatasi: " + e.message);
-    }
+    } catch (e) { console.error("Dizipal_Debug: Decrypt Istisna: " + e.message); }
     return null;
 }
 
