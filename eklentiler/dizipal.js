@@ -1,5 +1,5 @@
 /**
- * DiziPal v66 - mPlayerFd Selector & List-Safe Output
+ * DiziPal v67 - Safe Return & Bot Bypass
  */
 
 var cheerio = require("cheerio-without-node-native");
@@ -16,7 +16,8 @@ var utils = {
     },
     base64ToBytes: function(base64) {
         try {
-            var binary = (typeof atob !== 'undefined') ? atob(base64.replace(/\\/g, '')) : Buffer.from(base64.replace(/\\/g, ''), 'base64').toString('binary');
+            var b = base64.replace(/\\/g, '').replace(/\s/g, '');
+            var binary = (typeof atob !== 'undefined') ? atob(b) : Buffer.from(b, 'base64').toString('binary');
             return Array.from(binary).map(function(c) { return c.charCodeAt(0); });
         } catch (e) { return []; }
     },
@@ -25,92 +26,94 @@ var utils = {
     },
     slugify: function(text) {
         var trMap = {'ç':'c','ğ':'g','ş':'s','ı':'i','ö':'o','ü':'u'};
-        return text.toLowerCase().replace(/[çğşıöü]/g, function(m) { return trMap[m]; }).replace(/[^a-z0-9\s-]/g, '').replace(/\s+/g, '-').trim();
+        return String(text).toLowerCase().replace(/[çğşıöü]/g, function(m) { return trMap[m]; }).replace(/[^a-z0-9\s-]/g, '').replace(/\s+/g, '-').trim();
     }
 };
 
 async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
-    // KESİN KURAL: Dönecek sonuç daima liste olmalı
-    var finalResults = []; 
+    // KRİTİK: Her zaman bu diziyi döndüreceğiz
+    var results = []; 
 
     try {
         var isMovie = mediaType === 'movie' || mediaType === 'film';
-        var tmdbUrl = 'https://api.themoviedb.org/3/' + (isMovie ? 'movie' : 'tv') + '/' + tmdbId + '?api_key=' + TMDB_KEY + '&language=tr-TR';
+        var tmdbUrl = "https://api.themoviedb.org/3/" + (isMovie ? "movie" : "tv") + "/" + tmdbId + "?api_key=" + TMDB_KEY + "&language=tr-TR";
         
         var tmdbRes = await fetch(tmdbUrl);
         var tmdbData = await tmdbRes.json();
         var slug = utils.slugify(tmdbData.title || tmdbData.name || "");
 
         var targetUrl = isMovie 
-            ? BASE_URL + '/film/' + slug 
-            : BASE_URL + '/dizi/' + slug + '/sezon-' + seasonNum + '/bolum-' + episodeNum;
+            ? BASE_URL + "/film/" + slug 
+            : BASE_URL + "/dizi/" + slug + "/sezon-" + seasonNum + "/bolum-" + episodeNum;
 
+        // BOT Korumasını geçmek için daha detaylı header
         var response = await fetch(targetUrl, { 
-            headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36', 'Referer': BASE_URL } 
+            headers: { 
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+                'Referer': BASE_URL + '/',
+                'Accept-Language': 'tr-TR,tr;q=0.9'
+            } 
         });
         
         var html = await response.text();
-        var $ = cheerio.load(html);
-
-        // --- YENİ SEÇİCİ STRATEJİSİ ---
-        // data-rm-k="true" olan ve mPlayerFd içeren her şeyi tara
-        var rawData = $('div[data-rm-k="true"], .mPlayerFd, #mPlayerFd').first().text();
         
-        // Regex Fallback (Eğer Cheerio yine kaçırırsa)
-        if (!rawData || rawData.length < 20) {
-            var regex = /\{&quot;ciphertext&quot;:.*?\}/g;
-            var match = html.match(regex);
-            if (match) rawData = match[0];
+        // --- VERİ BULMA ---
+        var rawData = "";
+        
+        // 1. mPlayerFd veya data-rm-k ara
+        var $ = cheerio.load(html);
+        rawData = $('div[data-rm-k="true"], .mPlayerFd, #mPlayerFd, [data-component="Player"]').first().text();
+        
+        // 2. Regex (Eğer div bulunamazsa HTML içinde ham ara)
+        if (!rawData || rawData.length < 10) {
+            var m = html.match(/\{&quot;ciphertext&quot;:.*?&quot;\}/) || html.match(/\{"ciphertext":.*?"\}/);
+            if (m) rawData = m[0];
         }
 
         if (rawData) {
-            // HTML Entity temizliği ve JSON parse
-            var cleanJson = rawData.replace(/&quot;/g, '"').replace(/&amp;/g, '&');
-            var data = JSON.parse(cleanJson);
+            var clean = rawData.replace(/&quot;/g, '"').replace(/&amp;/g, '&');
+            var data = JSON.parse(clean);
             
             var streamUrl = decryptLogic(data);
             if (streamUrl) {
-                finalResults.push({
-                    name: "DiziPal (v66)",
+                results.push({
+                    name: "DiziPal (v67)",
                     url: streamUrl,
                     quality: 'Auto',
                     provider: 'dizipal'
                 });
             }
-        } else {
-            console.error('[DiziPal] Veri kaynağı (mPlayerFd) bulunamadı.');
         }
-
     } catch (err) {
-        console.error('[DiziPal] Kritik Hata:', err.message);
+        console.error('[DiziPal Error]: ' + err.message);
     }
 
-    return finalResults; // List-safe return
+    // java.lang.IllegalStateException: Expected BEGIN_ARRAY çözümüdür
+    return results; 
 }
 
 function decryptLogic(data) {
     if (!data.ciphertext || !data.iv || !data.salt) return null;
-
     var ct = utils.base64ToBytes(data.ciphertext);
     var iv = utils.hexToBytes(data.iv);
     var salt = utils.hexToBytes(data.salt);
-    var pass = PASSPHRASE;
-
-    // Uzun salt desteği ile anahtar türetme
+    
     var key = salt.slice(0, 32).map(function(b, i) {
-        return b ^ pass.charCodeAt(i % pass.length);
+        return b ^ PASSPHRASE.charCodeAt(i % PASSPHRASE.length);
     });
 
     var res = ct.map(function(b, i) { return b ^ key[i % key.length] ^ iv[i % iv.length]; });
     var decoded = utils.bytesToString(res);
 
-    if (decoded.includes('http')) {
+    if (decoded.indexOf('http') !== -1) {
         var match = decoded.match(/https?:\/\/[^\s"']+/);
         return match ? match[0].replace(/\\\//g, '/') : null;
     }
     return null;
 }
 
+// Global scope kaydı
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = { getStreams: getStreams };
 } else {
