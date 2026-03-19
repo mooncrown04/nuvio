@@ -2,49 +2,58 @@ var cheerio = require("cheerio-without-node-native");
 
 async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
     const baseUrl = "https://dizipal1543.com"; 
-    
-    // Tarayıcıyı en gerçekçi şekilde taklit edelim
+    let cookie = "";
+
     const headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-        'Accept-Language': 'tr-TR,tr;q=0.9',
-        'Cache-Control': 'no-cache',
-        'Pragma': 'no-cache',
         'Referer': baseUrl + '/',
-        'Upgrade-Insecure-Requests': '1'
+        'Accept-Language': 'tr-TR,tr;q=0.9'
     };
 
     try {
         const isMovie = mediaType === 'movie' || mediaType === 'film';
         const tmdbUrl = `https://api.themoviedb.org/3/${isMovie ? 'movie' : 'tv'}/${tmdbId}?api_key=4ef0d7355d9ffb5151e987764708ce96&language=tr-TR`;
-        
-        const tmdbRes = await fetch(tmdbUrl).catch(() => null);
-        if (!tmdbRes) return [];
+        const tmdbRes = await fetch(tmdbUrl);
         const tmdbData = await tmdbRes.json();
         const title = tmdbData.title || tmdbData.name;
 
         const slug = title.toLowerCase().replace(/ı/g, 'i').replace(/ğ/g, 'g').replace(/ü/g, 'u').replace(/ş/g, 's').replace(/ö/g, 'o').replace(/ç/g, 'c').replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, '-').trim();
         const finalUrl = `${baseUrl}/${isMovie ? 'film' : 'bolum'}/${slug}${isMovie ? '' : '-' + seasonNum + 'x' + episodeNum}`;
 
-        // Sayfayı çek
+        // ADIM 1: Önce ana sayfadan çerez al (Session başlat)
+        const sessionRes = await fetch(baseUrl, { headers }).catch(() => null);
+        if (sessionRes && sessionRes.headers.get('set-cookie')) {
+            cookie = sessionRes.headers.get('set-cookie').split(';')[0];
+            headers['Cookie'] = cookie;
+        }
+
+        // ADIM 2: İçerik sayfasını çek
         const res = await fetch(finalUrl, { headers }).catch(() => null);
-        if (!res || !res.ok) return [];
+        if (!res) return [];
         const html = await res.text();
-        
-        // 108 karakterlik bloktan kaçınmak için farklı yakalama yöntemleri
+
+        // ADIM 3: Şifreli veriyi tara (Önce 108'den büyük olanı ara)
         let jsonData = null;
-        const jsonMatch = html.match(/\{"ciphertext":.*?"\}/) || html.match(/\{&quot;ciphertext&quot;:.*?&quot;\}/);
-        
-        if (jsonMatch) {
-            const raw = jsonMatch[0].replace(/&quot;/g, '"').replace(/&amp;/g, '&');
-            jsonData = JSON.parse(raw);
-            
-            // Eğer hala 108 ise, sayfa içindeki iframe'lere veya yedek scriptlere bak
-            if (jsonData.ciphertext && jsonData.ciphertext.length <= 108) {
-                console.error("Dizipal_Debug: Kısa veri algılandı (108), yedek yönteme geçiliyor...");
-                const iframeMatch = html.match(/<iframe.*?src=["'](.*?)["']/);
-                if (iframeMatch && !iframeMatch[1].includes('google')) {
-                    return [{ name: "DiziPal (Yedek)", url: iframeMatch[1], quality: 'Auto', provider: 'dizipal' }];
+        const matches = html.matchAll(/\{&quot;ciphertext&quot;:.*?&quot;\}/g);
+        for (const match of matches) {
+            const raw = match[0].replace(/&quot;/g, '"').replace(/&amp;/g, '&');
+            const parsed = JSON.parse(raw);
+            if (parsed.ciphertext && parsed.ciphertext.length > 110) {
+                jsonData = parsed;
+                break;
+            }
+        }
+
+        // ADIM 4: Eğer hala bulunamadıysa iframe'in içine gir
+        if (!jsonData) {
+            const iframeSrc = html.match(/<iframe.*?src=["'](.*?)["']/);
+            if (iframeSrc && iframeSrc[1].includes(baseUrl)) {
+                const iframeRes = await fetch(iframeSrc[1], { headers }).catch(() => null);
+                if (iframeRes) {
+                    const iframeHtml = await iframeRes.text();
+                    const subMatch = iframeHtml.match(/\{"ciphertext":.*?"\}/);
+                    if (subMatch) jsonData = JSON.parse(subMatch[0]);
                 }
             }
         }
@@ -52,10 +61,16 @@ async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
         if (jsonData) {
             const streamUrl = decrypt(jsonData);
             if (streamUrl && streamUrl.startsWith('http')) {
-                return [{ name: "DiziPal (Full HD)", url: streamUrl, quality: '1080p', provider: 'dizipal' }];
+                return [{
+                    name: "DiziPal (Bypass)",
+                    url: streamUrl,
+                    quality: '1080p',
+                    headers: headers, // Çerezleri video isteğine de ekle
+                    isM3U8: streamUrl.includes('m3u8')
+                }];
             }
         }
-    } catch (e) { console.error("Dizipal_Debug: Hata: " + e.message); }
+    } catch (e) { console.error("Dizipal_Debug: " + e.message); }
     return [];
 }
 
