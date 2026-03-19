@@ -1,4 +1,3 @@
-//ayt
 var cheerio = require("cheerio-without-node-native");
 
 async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
@@ -13,6 +12,7 @@ async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
         const tmdbData = await tmdbRes.json();
         const title = tmdbData.title || tmdbData.name;
 
+        // Slug oluşturma
         const slug = title.toLowerCase().replace(/ı/g, 'i').replace(/ğ/g, 'g').replace(/ü/g, 'u').replace(/ş/g, 's').replace(/ö/g, 'o').replace(/ç/g, 'c').replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, '-').trim();
         const finalUrl = `${baseUrl}/${isMovie ? 'film' : 'bolum'}/${slug}${isMovie ? '' : '-' + seasonNum + 'x' + episodeNum}`;
 
@@ -20,46 +20,58 @@ async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
         if (!res || !res.ok) return [];
         const html = await res.text();
         
-        const match = html.match(/\{&quot;ciphertext&quot;:.*?&quot;\}/) || html.match(/\{"ciphertext":.*?"\}/);
+        // Şifreli veriyi ve varsa içindeki özel anahtarları yakalamaya çalış
+        const match = html.match(/\{&quot;ciphertext&quot;:.*?&quot;\}/) || 
+                      html.match(/\{"ciphertext":.*?"\}/) ||
+                      html.match(/data-config='(.*?)'/);
         
         if (match) {
-            const cleanData = match[0].replace(/&quot;/g, '"').replace(/&amp;/g, '&');
-            const streamUrl = decrypt(JSON.parse(cleanData));
+            let jsonStr = match[1] || match[0];
+            jsonStr = jsonStr.replace(/&quot;/g, '"').replace(/&amp;/g, '&');
+            
+            const jsonData = JSON.parse(jsonStr);
+            console.error("Dizipal_Debug: Ciphertext Uzunlugu: " + (jsonData.ciphertext ? jsonData.ciphertext.length : 0));
+            
+            const streamUrl = decrypt(jsonData);
             
             if (streamUrl && streamUrl.startsWith('http')) {
-                return [{ name: "DiziPal (V3)", url: streamUrl, quality: 'Auto', provider: 'dizipal' }];
+                return [{ name: "DiziPal (Full HD)", url: streamUrl, quality: 'Auto', provider: 'dizipal' }];
             } else {
-                console.error("Dizipal_Debug: Cozumleme Sonucu Gecersiz: " + (streamUrl ? "Format Hatasi" : "Null"));
+                console.error("Dizipal_Debug: Cozumleme Basarisiz veya URL Hatali.");
             }
+        } else {
+            console.error("Dizipal_Debug: Sayfada veri bulunamadi.");
         }
-    } catch (e) { console.error("Dizipal_Debug: Kritik Hata: " + e.message); }
+    } catch (e) { console.error("Dizipal_Debug: Hata: " + e.message); }
     return [];
 }
 
-// Manuel Base64 Çözücü (atob hatalarını önlemek için)
-function base64ToBytes(b64) {
-    const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let str = b64.replace(/[=]/g, "");
-    let bytes = new Uint8Array((str.length * 3) >> 2);
-    for (let i = 0, j = 0; i < str.length; i += 4) {
-        let n = (chars.indexOf(str[i]) << 18) | (chars.indexOf(str[i + 1]) << 12) | 
-                ((chars.indexOf(str[i + 2]) | 0) << 6) | (chars.indexOf(str[i + 3]) | 0);
-        bytes[j++] = (n >> 16) & 0xFF;
-        if (j < bytes.length) bytes[j++] = (n >> 8) & 0xFF;
-        if (j < bytes.length) bytes[j++] = n & 0xFF;
-    }
-    return bytes;
+// Güvenli Base64 Çözücü
+function safeAtob(b64) {
+    try {
+        let str = b64.replace(/\\/g, '').replace(/\s/g, '');
+        while (str.length % 4 !== 0) str += '=';
+        return atob(str);
+    } catch (e) { return ""; }
 }
 
 function decrypt(data) {
+    // P anahtarı - Sitenin JS dosyasından alınan en güncel hali
     const P = "3hPn4uCjTVtfYWcjIcoJQ4cL1WWk1qxXI39egLYOmNv6IblA7eKJz68uU3eLzux1biZLCms0quEjTYniGv5z1JcKbNIsDQFSeIZOBZJz4is6pD7UyWDggWWzTLBQbHcQFpBQdClnuQaMNUHtLHTpzCvZy33p6I7wFBvL4fnXBYH84aUIyWGTRvM2G5cfoNf4705tO2kv";
     
     try {
-        const ct = base64ToBytes(data.ciphertext.replace(/\\/g, '').replace(/\s/g, ''));
-        const iv = data.iv.match(/.{1,2}/g).map(h => parseInt(h, 16));
-        const salt = data.salt.match(/.{1,2}/g).map(h => parseInt(h, 16));
+        const binaryStr = safeAtob(data.ciphertext);
+        if (!binaryStr) return null;
 
-        const key = salt.slice(0, 32).map((b, i) => b ^ P.charCodeAt(i % P.length));
+        const ct = new Uint8Array(binaryStr.length);
+        for (let i = 0; i < binaryStr.length; i++) ct[i] = binaryStr.charCodeAt(i);
+
+        const iv = new Uint8Array(data.iv.match(/.{1,2}/g).map(h => parseInt(h, 16)));
+        const salt = new Uint8Array(data.salt.match(/.{1,2}/g).map(h => parseInt(h, 16)));
+
+        // Key ve XOR İşlemi
+        const key = new Uint8Array(32);
+        for (let i = 0; i < 32; i++) key[i] = salt[i] ^ P.charCodeAt(i % P.length);
         
         let decrypted = "";
         for (let i = 0; i < ct.length; i++) {
@@ -68,11 +80,9 @@ function decrypt(data) {
         }
 
         const linkMatch = decrypted.match(/https?:\/\/[^\s"']+/);
-        if (linkMatch) {
-            return linkMatch[0].replace(/\\\//g, '/').split(/[\\\\"']/)[0];
-        }
-    } catch (e) { console.error("Dizipal_Debug: Decrypt Istisna: " + e.message); }
-    return null;
+        return linkMatch ? linkMatch[0].replace(/\\\//g, '/').split(/[\\\\"']/)[0] : null;
+
+    } catch (e) { return null; }
 }
 
 if (typeof module !== 'undefined') module.exports = { getStreams };
