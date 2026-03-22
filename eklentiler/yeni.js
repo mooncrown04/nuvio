@@ -1,88 +1,111 @@
 /**
- * Nuvio Local Scraper - İzle.plus & HotStream Decoder (V8)
+ * Nuvio Local Scraper - FilmciBaba & HotStream Decoder
+ * Version: 1.2.0
  */
 
 var cheerio = require("cheerio-without-node-native");
 
-const TMDB_API_KEY = '500330721680edb6d5f7f12ba7cd9023';
-const DIRECT_BASE = "https://izle.plus";
+// Nuvio'nun tanıdığı ana konfigürasyon
+const config = {
+    name: "FilmciBaba",
+    baseUrl: "https://izle.plus",
+    apiUrl: "https://api.themoviedb.org/3",
+    apiKey: "500330721680edb6d5f7f12ba7cd9023", // TMDB Key
+    id: "999b5a3c-bb95-571e-bd12-f5778eaecbfe"
+};
 
-function getStreams(inputData) {
-    return new Promise(function(resolve) {
-        console.error("[İzlePlus] === HOTSTREAM DECODER BAŞLATILDI ===");
-        
-        var id = (typeof inputData === 'object' ? (inputData.imdbId || inputData.tmdbId) : inputData).toString();
+/**
+ * Nuvio bu fonksiyonu çağırır. 
+ * @param {Object|String} input - IMDb ID veya Movie Objesi
+ */
+async function getStreams(input) {
+    try {
+        console.error("[FilmciBaba] Sorgu Başladı...");
 
-        fetch('https://api.themoviedb.org/3/movie/' + id + '?api_key=' + TMDB_API_KEY + '&language=tr-TR')
-            .then(r => r.json())
-            .then(movie => {
-                var slug = movie.title.toLowerCase()
-                    .replace(/ğ/g, 'g').replace(/ü/g, 'u').replace(/ş/g, 's')
-                    .replace(/ı/g, 'i').replace(/ö/g, 'o').replace(/ç/g, 'c')
-                    .replace(/ /g, '-').replace(/[^\w-]+/g, '');
+        // 1. IMDb ID'den Film Adını ve Slug'ı Çıkar
+        const id = (typeof input === 'object' ? (input.imdbId || input.tmdbId) : input).toString();
+        const movieRes = await fetch(`${config.apiUrl}/movie/${id}?api_key=${config.apiKey}&language=tr-TR`);
+        const movie = await movieRes.json();
+
+        if (!movie.title) throw new Error("Film bilgisi TMDB'den alınamadı.");
+
+        // Türkçe karakterleri temizleyip izle.plus uyumlu slug yapıyoruz
+        const slug = movie.title.toLowerCase()
+            .replace(/ğ/g, 'g').replace(/ü/g, 'u').replace(/ş/g, 's')
+            .replace(/ı/g, 'i').replace(/ö/g, 'o').replace(/ç/g, 'c')
+            .replace(/ /g, '-').replace(/[^\w-]+/g, '');
+
+        const targetUrl = `${config.baseUrl}/${slug}/`;
+        console.error("[FilmciBaba] Hedef Sayfa: " + targetUrl);
+
+        // 2. Film Sayfasını Çek
+        const response = await fetch(targetUrl, { 
+            headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' } 
+        });
+        const html = await response.text();
+        const $ = cheerio.load(html);
+
+        let streams = [];
+
+        // 3. Sayfadaki HotStream Şifreli Listelerini Yakala
+        // HTML içinde /list/N0Vj... şeklinde geçen yapıları arar
+        const listMatches = html.match(/https:\/\/hotstream\.club\/list\/[a-zA-Z0-9+/=]+/gi);
+
+        if (listMatches && listMatches.length > 0) {
+            for (const listUrl of listMatches) {
+                console.error("[FilmciBaba] Şifreli Liste Çözülüyor: " + listUrl);
                 
-                return fetch(DIRECT_BASE + "/" + slug + "/", { headers: { 'User-Agent': 'Mozilla/5.0' } });
-            })
-            .then(res => res.text())
-            .then(function(html) {
-                var $ = cheerio.load(html);
-                var pagesToScan = [];
-
-                $('iframe, [data-src]').each((i, el) => {
-                    var src = $(el).attr('src') || $(el).attr('data-src');
-                    if (src && src.includes('http') && !src.includes('google')) pagesToScan.push(src);
-                });
-
-                return Promise.all(pagesToScan.map(url => {
-                    return fetch(url, { headers: { 'Referer': DIRECT_BASE + '/' } })
-                        .then(r => r.text())
-                        .then(pageContent => {
-                            // 1. STRATEJİ: Doğrudan m3u8 ara
-                            var directMatch = pageContent.match(/https?:\/\/[^\s'"]+\.m3u8[^\s'"]*/gi);
-                            if (directMatch) return { url: directMatch[0], ref: url };
-
-                            // 2. STRATEJİ: HotStream/Hekş şifreli paket ara (Senin JSON örneğindeki yapı)
-                            // "url":"..." veya "file":"..." içindeki uzun Base64 dizilerini yakala
-                            var secretMatch = pageContent.match(/["'](?:url|file)["']\s*:\s*["']([A-Za-z0-9+\/=]{100,})["']/i);
-                            if (secretMatch) {
-                                console.error("[İzlePlus] Şifreli Paket Yakalandı!");
-                                // HotStream genelde bu paketi doğrudan player'a gönderir
-                                // Biz bu linki embed URL'si ile paketleyip gönderiyoruz
-                                return { url: url, isComplex: true, ref: DIRECT_BASE + '/' };
-                            }
-                            return null;
-                        }).catch(() => null);
-                }));
-            })
-            .then(results => {
-                var finalResults = [];
-                results.forEach(res => {
-                    if (res) {
-                        finalResults.push({
-                            name: "İzlePlus (HotStream)",
-                            url: res.url,
-                            quality: "1080p",
-                            isM3u8: res.url.includes('m3u8'),
-                            headers: { 
-                                'Referer': res.ref,
-                                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-                            }
-                        });
+                // HotStream List API'sine istek atıyoruz
+                const listRes = await fetch(listUrl, {
+                    headers: {
+                        'Referer': 'https://hotstream.club/',
+                        'X-Requested-With': 'XMLHttpRequest'
                     }
                 });
+                const listContent = await listRes.text();
 
-                console.error("[İzlePlus] Sonuç: " + finalResults.length);
-                resolve(finalResults);
-            })
-            .catch(err => {
-                console.error("[İzlePlus] Hata: " + err.message);
-                resolve([]);
-            });
-    });
+                // Çözülen içerik içinde .m3u8 veya .mp4 ara
+                const videoMatch = listContent.match(/https?:\/\/[^\s'"]+\.(m3u8|mp4)[^\s'"]*/gi);
+                
+                if (videoMatch) {
+                    streams.push({
+                        name: "FilmciBaba - HotStream",
+                        url: videoMatch[0],
+                        quality: "1080p",
+                        isM3u8: videoMatch[0].includes("m3u8"),
+                        headers: { 
+                            'Referer': 'https://hotstream.club/',
+                            'User-Agent': 'Mozilla/5.0'
+                        }
+                    });
+                }
+            }
+        }
+
+        // 4. Alternatif: Iframe veya doğrudan link taraması (Fallback)
+        $('iframe').each((i, el) => {
+            const src = $(el).attr('src');
+            if (src && (src.includes('m3u8') || src.includes('google'))) {
+                streams.push({
+                    name: "Kaynak #" + (i + 1),
+                    url: src,
+                    quality: "720p",
+                    headers: { 'Referer': config.baseUrl }
+                });
+            }
+        });
+
+        console.error(`[FilmciBaba] Bitti. ${streams.length} kaynak bulundu.`);
+        return streams;
+
+    } catch (error) {
+        console.error("[FilmciBaba] Hata oluştu: " + error.message);
+        return [];
+    }
 }
 
-if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { getStreams };
-} else {
-    global.getStreams = getStreams;
-}
+// Nuvio'nun eklentiyi tanıması için gerekli exportlar
+module.exports = {
+    getStreams,
+    config
+};
