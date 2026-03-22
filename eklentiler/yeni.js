@@ -1,5 +1,5 @@
 /**
- * Nuvio Local Scraper - FilmciBaba (V18 - Player Headers Fix)
+ * Nuvio Local Scraper - FilmciBaba (V19 - URL Pipe Fix)
  */
 
 var cheerio = require("cheerio-without-node-native");
@@ -43,7 +43,7 @@ async function getStreams(input) {
 
         const targetUrl = `${config.baseUrl}/${slug}/`;
         const response = await fetch(targetUrl, { 
-            headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' } 
+            headers: { 'User-Agent': 'Mozilla/5.0' } 
         });
         const html = await response.text();
         
@@ -53,25 +53,24 @@ async function getStreams(input) {
 
         let streams = [];
         for (const link of [...new Set(matches)]) {
-            // HotStream linklerinin çalışması için gereken standart başlıklar
-            const playerHeaders = {
-                'Referer': 'https://hotstream.club/',
-                'User-Agent': 'Mozilla/5.0 (Linux; Android 10; TV Box)',
-                'Origin': 'https://hotstream.club'
-            };
+            
+            // BAŞLIKLARI URL İÇİNE GÖMÜYORUZ (ExoPlayer için en garanti yol)
+            const referer = "https://hotstream.club/";
+            const ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)";
+            const finalUrl = `${link}|Referer=${referer}&User-Agent=${ua}`;
 
             streams.push({
-                name: "FilmciBaba (HotStream)",
-                url: link,
+                name: "FilmciBaba (HotStream HD)",
+                url: finalUrl, // Başlıklar URL'ye eklendi
                 isM3u8: link.includes("/list/"),
-                // Nuvio'da bazı sürümler headers'ı böyle bekler
-                headers: playerHeaders,
-                // Bazı oynatıcılar (ExoPlayer gibi) URL sonuna eklenmiş başlıkları sever
-                // Eğer üstteki çalışmazsa url'yi url + "|Referer=..." şeklinde modifiye edebiliriz.
+                headers: { 
+                    'Referer': referer,
+                    'User-Agent': ua
+                }
             });
         }
 
-        console.error(`[FilmciBaba] Kaynak eklendi, oynatıcıya gönderiliyor...`);
+        console.error(`[FilmciBaba] Oynatıcıya gönderiliyor: ${streams.length} kaynak.`);
         return streams;
 
     } catch (error) {
