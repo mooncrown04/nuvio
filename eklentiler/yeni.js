@@ -1,5 +1,5 @@
 /**
- * Nuvio Local Scraper - FilmciBaba (V24-FIXED)
+ * Nuvio Local Scraper - FilmciBaba (V25 - Advanced Deobfuscation)
  */
 
 const config = {
@@ -28,83 +28,252 @@ function createSlug(title) {
         .replace(/^-+|-+$/g, '');
 }
 
+// Gelişmiş Base64 decoder (URL-safe ve standart)
 function decodeBase64(str) {
     try {
+        if (!str || str.length < 4) return null;
+        
+        // URL-safe karakterleri düzelt
         str = str.replace(/-/g, '+').replace(/_/g, '/');
+        
+        // Padding ekle
         while (str.length % 4) str += '=';
-        return atob(str);
+        
+        // Standart base64
+        let decoded = atob(str);
+        
+        // Eğer hala base64 gibi görünüyorsa (tekrar şifrelenmiş olabilir)
+        if (/^[A-Za-z0-9+/=]+$/.test(decoded) && decoded.length > 20) {
+            try {
+                const second = atob(decoded);
+                if (second.includes('http') || second.includes('//')) {
+                    return second;
+                }
+            } catch (e) {}
+        }
+        
+        return decoded;
     } catch (e) {
         return null;
     }
 }
 
-function extractFromJS(jsCode) {
+// Tüm script taglerini çıkar ve birleştir
+function extractAllScripts(html) {
+    const scripts = [];
+    
+    // <script> tagleri
+    const scriptMatches = html.match(/<script[^>]*>([\s\S]*?)<\/script>/gi) || [];
+    for (const script of scriptMatches) {
+        const content = script.replace(/<script[^>]*>|<\/script>/gi, '');
+        if (content.trim()) scripts.push(content);
+    }
+    
+    // onclick, onload vb event handlerlar
+    const eventMatches = html.match(/\s(on\w+)\s*=\s*["']([^"']+)["']/gi) || [];
+    for (const evt of eventMatches) {
+        const match = evt.match(/\s(on\w+)\s*=\s*["']([^"']+)["']/i);
+        if (match) scripts.push(match[2]);
+    }
+    
+    // data-* attribute'ları
+    const dataMatches = html.match(/data-[a-z-]+\s*=\s*["']([^"']+)["']/gi) || [];
+    for (const data of dataMatches) {
+        const match = data.match(/data-[a-z-]+\s*=\s*["']([^"']+)["']/i);
+        if (match && match[1].length > 20) scripts.push(match[1]);
+    }
+    
+    return scripts.join('\n');
+}
+
+// Gelişmiş video URL çıkarıcı
+function extractVideoUrls(jsCode, html) {
     const results = [];
     
-    let match = jsCode.match(/var\s+(?:source|src|url|file|videoUrl|stream)\s*=\s*["']([^"']+)["']/i);
-    if (match) results.push(match[1]);
+    // 1. Direkt m3u8/mp4 URL'leri
+    const directUrls = jsCode.match(/https?:\/\/[^"'\s]+\.(?:m3u8|mp4|ts|m4s)(?:\?[^"'\s]*)?/gi) || [];
+    results.push(...directUrls);
     
-    const atobMatches = jsCode.match(/atob\(["']([A-Za-z0-9+/=_-]+)["']\)/g) || [];
-    for (const m of atobMatches) {
-        const encoded = m.match(/atob\(["']([^"']+)["']\)/)?.[1];
-        if (encoded) {
-            const decoded = decodeBase64(encoded);
-            if (decoded && (decoded.includes('http') || decoded.includes('.m3u8'))) {
-                results.push(decoded);
-            }
+    // 2. Base64 encoded URL'ler (atob ile)
+    const atobPattern = /atob\(["']([A-Za-z0-9+/=_-]+)["']\)/g;
+    let match;
+    while ((match = atobPattern.exec(jsCode)) !== null) {
+        const decoded = decodeBase64(match[1]);
+        if (decoded) {
+            const urls = decoded.match(/https?:\/\/[^"'\s]+/g) || [];
+            results.push(...urls);
+            if (decoded.includes('http')) results.push(decoded);
         }
     }
     
-    const evalMatches = jsCode.match(/eval\(atob\(["']([A-Za-z0-9+/=_-]+)["']\)\)/g) || [];
-    for (const m of evalMatches) {
-        const encoded = m.match(/eval\(atob\(["']([^"']+)["']\)\)/)?.[1];
-        if (encoded) {
-            const decoded = decodeBase64(encoded);
-            if (decoded) {
-                const innerMatches = decoded.match(/https?:\/\/[^"'\s]+\.m3u8/g) || 
-                                    decoded.match(/https?:\/\/[^"'\s]+/g) || [];
-                results.push(...innerMatches);
-            }
-        }
-    }
-    
-    const jsonMatches = jsCode.match(/JSON\.parse\(atob\(["']([A-Za-z0-9+/=_-]+)["']\)\)/g) || [];
-    for (const m of jsonMatches) {
-        const encoded = m.match(/JSON\.parse\(atob\(["']([^"']+)["']\)\)/)?.[1];
-        if (encoded) {
-            try {
-                const decoded = decodeBase64(encoded);
-                const json = JSON.parse(decoded);
-                if (json.file || json.src || json.url || json.stream) {
-                    results.push(json.file || json.src || json.url || json.stream);
-                }
-                if (json.sources && Array.isArray(json.sources)) {
-                    for (const src of json.sources) {
-                        if (typeof src === 'string') results.push(src);
-                        else if (src.file || src.src) results.push(src.file || src.src);
-                    }
-                }
-            } catch (e) {}
-        }
-    }
-    
-    const sourcesMatch = jsCode.match(/sources\s*:\s*(\[[^\]]+\])/);
-    if (sourcesMatch) {
+    // 3. eval(atob(...)) pattern
+    const evalAtobPattern = /eval\((atob\(["']([A-Za-z0-9+/=_-]+)["']\))\)/g;
+    while ((match = evalAtobPattern.exec(jsCode)) !== null) {
         try {
-            const fixed = sourcesMatch[1]
-                .replace(/'/g, '"')
-                .replace(/(\w+):/g, '"$1":')
-                .replace(/,\s*}/g, '}')
-                .replace(/,\s*]/g, ']');
-            const sources = JSON.parse(fixed);
-            for (const src of sources) {
-                if (typeof src === 'string') results.push(src);
-                else if (src.file || src.src) results.push(src.file || src.src);
+            const decoded = decodeBase64(match[2]);
+            if (decoded) {
+                // Deobfuscated kodu çalıştır ve URL'leri bul
+                const urls = decoded.match(/https?:\/\/[^"'\s]+\.(?:m3u8|mp4|ts)/gi) || 
+                           decoded.match(/https?:\/\/[^"'\s]+/gi) || [];
+                results.push(...urls);
+                
+                // JSON array olabilir
+                if (decoded.includes('[') && decoded.includes(']')) {
+                    try {
+                        const arr = JSON.parse(decoded);
+                        if (Array.isArray(arr)) {
+                            for (const item of arr) {
+                                if (typeof item === 'string' && item.includes('http')) {
+                                    results.push(item);
+                                } else if (item && (item.file || item.src || item.url)) {
+                                    results.push(item.file || item.src || item.url);
+                                }
+                            }
+                        }
+                    } catch (e) {}
+                }
             }
         } catch (e) {}
     }
     
-    return [...new Set(results)];
+    // 4. JSON.parse(atob(...))
+    const jsonAtobPattern = /JSON\.parse\((atob\(["']([A-Za-z0-9+/=_-]+)["']\))\)/g;
+    while ((match = jsonAtobPattern.exec(jsCode)) !== null) {
+        try {
+            const decoded = decodeBase64(match[2]);
+            if (decoded) {
+                const json = JSON.parse(decoded);
+                extractUrlsFromObject(json, results);
+            }
+        } catch (e) {}
+    }
+    
+    // 5. Obfuscated string concatenation
+    const concatPattern = /["'](https?)["']\s*\+\s*["']([^"']+)["']/g;
+    while ((match = concatPattern.exec(jsCode)) !== null) {
+        results.push(match[1] + match[2]);
+    }
+    
+    // 6. Hex encoded
+    const hexPattern = /\\x([0-9a-fA-F]{2})/g;
+    if (hexPattern.test(jsCode)) {
+        try {
+            let hexDecoded = jsCode.replace(/\\x([0-9a-fA-F]{2})/g, (m, p1) => 
+                String.fromCharCode(parseInt(p1, 16))
+            );
+            const urls = hexDecoded.match(/https?:\/\/[^"'\s]+/g) || [];
+            results.push(...urls);
+        } catch (e) {}
+    }
+    
+    // 7. Unicode escape sequences
+    const unicodePattern = /\\u([0-9a-fA-F]{4})/g;
+    if (unicodePattern.test(jsCode)) {
+        try {
+            let unicodeDecoded = jsCode.replace(/\\u([0-9a-fA-F]{4})/g, (m, p1) => 
+                String.fromCharCode(parseInt(p1, 16))
+            );
+            const urls = unicodeDecoded.match(/https?:\/\/[^"'\s]+/g) || [];
+            results.push(...urls);
+        } catch (e) {}
+    }
+    
+    // 8. HTML içindeki data attribute'ları ve meta tagler
+    if (html) {
+        // video src
+        const videoSrc = html.match(/<video[^>]+src\s*=\s*["']([^"']+)["']/i);
+        if (videoSrc) results.push(videoSrc[1]);
+        
+        // source src
+        const sourceMatches = html.match(/<source[^>]+src\s*=\s*["']([^"']+)["']/gi) || [];
+        for (const src of sourceMatches) {
+            const match = src.match(/src\s*=\s*["']([^"']+)["']/i);
+            if (match) results.push(match[1]);
+        }
+        
+        // data-url, data-src vb
+        const dataUrlMatches = html.match(/data-(?:url|src|video|stream)\s*=\s*["']([^"']+)["']/gi) || [];
+        for (const data of dataUrlMatches) {
+            const match = data.match(/data-(?:url|src|video|stream)\s*=\s*["']([^"']+)["']/i);
+            if (match) results.push(match[1]);
+        }
+    }
+    
+    // 9. JWPlayer, Plyr, Video.js config
+    const playerPatterns = [
+        /jwplayer\("[^"]+"\)\.setup\(\s*(\{[\s\S]*?\})\s*\)/,
+        /player\.setup\(\s*(\{[\s\S]*?\})\s*\)/,
+        /new\s+Plyr\([^,]+,\s*(\{[\s\S]*?\})\s*\)/,
+        /videojs\([^,]+,\s*(\{[\s\S]*?\})\s*\)/
+    ];
+    
+    for (const pattern of playerPatterns) {
+        const playerMatch = jsCode.match(pattern);
+        if (playerMatch) {
+            try {
+                let configStr = playerMatch[1]
+                    .replace(/'/g, '"')
+                    .replace(/(\w+):/g, '"$1":')
+                    .replace(/,\s*}/g, '}')
+                    .replace(/,\s*]/g, ']');
+                const playerConfig = JSON.parse(configStr);
+                extractUrlsFromObject(playerConfig, results);
+            } catch (e) {}
+        }
+    }
+    
+    // 10. fetch/xhr istek URL'leri
+    const fetchPattern = /fetch\(["']([^"']+)["']/g;
+    while ((match = fetchPattern.exec(jsCode)) !== null) {
+        if (match[1].includes('http')) results.push(match[1]);
+    }
+    
+    // 11. WebSocket URL'leri (bazen proxy üzerinden stream olabilir)
+    const wsPattern = /ws[s]?:\/\/[^"'\s]+/g;
+    const wsMatches = jsCode.match(wsPattern) || [];
+    results.push(...wsMatches);
+    
+    // 12. Çok katmanlı encoding (base64 içinde base64)
+    const deepBase64Pattern = /["']([A-Za-z0-9+/=_-]{100,})["']/g;
+    while ((match = deepBase64Pattern.exec(jsCode)) !== null) {
+        const decoded = decodeBase64(match[1]);
+        if (decoded && decoded.includes('http')) {
+            results.push(decoded);
+            // İçinde başka base64 var mı?
+            const innerDecoded = decodeBase64(decoded);
+            if (innerDecoded && innerDecoded.includes('http')) {
+                results.push(innerDecoded);
+            }
+        }
+    }
+    
+    return [...new Set(results)].filter(url => 
+        url && 
+        url.startsWith('http') && 
+        (url.includes('.m3u8') || url.includes('.mp4') || url.includes('.ts') || url.includes('stream'))
+    );
+}
+
+// Recursive object URL extractor
+function extractUrlsFromObject(obj, results) {
+    if (!obj || typeof obj !== 'object') return;
+    
+    for (const key of Object.keys(obj)) {
+        const val = obj[key];
+        if (typeof val === 'string' && val.includes('http')) {
+            results.push(val);
+        } else if (Array.isArray(val)) {
+            for (const item of val) {
+                if (typeof item === 'string' && item.includes('http')) {
+                    results.push(item);
+                } else if (typeof item === 'object') {
+                    extractUrlsFromObject(item, results);
+                }
+            }
+        } else if (typeof val === 'object') {
+            extractUrlsFromObject(val, results);
+        }
+    }
 }
 
 async function getStreams(input) {
@@ -179,6 +348,7 @@ async function getStreams(input) {
         const cookie = setCookie ? setCookie.split(';')[0] : "";
         console.error("[FilmciBaba] Cookie:", cookie ? "Var" : "Yok");
 
+        // Embed URL'lerini bul
         const iframeMatches = html.match(/<iframe[^>]+src=["']([^"']+)["']/gi) || [];
         const srcMatches = iframeMatches.map(tag => {
             const match = tag.match(/src=["']([^"']+)["']/);
@@ -237,37 +407,49 @@ async function getStreams(input) {
                 
                 const embedHtml = await embedRes.text();
                 
-                let videoUrls = extractFromJS(embedHtml);
+                // Tüm scriptleri çıkar
+                const allScripts = extractAllScripts(embedHtml);
                 
-                if (videoUrls.length === 0) {
-                    const videoPatterns = [
-                        /["'](https:\/\/[^"']*\.m3u8[^"']*)["']/gi,
-                        /["'](https:\/\/[^"']*\.mp4[^"']*)["']/gi,
-                        /src:\s*["']([^"']+)["']/gi,
-                        /file:\s*["']([^"']+)["']/gi
-                    ];
-                    
-                    for (const pattern of videoPatterns) {
-                        const matches = [...embedHtml.matchAll(pattern)];
-                        for (const match of matches) {
-                            if (match[1] && !videoUrls.includes(match[1])) {
-                                videoUrls.push(match[1]);
-                            }
-                        }
-                    }
-                }
+                // Video URL'lerini bul
+                let videoUrls = extractVideoUrls(allScripts, embedHtml);
                 
+                // Eğer hala bulunamazsa, orijinal linki dene (belki direkt çalışır)
                 if (videoUrls.length === 0 && (link.includes('/list/') || link.includes('.m3u8'))) {
                     videoUrls.push(link);
                 }
                 
+                // Embed sayfasındaki iframe'leri kontrol et (nested embed)
                 if (videoUrls.length === 0) {
-                    console.error("[FilmciBaba] Video URL bulunamadi");
+                    const nestedIframe = embedHtml.match(/<iframe[^>]+src=["']([^"']+)["']/i);
+                    if (nestedIframe && nestedIframe[1]) {
+                        const nestedUrl = nestedIframe[1].startsWith('http') 
+                            ? nestedIframe[1] 
+                            : 'https:' + nestedIframe[1];
+                        
+                        console.error("[FilmciBaba] Nested iframe bulundu:", nestedUrl);
+                        
+                        const nestedRes = await fetch(nestedUrl, {
+                            headers: {
+                                'User-Agent': ua,
+                                'Referer': link
+                            }
+                        });
+                        
+                        if (nestedRes.ok) {
+                            const nestedHtml = await nestedRes.text();
+                            const nestedScripts = extractAllScripts(nestedHtml);
+                            videoUrls = extractVideoUrls(nestedScripts, nestedHtml);
+                        }
+                    }
+                }
+                
+                if (videoUrls.length === 0) {
+                    console.error("[FilmciBaba] Video URL bulunamadi, debug HTML:", embedHtml.substring(0, 2000));
                     continue;
                 }
                 
                 for (const videoUrl of videoUrls) {
-                    console.error("[FilmciBaba] Video URL:", videoUrl);
+                    console.error("[FilmciBaba] Video URL bulundu:", videoUrl.substring(0, 100) + "...");
                     
                     const headers = {
                         'User-Agent': ua,
