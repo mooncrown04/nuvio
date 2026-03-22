@@ -1,5 +1,5 @@
 /**
- * Nuvio Local Scraper - FilmciBaba (V19 - URL Pipe Fix)
+ * Nuvio Local Scraper - FilmciBaba (V20 - Ultimate Headers)
  */
 
 var cheerio = require("cheerio-without-node-native");
@@ -43,34 +43,41 @@ async function getStreams(input) {
 
         const targetUrl = `${config.baseUrl}/${slug}/`;
         const response = await fetch(targetUrl, { 
-            headers: { 'User-Agent': 'Mozilla/5.0' } 
+            headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' } 
         });
         const html = await response.text();
         
+        // Hotstream regex (list ve embed için)
         const matches = html.match(/https:\/\/hotstream\.club\/(?:list|embed)\/[a-zA-Z0-9+/=]+/gi);
-
         if (!matches) return [];
 
         let streams = [];
+        const ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36";
+        
         for (const link of [...new Set(matches)]) {
             
-            // BAŞLIKLARI URL İÇİNE GÖMÜYORUZ (ExoPlayer için en garanti yol)
-            const referer = "https://hotstream.club/";
-            const ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)";
-            const finalUrl = `${link}|Referer=${referer}&User-Agent=${ua}`;
+            // Sunucunun 403 vermemesi için gereken full paket
+            const playHeaders = {
+                'User-Agent': ua,
+                'Referer': 'https://hotstream.club/',
+                'Origin': 'https://hotstream.club',
+                'X-Requested-With': 'com.google.android.youtube', // Bazı playerlarda bypass sağlar
+                'Accept': '*/*',
+                'Connection': 'keep-alive'
+            };
+
+            // URL içine de gömelim (ExoPlayer garantisi)
+            const pipeUrl = `${link}|User-Agent=${encodeURIComponent(ua)}&Referer=${encodeURIComponent('https://hotstream.club/')}&Origin=${encodeURIComponent('https://hotstream.club')}`;
 
             streams.push({
-                name: "FilmciBaba (HotStream HD)",
-                url: finalUrl, // Başlıklar URL'ye eklendi
+                name: "FilmciBaba (HotStream Max)",
+                url: pipeUrl,
                 isM3u8: link.includes("/list/"),
-                headers: { 
-                    'Referer': referer,
-                    'User-Agent': ua
-                }
+                headers: playHeaders
             });
         }
 
-        console.error(`[FilmciBaba] Oynatıcıya gönderiliyor: ${streams.length} kaynak.`);
+        console.error(`[FilmciBaba] 403 Bypass denemesi yapılıyor...`);
         return streams;
 
     } catch (error) {
