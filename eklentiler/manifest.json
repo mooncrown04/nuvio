@@ -10,7 +10,7 @@
       "logo": "https://picon.pics/TR/Ulusal/Atv.png",
       "version": "1.0.1",
       "author": "mooncrown",
-      "supportedTypes": ["movie", "tv"],
+      "supportedTypes": ["movie"],
       "filename": "yeni.js",
       "enabled": true,
       "formats": ["mp4", "mkv", "hls", "m3u8"],
