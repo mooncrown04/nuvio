@@ -1,5 +1,5 @@
 /**
- * Nuvio Local Scraper - FilmciBaba (V16 - ID Auto-Fix)
+ * Nuvio Local Scraper - FilmciBaba (V17 - Fixed)
  */
 
 var cheerio = require("cheerio-without-node-native");
@@ -16,33 +16,34 @@ async function getStreams(input) {
     try {
         console.error("[FilmciBaba] Sorgu Başladı...");
         
-        // 1. ID'yi al ve formatı kontrol et
         let rawId = (typeof input === 'object' ? (input.imdbId || input.tmdbId) : input).toString();
-        
-        // Eğer ID sadece rakamsa (loglardaki gibi 1314786), başına "tt" ekle
         let imdbId = rawId.startsWith("tt") ? rawId : "tt" + rawId;
         
         console.error("[FilmciBaba] İşlenen IMDb ID: " + imdbId);
 
-        // 2. TMDB Sorgusu (tt'li format ile)
+        let movie = null;
+
+        // 1. ADIM: IMDb ID ile TMDB'den ara
         const findUrl = `${config.apiUrl}/find/${imdbId}?api_key=${config.apiKey}&external_source=imdb_id&language=tr-TR`;
         const tmdbRes = await fetch(findUrl);
         const tmdbData = await tmdbRes.json();
         
-        const movie = (tmdbData.movie_results && tmdbData.movie_results[0]) || 
-                      (tmdbData.tv_results && tmdbData.tv_results[0]);
+        movie = (tmdbData.movie_results && tmdbData.movie_results[0]) || 
+                (tmdbData.tv_results && tmdbData.tv_results[0]);
 
+        // 2. ADIM: Bulunamazsa doğrudan TMDB ID olarak dene (Fallback)
         if (!movie) {
-            // Eğer hala bulunamadıysa, belki girdiğimiz ID zaten bir TMDB ID'sidir
             console.error("[FilmciBaba] IMDb ile bulunamadı, TMDB ID olarak deneniyor: " + rawId);
             const fallbackRes = await fetch(`${config.apiUrl}/movie/${rawId}?api_key=${config.apiKey}&language=tr-TR`);
             const fallbackData = await fallbackRes.json();
-            if (fallbackData.title) movie = fallbackData;
+            if (fallbackData && (fallbackData.title || fallbackData.name)) {
+                movie = fallbackData;
+            }
         }
 
-        if (!movie) throw new Error("İçerik hiçbir kaynakta bulunamadı.");
+        if (!movie) throw new Error("İçerik TMDB'de bulunamadı.");
 
-        // 3. Slug ve Sayfa İşlemleri
+        // 3. ADIM: Slug oluştur ve Sayfayı Çek
         const movieTitle = movie.title || movie.name;
         const slug = movieTitle.toLowerCase()
             .replace(/ğ/g, 'g').replace(/ü/g, 'u').replace(/ş/g, 's')
@@ -57,11 +58,10 @@ async function getStreams(input) {
         });
         const html = await response.text();
         
-        // HotStream /list/ veya /embed/ yakala
         const matches = html.match(/https:\/\/hotstream\.club\/(?:list|embed)\/[a-zA-Z0-9+/=]+/gi);
 
         if (!matches) {
-            console.error("[FilmciBaba] Link bulunamadı. Sayfa içeriği çekilememiş olabilir.");
+            console.error("[FilmciBaba] Sayfada video linki bulunamadı.");
             return [];
         }
 
@@ -75,6 +75,7 @@ async function getStreams(input) {
             });
         }
 
+        console.error(`[FilmciBaba] Tamamlandı. ${streams.length} kaynak eklendi.`);
         return streams;
 
     } catch (error) {
