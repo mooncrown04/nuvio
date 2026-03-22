@@ -1,5 +1,5 @@
 /**
- * Nuvio Local Scraper - FilmciBaba (V17 - Fixed)
+ * Nuvio Local Scraper - FilmciBaba (V18 - Player Headers Fix)
  */
 
 var cheerio = require("cheerio-without-node-native");
@@ -19,11 +19,7 @@ async function getStreams(input) {
         let rawId = (typeof input === 'object' ? (input.imdbId || input.tmdbId) : input).toString();
         let imdbId = rawId.startsWith("tt") ? rawId : "tt" + rawId;
         
-        console.error("[FilmciBaba] İşlenen IMDb ID: " + imdbId);
-
         let movie = null;
-
-        // 1. ADIM: IMDb ID ile TMDB'den ara
         const findUrl = `${config.apiUrl}/find/${imdbId}?api_key=${config.apiKey}&external_source=imdb_id&language=tr-TR`;
         const tmdbRes = await fetch(findUrl);
         const tmdbData = await tmdbRes.json();
@@ -31,19 +27,14 @@ async function getStreams(input) {
         movie = (tmdbData.movie_results && tmdbData.movie_results[0]) || 
                 (tmdbData.tv_results && tmdbData.tv_results[0]);
 
-        // 2. ADIM: Bulunamazsa doğrudan TMDB ID olarak dene (Fallback)
         if (!movie) {
-            console.error("[FilmciBaba] IMDb ile bulunamadı, TMDB ID olarak deneniyor: " + rawId);
             const fallbackRes = await fetch(`${config.apiUrl}/movie/${rawId}?api_key=${config.apiKey}&language=tr-TR`);
             const fallbackData = await fallbackRes.json();
-            if (fallbackData && (fallbackData.title || fallbackData.name)) {
-                movie = fallbackData;
-            }
+            if (fallbackData && (fallbackData.title || fallbackData.name)) movie = fallbackData;
         }
 
-        if (!movie) throw new Error("İçerik TMDB'de bulunamadı.");
+        if (!movie) throw new Error("İçerik bulunamadı.");
 
-        // 3. ADIM: Slug oluştur ve Sayfayı Çek
         const movieTitle = movie.title || movie.name;
         const slug = movieTitle.toLowerCase()
             .replace(/ğ/g, 'g').replace(/ü/g, 'u').replace(/ş/g, 's')
@@ -51,8 +42,6 @@ async function getStreams(input) {
             .replace(/ /g, '-').replace(/[^\w-]+/g, '');
 
         const targetUrl = `${config.baseUrl}/${slug}/`;
-        console.error("[FilmciBaba] Hedef Sayfa: " + targetUrl);
-
         const response = await fetch(targetUrl, { 
             headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' } 
         });
@@ -60,22 +49,29 @@ async function getStreams(input) {
         
         const matches = html.match(/https:\/\/hotstream\.club\/(?:list|embed)\/[a-zA-Z0-9+/=]+/gi);
 
-        if (!matches) {
-            console.error("[FilmciBaba] Sayfada video linki bulunamadı.");
-            return [];
-        }
+        if (!matches) return [];
 
         let streams = [];
         for (const link of [...new Set(matches)]) {
+            // HotStream linklerinin çalışması için gereken standart başlıklar
+            const playerHeaders = {
+                'Referer': 'https://hotstream.club/',
+                'User-Agent': 'Mozilla/5.0 (Linux; Android 10; TV Box)',
+                'Origin': 'https://hotstream.club'
+            };
+
             streams.push({
                 name: "FilmciBaba (HotStream)",
                 url: link,
                 isM3u8: link.includes("/list/"),
-                headers: { 'Referer': 'https://hotstream.club/' }
+                // Nuvio'da bazı sürümler headers'ı böyle bekler
+                headers: playerHeaders,
+                // Bazı oynatıcılar (ExoPlayer gibi) URL sonuna eklenmiş başlıkları sever
+                // Eğer üstteki çalışmazsa url'yi url + "|Referer=..." şeklinde modifiye edebiliriz.
             });
         }
 
-        console.error(`[FilmciBaba] Tamamlandı. ${streams.length} kaynak eklendi.`);
+        console.error(`[FilmciBaba] Kaynak eklendi, oynatıcıya gönderiliyor...`);
         return streams;
 
     } catch (error) {
