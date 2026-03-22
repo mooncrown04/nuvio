@@ -1,26 +1,28 @@
 /**
- * Nuvio Local Scraper - İzle.plus (Multi-Strategy Version)
- * Tüm denemeleri (Direct, Recursive, Regex) tek dosyada birleştirir.
+ * Nuvio Local Scraper - İzle.plus & FilmciBaba (Ultra Hybrid)
+ * 1. Strateji: WatchBuddy Aracı Sitesi
+ * 2. Strateji: Doğrudan Site Erişimi (Regex & Iframe)
+ * 3. Strateji: Yedek Arama URL'leri
  */
 
 var cheerio = require("cheerio-without-node-native");
 
-const BASE_URL = "https://izle.plus";
 const TMDB_API_KEY = '500330721680edb6d5f7f12ba7cd9023';
+const WATCHBUDDY_BASE = "https://stream.watchbuddy.tv/icerik/FilmciBaba";
+const DIRECT_BASE = "https://izle.plus";
 
 const HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-    'Referer': BASE_URL + '/',
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+    'Referer': DIRECT_BASE + '/'
 };
 
 function getStreams(inputData) {
     return new Promise(function(resolve) {
-        console.error("[İzlePlus] === HİBRİT SÜREÇ BAŞLATILDI ===");
+        console.error("[Hibrit] === SÜREÇ BAŞLATILDI ===");
         
-        // 1. TMDB ID ve Bilgi Çözme
         var id = (typeof inputData === 'object' ? (inputData.imdbId || inputData.tmdbId) : inputData).toString();
 
+        // TMDB'den film ismini al
         fetch('https://api.themoviedb.org/3/movie/' + id + '?api_key=' + TMDB_API_KEY + '&language=tr-TR')
             .then(r => r.json())
             .then(movie => {
@@ -29,80 +31,63 @@ function getStreams(inputData) {
                     .replace(/ı/g, 'i').replace(/ö/g, 'o').replace(/ç/g, 'c')
                     .replace(/ /g, '-').replace(/[^\w-]+/g, '');
                 
-                var targetUrl = BASE_URL + "/" + slug + "/";
-                console.error("[İzlePlus] Hedef: " + targetUrl);
-                return fetch(targetUrl, { headers: HEADERS });
-            })
-            .then(res => res.text())
-            .then(function(html) {
-                var $ = cheerio.load(html);
-                var allCandidates = [];
+                var izleUrl = DIRECT_BASE + "/" + slug + "/";
+                var buddyUrl = WATCHBUDDY_BASE + "?url=" + encodeURIComponent(izleUrl);
+                
+                console.error("[Hibrit] Deneme 1: WatchBuddy Proxy");
+                console.error("[Hibrit] Deneme 2: Doğrudan Site (" + izleUrl + ")");
 
-                // --- DENEME 1: Standart Iframe ve Data-Src Taraması ---
-                $('iframe, [data-src], .video-embed iframe').each(function(i, elem) {
-                    var src = $(elem).attr('src') || $(elem).attr('data-src');
-                    if (src && src.includes('http') && !src.includes('google')) {
-                        allCandidates.push(src);
+                // İki yöntemi aynı anda (paralel) başlat
+                return Promise.all([
+                    fetch(buddyUrl, { headers: HEADERS }).then(r => r.text()).catch(() => ""),
+                    fetch(izleUrl, { headers: HEADERS }).then(r => r.text()).catch(() => "")
+                ]);
+            })
+            .then(function(contents) {
+                var streams = [];
+                
+                contents.forEach((html, index) => {
+                    if (!html || html.length < 500) return; // Boş veya hata sayfasıysa atla
+
+                    var method = index === 0 ? "Buddy" : "Direct";
+                    var $ = cheerio.load(html);
+
+                    // A) Iframe ve Data-Src taraması
+                    $('iframe, [data-src]').each((i, el) => {
+                        var src = $(el).attr('src') || $(el).attr('data-src');
+                        if (src && src.includes('http') && !src.includes('google')) {
+                            streams.push({
+                                name: "İzlePlus (" + method + " " + (i+1) + ")",
+                                url: src,
+                                quality: "1080p",
+                                headers: { 'Referer': DIRECT_BASE + '/' }
+                            });
+                        }
+                    });
+
+                    // B) Regex ile m3u8/mp4 taraması
+                    var mMatches = html.match(/https?:\/\/[^\s'"]+\.(?:m3u8|mp4)[^\s'"]*/gi);
+                    if (mMatches) {
+                        mMatches.forEach(link => {
+                            streams.push({
+                                name: "İzlePlus (" + method + " Auto)",
+                                url: link,
+                                quality: "Auto",
+                                isM3u8: link.includes('m3u8'),
+                                headers: { 'Referer': DIRECT_BASE + '/' }
+                            });
+                        });
                     }
                 });
 
-                // --- DENEME 2: Regex ile Sayfa İçindeki Gizli m3u8/mp4 Taraması ---
-                var rawMatches = html.match(/https?:\/\/[^\s'"]+\.(?:m3u8|mp4)[^\s'"]*/gi);
-                var directStreams = [];
-                if (rawMatches) {
-                    rawMatches.forEach(function(link) {
-                        directStreams.push({
-                            name: "İzlePlus (Direct Link)",
-                            url: link,
-                            quality: "Auto",
-                            isM3u8: link.includes('m3u8'),
-                            headers: { 'Referer': BASE_URL + '/' }
-                        });
-                    });
-                }
+                // C) Kaynakları Tekilleştir
+                var unique = streams.filter((v, i, a) => a.findIndex(t => t.url === v.url) === i);
 
-                // --- DENEME 3: Yakalanan Iframe'lerin İçine Girip Gerçek Videoyu Bulma ---
-                var deepPromises = allCandidates.map(function(link) {
-                    return fetch(link, { headers: { 'Referer': BASE_URL + '/' } })
-                        .then(r => r.text())
-                        .then(innerHtml => {
-                            var mMatch = innerHtml.match(/https?:\/\/[^\s'"]+\.(?:m3u8|mp4)[^\s'"]*/gi);
-                            if (mMatch) {
-                                return {
-                                    name: "İzlePlus (Deep Scan)",
-                                    url: mMatch[0],
-                                    quality: "1080p",
-                                    isM3u8: mMatch[0].includes('m3u8'),
-                                    headers: { 'Referer': link }
-                                };
-                            }
-                            return null;
-                        }).catch(() => null);
-                });
-
-                return Promise.all([Promise.resolve(directStreams), Promise.all(deepPromises)]);
+                console.error("[Hibrit] Bitti. Toplam: " + unique.length);
+                resolve(unique);
             })
-            .then(function(results) {
-                var finalStreams = [];
-                
-                // Regex sonuçlarını ekle
-                if (results[0]) finalStreams = finalStreams.concat(results[0]);
-                
-                // Derin tarama sonuçlarını ekle
-                if (results[1]) {
-                    results[1].forEach(function(s) { if (s) finalStreams.push(s); });
-                }
-
-                // Tekrarları temizle (URL bazlı)
-                var uniqueResults = finalStreams.filter(function(v, i, a) {
-                    return a.findIndex(function(t) { return t.url === v.url; }) === i;
-                });
-
-                console.error("[İzlePlus] SÜREÇ BİTTİ. Bulunan Toplam Kaynak: " + uniqueResults.length);
-                resolve(uniqueResults);
-            })
-            .catch(function(err) {
-                console.error("[İzlePlus] Kritik Hata: " + err.message);
+            .catch(err => {
+                console.error("[Hibrit] Hata: " + err.message);
                 resolve([]);
             });
     });
