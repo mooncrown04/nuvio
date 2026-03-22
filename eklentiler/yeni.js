@@ -1,6 +1,5 @@
 /**
- * Nuvio Local Scraper - FilmciBaba (WatchBuddy)
- * Esnek Parametre Desteği ve Gelişmiş Loglama
+ * Nuvio Local Scraper - FilmciBaba (Fix: Native Code & Link Conflict)
  */
 
 var cheerio = require("cheerio-without-node-native");
@@ -16,75 +15,71 @@ function getStreams(searchResult) {
         console.error("[FilmciBaba] === SÜREÇ BAŞLATILDI ===");
 
         if (!searchResult) {
-            console.error("[FilmciBaba] KRİTİK HATA: searchResult objesi tamamen boş!");
+            console.error("[FilmciBaba] KRİTİK HATA: Veri gelmedi.");
             return resolve([]);
         }
 
-        // 1. Esnek Parametre Yakalama (Nuvio'nun farklı versiyonları için)
-        var imdb = searchResult.imdbId || searchResult.imdb_id || searchResult.imdb;
-        var title = searchResult.title || searchResult.name || "Bilinmeyen İçerik";
-        var sourceUrl = searchResult.url || searchResult.sourceUrl || searchResult.link;
+        // 1. Kilit Düzeltme: searchResult.link çakışmasını engelle
+        var validUrl = "";
+        
+        // Obje içindeki tüm özellikleri tara ve gerçek bir URL bul
+        for (var key in searchResult) {
+            var value = searchResult[key];
+            // Eğer değer bir metinse, http ile başlıyorsa ve "native code" içermiyorsa bu bizim URL'mizdir
+            if (typeof value === 'string' && value.startsWith('http') && value.indexOf('native code') === -1) {
+                validUrl = value;
+                break; 
+            }
+        }
 
-        console.error("[FilmciBaba] Gelen Veri -> Başlık: " + title + " | IMDb: " + (imdb || "Yok") + " | URL: " + (sourceUrl ? "Dolu" : "Boş"));
+        // Eğer yukarıdaki döngü bulamadıysa searchResult.url'ye bak (link değil!)
+        if (!validUrl && typeof searchResult.url === 'string') validUrl = searchResult.url;
 
-        // 2. URL Kontrolü ve Oluşturma
-        if (!sourceUrl) {
-            console.error("[FilmciBaba] HATA: Nuvio'dan URL gelmedi! İşlem devam edemiyor.");
+        var title = searchResult.title || "Film";
+        console.error("[FilmciBaba] Ayıklanan URL: " + (validUrl ? "BAŞARILI" : "HATA (Bulunamadı)"));
+
+        if (!validUrl) {
+            console.error("[FilmciBaba] HATA: Geçerli bir video sayfası URL'si yakalanamadı.");
             return resolve([]);
         }
 
-        // WatchBuddy URL formatını hazırla
-        var finalTarget = WATCHBUDDY_BASE + "?url=" + encodeURIComponent(sourceUrl);
-        console.error("[FilmciBaba] Hedef URL: " + finalTarget);
+        var finalTarget = WATCHBUDDY_BASE + "?url=" + encodeURIComponent(validUrl);
+        console.error("[FilmciBaba] İstek: " + finalTarget);
 
         fetch(finalTarget, { headers: HEADERS })
-            .then(function(res) {
-                if (!res.ok) throw new Error("Bağlantı Reddedildi: " + res.status);
-                return res.text();
-            })
+            .then(function(res) { return res.text(); })
             .then(function(html) {
                 var $ = cheerio.load(html);
                 var streams = [];
 
-                // HTML içindeki iframe'leri tara (4.js yapısı)
+                // Paylaştığın 4.js dökümündeki iframe yapısını bul
                 $('iframe').each(function(i, elem) {
                     var src = $(elem).attr('src');
                     if (src && src.startsWith('http')) {
-                        console.error("[FilmciBaba] Stream Kaynağı Yakalandı: " + src.substring(0, 50));
                         streams.push({
-                            name: "FilmciBaba (Server " + (i + 1) + ")",
-                            title: title,
+                            name: "FilmciBaba - Kaynak " + (i + 1),
                             url: src,
                             quality: "1080p",
-                            headers: { 
-                                'User-Agent': HEADERS['User-Agent'],
-                                'Referer': finalTarget 
-                            }
+                            headers: { 'User-Agent': HEADERS['User-Agent'], 'Referer': finalTarget }
                         });
                     }
                 });
 
-                // Alternatif: Script içindeki gizli m3u8 linklerini tara
+                // Eğer iframe yoksa m3u8 regex tara
                 if (streams.length === 0) {
-                    console.error("[FilmciBaba] Element bulunamadı, script taranıyor...");
-                    var m3u8Links = html.match(/https?:\/\/[^\s'"]+\.m3u8[^\s'"]*/gi);
-                    if (m3u8Links) {
-                        m3u8Links.forEach(function(link, index) {
-                            streams.push({
-                                name: "FilmciBaba Auto-" + (index + 1),
-                                url: link,
-                                quality: "Auto",
-                                headers: HEADERS
-                            });
+                    var m3u8s = html.match(/https?:\/\/[^\s'"]+\.m3u8[^\s'"]*/gi);
+                    if (m3u8s) {
+                        m3u8s.forEach(function(l) {
+                            streams.push({ name: "FilmciBaba Auto", url: l, quality: "Auto", headers: HEADERS });
                         });
                     }
                 }
 
-                console.error("[FilmciBaba] Süreç Bitti. Toplam Stream: " + streams.length);
+                console.error("[FilmciBaba] BİTTİ. Stream Sayısı: " + streams.length);
                 resolve(streams);
             })
             .catch(function(err) {
-                console.error("[FilmciBaba] KRİTİK HATA: " + err.message);
+                console.error("[FilmciBaba] FETCH HATASI: " + err.message);
                 resolve([]);
             });
     });
