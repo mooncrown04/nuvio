@@ -1,5 +1,5 @@
 /**
- * Nuvio Local Scraper - FilmciBaba (V21 - Referer Sync)
+ * Nuvio Local Scraper - FilmciBaba (V22 - Cookie Persistence)
  */
 
 var cheerio = require("cheerio-without-node-native");
@@ -44,29 +44,41 @@ async function getStreams(input) {
         const targetUrl = `${config.baseUrl}/${slug}/`;
         const ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36";
         
+        // 1. ADIM: Sayfayı yükle ve varsa çerezleri (set-cookie) al
         const response = await fetch(targetUrl, { 
             headers: { 'User-Agent': ua } 
         });
-        const html = await response.text();
         
+        // Çerezleri ayıkla
+        const setCookie = response.headers.get('set-cookie');
+        const cookie = setCookie ? setCookie.split(';')[0] : "";
+        
+        const html = await response.text();
         const matches = html.match(/https:\/\/hotstream\.club\/(?:list|embed)\/[a-zA-Z0-9+/=]+/gi);
         if (!matches) return [];
 
         let streams = [];
         for (const link of [...new Set(matches)]) {
             
-            // KRİTİK DEĞİŞİKLİK: Referer olarak videonun bulunduğu siteyi veriyoruz
-            const pipeUrl = `${link}|User-Agent=${encodeURIComponent(ua)}&Referer=${encodeURIComponent(config.baseUrl + '/')}&Origin=${encodeURIComponent(config.baseUrl)}`;
+            // 2. ADIM: Oynatıcı için başlıkları hazırla
+            const headers = {
+                'User-Agent': ua,
+                'Referer': targetUrl, // Tam sayfa linki
+                'Origin': config.baseUrl,
+                'Connection': 'keep-alive'
+            };
+            
+            if (cookie) headers['Cookie'] = cookie;
+
+            // URL içine başlıkları göm (ExoPlayer için en garantisi)
+            let pipeUrl = `${link}|User-Agent=${encodeURIComponent(ua)}&Referer=${encodeURIComponent(targetUrl)}`;
+            if (cookie) pipeUrl += `&Cookie=${encodeURIComponent(cookie)}`;
 
             streams.push({
                 name: "FilmciBaba (HotStream)",
                 url: pipeUrl,
                 isM3u8: link.includes("/list/"),
-                headers: {
-                    'User-Agent': ua,
-                    'Referer': config.baseUrl + '/',
-                    'Origin': config.baseUrl
-                }
+                headers: headers
             });
         }
 
