@@ -1,6 +1,6 @@
 /**
  * Nuvio Local Scraper - HotStream Modülü
- * Veri Kaynağı: KekikStream API / HotStream
+ * Debug Modu Aktif
  */
 
 var cheerio = require("cheerio-without-node-native");
@@ -13,32 +13,53 @@ const WORKING_HEADERS = {
 
 function getStreams(searchResult) {
     return new Promise(function(resolve) {
+        console.log("--- HotStream Scraper Başlatıldı ---");
+        
+        // 1. Kilit Nokta: searchResult parametresi boş mu geliyor?
+        if (!searchResult) {
+            console.error("HATA: getStreams fonksiyonuna searchResult parametresi gönderilmedi!");
+            return resolve([]);
+        }
+
         var streams = [];
 
-        // Örnekten gelen veriyi simüle ediyoruz (searchResult içinden geldiğini varsayalım)
-        // Normalde bu veri bir fetch isteği sonucunda döner.
-        var rawData = {
-            "name": "HotStream",
-            "url": "https://hotstream.club/list/N0VjWTBvb0ppbEo3bUdzeERNL09sNCtqWUVvWS85eDlZb2VEb2s4aWdJZjhPM1cyQkExb0tQYlI3ZXUxNjgxb0hSUWpOa3JLODhYQ245NDV0OC8wejdKcitZZE10S3JhelNhditPZVpEK2U2dnRiM3MrUVF4c0p6SjVuSTlPeGNibTRIemRTRE9vbjlXcjBMOTJaeDJQZC8zcHVGRUloWTc5YXNGV1hxU0lNPQ==",
-            "referer": "https://hotstream.club/embed/wNXSyyQMhUeLa5Z"
-        };
+        try {
+            // Veri simülasyonu
+            var rawData = {
+                "name": "HotStream",
+                "url": "https://hotstream.club/list/N0VjWTBvb0ppbEo3bUdzeERNL09sNCtqWUVvWS85eDlZb2VEb2s4aWdJZjhPM1cyQkExb0tQYlI3ZXUxNjgxb0hSUWpOa3JLODhYQ245NDV0OC8wejdKcitZZE10S3JhelNhditPZVpEK2U2dnRiM3MrUVF4c0p6SjVuSTlPeGNibTRIemRTRE9vbjlXcjBMOTJaeDJQZC8zcHVGRUloWTc5YXNGV1hxU0lNPQ==",
+                "referer": "https://hotstream.club/embed/wNXSyyQMhUeLa5Z"
+            };
 
-        // Eğer URL bir m3u8 listesi döndürüyorsa doğrudan ekle
-        // Değilse, fetch ile içeriği kontrol et
-        streams.push({
-            name: "HotStream (Kekik)",
-            title: searchResult.title || "Film İçeriği",
-            url: rawData.url,
-            quality: "1080p",
-            headers: {
-                'User-Agent': WORKING_HEADERS['User-Agent'],
-                'Referer': rawData.referer, // Kritik: HotStream referer kontrolü yapar
-                'Origin': 'https://hotstream.club'
-            },
-            provider: "HotStream_Scraper"
-        });
+            // 2. Kilit Nokta: URL kontrolü
+            if (!rawData.url || !rawData.url.startsWith('http')) {
+                console.error("HATA: Geçersiz veya eksik rawData.url tespit edildi!", rawData.url);
+            } else {
+                console.log("INFO: URL başarıyla alındı:", rawData.url.substring(0, 30) + "...");
+            }
 
-        // Nuvio'da sonucu döndür
+            streams.push({
+                name: "HotStream (Kekik)",
+                title: searchResult.title || "Film İçeriği",
+                url: rawData.url,
+                quality: "1080p",
+                headers: {
+                    'User-Agent': WORKING_HEADERS['User-Agent'],
+                    'Referer': rawData.referer,
+                    'Origin': 'https://hotstream.club'
+                },
+                provider: "HotStream_Scraper"
+            });
+
+            console.log(`BİLGİ: ${streams.length} adet stream başarıyla eklendi.`);
+
+        } catch (err) {
+            // 3. Kilit Nokta: Kodun çalışma anında oluşabilecek genel hatalar
+            console.error("HATA: getStreams içinde beklenmedik bir hata oluştu!", err.message);
+        }
+
+        // Bitiş Logu
+        console.log("--- HotStream Scraper İşlemi Tamamlandı ---");
         resolve(streams);
     });
 }
