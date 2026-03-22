@@ -1,5 +1,5 @@
 /**
- * Nuvio Local Scraper - FilmciBaba (V28 - SmartTV User-Agent)
+ * Nuvio Local Scraper - FilmciBaba (V29 - Session Aware)
  */
 
 const config = {
@@ -9,18 +9,6 @@ const config = {
     apiKey: "500330721680edb6d5f7f12ba7cd9023",
     id: "999b5a3c-bb95-571e-bd12-f5778eaecbfe"
 };
-
-// SmartTV User-Agent'ları (beload.php bunları gördüğünde video URL döndürüyor)
-const TV_USER_AGENTS = [
-    "Mozilla/5.0 (SMART-TV; Linux; Tizen 2.3) AppleWebKit/538.1 (KHTML, like Gecko) Version/2.3 TV Safari/538.1",
-    "Mozilla/5.0 (Web0S; Linux/SmartTV) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/38.0.2125.122 Safari/537.36 WebAppManager",
-    "Mozilla/5.0 (CrKey armv7l 1.5.16041) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/31.0.1650.0 Safari/537.36",
-    "Mozilla/5.0 (X11; Linux armv7l) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/42.0.2311.152 Safari/537.36 OPR/29.0.1803.0 OMI/4.5.22.37.ALSAN3.3",
-    "Mozilla/5.0 (Linux; Android 5.0; Nexus Player Build/LMY47D) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/42.0.2311.152 Safari/537.36",
-    "Mozilla/5.0 (PlayStation 4 3.11) AppleWebKit/537.73 (KHTML, like Gecko)",
-    "Mozilla/5.0 (X11; U; Linux i686; en-US) AppleWebKit/533.4 (KHTML, like Gecko) Chrome/5.0.375.127 Large Screen Safari/533.4 GoogleTV/162671",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36" // Fallback
-];
 
 function createSlug(title) {
     const turkishMap = {
@@ -95,17 +83,6 @@ function extractVideoUrls(text) {
         }
     } catch (e) {}
     
-    // String concatenation
-    const concatPattern = /["'](https?:\/\/)["']\s*\+\s*["']([^"']+)["'](?:\s*\+\s*["']([^"']+)["'])?/g;
-    let match;
-    while ((match = concatPattern.exec(text)) !== null) {
-        let url = match[1] + match[2];
-        if (match[3]) url += match[3];
-        if (url.includes('.m3u8') || url.includes('.mp4')) {
-            results.push(url);
-        }
-    }
-    
     return [...new Set(results)].filter(url => 
         url && url.startsWith('http') && 
         (url.includes('.m3u8') || url.includes('.mp4') || url.includes('.ts') || url.includes('stream'))
@@ -161,7 +138,6 @@ async function getStreams(input) {
         const slug = createSlug(movieTitle);
         const targetUrl = `${config.baseUrl}/${slug}/`;
         
-        // Normal tarayıcı UA (izle.plus için)
         const normalUA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36";
         
         console.error("[FilmciBaba] Sayfa yukleniyor:", targetUrl);
@@ -226,7 +202,12 @@ async function getStreams(input) {
             try {
                 console.error("[FilmciBaba] Isleniyor:", link);
                 
-                // Önce normal UA ile embed sayfasını çek
+                // Embed ID'sini çıkar (hEk7szkobgFelSf gibi)
+                const embedIdMatch = link.match(/embed\/([a-zA-Z0-9]+)/);
+                const embedId = embedIdMatch ? embedIdMatch[1] : null;
+                console.error("[FilmciBaba] Embed ID:", embedId);
+                
+                // 1. ADIM: Embed sayfasını çek ve cookie/session al
                 const embedHeaders = {
                     'User-Agent': normalUA,
                     'Referer': targetUrl,
@@ -236,111 +217,15 @@ async function getStreams(input) {
                 
                 if (cookie) embedHeaders['Cookie'] = cookie;
                 
-                const embedRes = await fetch(link, { headers: embedHeaders });
+                const embedRes = await fetch(link, { 
+                    headers: embedHeaders,
+                    redirect: 'follow'
+                });
                 
                 if (!embedRes.ok) {
                     console.error("[FilmciBaba] Embed hatasi:", embedRes.status);
                     continue;
                 }
                 
-                const embedHtml = await embedRes.text();
-                
-                // beload.php'yi bul
-                const beloadMatch = embedHtml.match(/src=["']?(\/beload\.php[^"'\s]*)["']?/i);
-                let videoUrls = [];
-                
-                if (beloadMatch) {
-                    const beloadPath = beloadMatch[1];
-                    const beloadUrl = beloadPath.startsWith('http') 
-                        ? beloadPath 
-                        : 'https://hotstream.club' + beloadPath;
-                    
-                    console.error("[FilmciBaba] beload.php bulundu:", beloadUrl);
-                    
-                    // FARKLI TV USER-AGENT'LERİ DENE!
-                    for (const tvUA of TV_USER_AGENTS) {
-                        console.error("[FilmciBaba] TV UA deneniyor:", tvUA.substring(0, 50) + "...");
-                        
-                        const beloadRes = await fetch(beloadUrl, {
-                            headers: {
-                                'User-Agent': tvUA,
-                                'Referer': link,
-                                'Accept': '*/*',
-                                'Accept-Language': 'tr-TR,tr;q=0.9'
-                            }
-                        });
-                        
-                        if (beloadRes.ok) {
-                            const beloadData = await beloadRes.text();
-                            console.error("[FilmciBaba] beload.php yanit uzunluk:", beloadData.length);
-                            
-                            // Eğer yanıt kısaysa ve JSON ise
-                            if (beloadData.length < 1000) {
-                                console.error("[FilmciBaba] beload.php yanit:", beloadData.substring(0, 500));
-                            }
-                            
-                            // URL'leri çıkar
-                            const urls = extractVideoUrls(beloadData);
-                            if (urls.length > 0) {
-                                console.error("[FilmciBaba] URL bulundu! UA:", tvUA.substring(0, 30));
-                                videoUrls.push(...urls);
-                                break; // Başarılı UA bulundu, döngüden çık
-                            }
-                        }
-                    }
-                }
-                
-                // Fallback: Embed HTML'den dene
-                if (videoUrls.length === 0) {
-                    videoUrls = extractVideoUrls(embedHtml);
-                }
-                
-                // Son çare: Orijinal link
-                if (videoUrls.length === 0 && (link.includes('/list/') || link.includes('.m3u8'))) {
-                    videoUrls.push(link);
-                }
-                
-                if (videoUrls.length === 0) {
-                    console.error("[FilmciBaba] Video URL bulunamadi");
-                    continue;
-                }
-                
-                for (const videoUrl of videoUrls) {
-                    console.error("[FilmciBaba] Video URL:", videoUrl.substring(0, 100));
-                    
-                    const headers = {
-                        'User-Agent': normalUA,
-                        'Referer': link,
-                        'Origin': 'https://hotstream.club'
-                    };
-                    
-                    if (cookie) headers['Cookie'] = cookie;
-                    
-                    let pipeUrl = `${videoUrl}|User-Agent=${encodeURIComponent(normalUA)}&Referer=${encodeURIComponent(link)}`;
-                    if (cookie) pipeUrl += `&Cookie=${encodeURIComponent(cookie)}`;
-
-                    streams.push({
-                        name: "FilmciBaba",
-                        title: `${movieTitle} ${releaseYear ? `(${releaseYear})` : ''}`,
-                        url: pipeUrl,
-                        rawUrl: videoUrl,
-                        isM3u8: videoUrl.includes('.m3u8') || videoUrl.includes('/list/') || videoUrl.includes('playlist'),
-                        headers: headers
-                    });
-                }
-                
-            } catch (err) {
-                console.error("[FilmciBaba] Link hatasi:", err.message);
-            }
-        }
-
-        console.error("[FilmciBaba] Toplam stream:", streams.length);
-        return streams;
-
-    } catch (error) {
-        console.error("[FilmciBaba] Hata:", error.message);
-        return [];
-    }
-}
-
-module.exports = { getStreams, config };
+                // Embed sayfasından gelen cookie'yi al
+                const embedSetCookie = embedRes.headers.get('
