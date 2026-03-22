@@ -1,92 +1,85 @@
 /**
- * Nuvio Local Scraper - FilmciBaba (Universal Parser)
+ * Nuvio Local Scraper - FilmciBaba (ID tabanlı tam çözüm)
  */
 
 var cheerio = require("cheerio-without-node-native");
 
+const TMDB_API_KEY = '500330721680edb6d5f7f12ba7cd9023'; // Senin eklentilerindeki anahtar
 const WATCHBUDDY_BASE = "https://stream.watchbuddy.tv/icerik/FilmciBaba";
-const HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Referer': 'https://stream.watchbuddy.tv/'
-};
 
-function getStreams(searchResult) {
+function getStreams(inputData) {
     return new Promise(function(resolve) {
         console.error("[FilmciBaba] === SÜREÇ BAŞLATILDI ===");
-
-        var foundUrl = "";
-
-        // 1. ADIM: Objeyi stringe çevirip içinde URL var mı bak (Hızlı Kontrol)
-        try {
-            var rawString = JSON.stringify(searchResult);
-            console.error("[FilmciBaba] Ham Veri Kontrolü: " + rawString);
-            
-            // 2. ADIM: Obje içindeki tüm stringleri tara
-            function findUrlDeep(obj) {
-                for (var key in obj) {
-                    var val = obj[key];
-                    if (typeof val === 'string' && val.indexOf('http') === 0 && val.indexOf('native code') === -1) {
-                        return val;
-                    } else if (typeof val === 'object' && val !== null) {
-                        var deep = findUrlDeep(val);
-                        if (deep) return deep;
-                    }
-                }
-                return "";
-            }
-            
-            foundUrl = findUrlDeep(searchResult);
-        } catch (e) {
-            console.error("[FilmciBaba] Obje okuma hatası: " + e.message);
+        
+        // Gelen veriyi (ID mi obje mi) kontrol et
+        var tmdbId = "";
+        if (typeof inputData === 'string' || typeof inputData === 'number') {
+            tmdbId = inputData.toString();
+        } else if (inputData && inputData.imdbId) {
+            tmdbId = inputData.imdbId;
         }
 
-        // 3. ADIM: Eğer hala bulunamadıysa (Nuvio bazen doğrudan string gönderir)
-        if (!foundUrl && typeof searchResult === 'string' && searchResult.indexOf('http') === 0) {
-            foundUrl = searchResult;
-        }
+        console.error("[FilmciBaba] Yakalanan ID: " + tmdbId);
 
-        if (!foundUrl) {
-            console.error("[FilmciBaba] KRİTİK HATA: URL bulunamadı. Gelen veri yapısı logda yukarıdadır.");
+        if (!tmdbId) {
+            console.error("[FilmciBaba] HATA: Geçerli bir ID bulunamadı.");
             return resolve([]);
         }
 
-        console.error("[FilmciBaba] URL Yakalandı: " + foundUrl);
-        var finalTarget = WATCHBUDDY_BASE + "?url=" + encodeURIComponent(foundUrl);
+        // 1. ADIM: TMDB'den isim al
+        fetch('https://api.themoviedb.org/3/movie/' + tmdbId + '?api_key=' + TMDB_API_KEY + '&language=tr-TR')
+            .then(function(r) { return r.json(); })
+            .then(function(movie) {
+                if (!movie.title) throw new Error("Film adı bulunamadı.");
+                
+                // Film adını URL dostu yap (slug oluştur)
+                var slug = movie.title.toLowerCase()
+                    .replace(/ /g, '-')
+                    .replace(/[^\w-]+/g, '');
+                
+                // Örnek: izle.plus/ajan-zeta/
+                var izlePlusUrl = "https://izle.plus/" + slug + "/";
+                console.error("[FilmciBaba] Tahmini Site URL: " + izlePlusUrl);
 
-        fetch(finalTarget, { headers: HEADERS })
+                // 2. ADIM: WatchBuddy üzerinden sayfayı çek
+                var finalTarget = WATCHBUDDY_BASE + "?url=" + encodeURIComponent(izlePlusUrl);
+                
+                return fetch(finalTarget, {
+                    headers: { 'User-Agent': 'Mozilla/5.0...', 'Referer': 'https://stream.watchbuddy.tv/' }
+                });
+            })
             .then(function(res) { return res.text(); })
             .then(function(html) {
                 var $ = cheerio.load(html);
                 var streams = [];
 
-                // Iframe ve Video elementlerini ayıkla
-                $('iframe, video, source').each(function(i, elem) {
-                    var src = $(elem).attr('src') || $(elem).attr('href');
+                // 3. ADIM: Video linklerini (iframe/m3u8) ayıkla
+                $('iframe').each(function(i, elem) {
+                    var src = $(elem).attr('src');
                     if (src && src.startsWith('http')) {
                         streams.push({
-                            name: "FilmciBaba - Kaynak " + (i + 1),
+                            name: "FilmciBaba (Kaynak " + (i+1) + ")",
                             url: src,
-                            quality: "1080p",
-                            headers: { 'User-Agent': HEADERS['User-Agent'], 'Referer': finalTarget }
+                            quality: "1080p"
                         });
                     }
                 });
 
-                // Regex ile m3u8 kontrolü
+                // Eğer iframe yoksa düz link ara
                 if (streams.length === 0) {
-                    var matches = html.match(/https?:\/\/[^\s'"]+\.m3u8[^\s'"]*/gi);
-                    if (matches) {
-                        matches.forEach(function(m) {
-                            streams.push({ name: "FilmciBaba Auto", url: m, quality: "Auto", headers: HEADERS });
+                    var m3u8s = html.match(/https?:\/\/[^\s'"]+\.m3u8[^\s'"]*/gi);
+                    if (m3u8s) {
+                        m3u8s.forEach(function(l) {
+                            streams.push({ name: "FilmciBaba Auto", url: l, quality: "Auto" });
                         });
                     }
                 }
 
-                console.error("[FilmciBaba] Tamamlandı. Bulunan: " + streams.length);
+                console.error("[FilmciBaba] İşlem bitti. Stream sayısı: " + streams.length);
                 resolve(streams);
             })
             .catch(function(err) {
-                console.error("[FilmciBaba] Bağlantı Hatası: " + err.message);
+                console.error("[FilmciBaba] KRİTİK HATA: " + err.message);
                 resolve([]);
             });
     });
