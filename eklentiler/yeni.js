@@ -1,5 +1,5 @@
 /**
- * Nuvio Local Scraper - FilmciBaba (V26 - beload.php API)
+ * Nuvio Local Scraper - FilmciBaba (V27 - Full beload.php Parser)
  */
 
 const config = {
@@ -34,10 +34,11 @@ function decodeBase64(str) {
         str = str.replace(/-/g, '+').replace(/_/g, '/');
         while (str.length % 4) str += '=';
         let decoded = atob(str);
+        // Çift base64 kontrolü
         if (/^[A-Za-z0-9+/=]+$/.test(decoded) && decoded.length > 20) {
             try {
                 const second = atob(decoded);
-                if (second.includes('http') || second.includes('//')) return second;
+                if (second.includes('http')) return second;
             } catch (e) {}
         }
         return decoded;
@@ -46,44 +47,176 @@ function decodeBase64(str) {
     }
 }
 
-function extractVideoUrls(text) {
+// Gelişmiş beload.php parser
+function parseBeload(jsCode) {
     const results = [];
     
-    // Direkt URL'ler
-    const directUrls = text.match(/https?:\/\/[^"'\s]+\.(?:m3u8|mp4|ts|m4s)(?:\?[^"'\s]*)?/gi) || [];
-    results.push(...directUrls);
+    console.error("[FilmciBaba] beload.php uzunluk:", jsCode.length);
+    console.error("[FilmciBaba] beload.php ilk 1000 karakter:", jsCode.substring(0, 1000));
     
-    // Base64 encoded
-    const base64Pattern = /["']([A-Za-z0-9+/=_-]{30,})["']/g;
+    // 1. Direkt m3u8/mp4 URL'leri
+    const directUrls = jsCode.match(/https?:\/\/[^"'\s]+\.(?:m3u8|mp4|ts|m4s)(?:\?[^"'\s]*)?/gi) || [];
+    results.push(...directUrls);
+    console.error("[FilmciBaba] Direkt URL bulunan:", directUrls.length);
+    
+    // 2. String concatenation (çok yaygın: "https://" + "cdn..." + "/playlist.m3u8")
+    const concatPattern = /["'](https?:\/\/)["']\s*\+\s*["']([^"']+)["'](?:\s*\+\s*["']([^"']+)["'])?/g;
     let match;
-    while ((match = base64Pattern.exec(text)) !== null) {
-        const decoded = decodeBase64(match[1]);
+    while ((match = concatPattern.exec(jsCode)) !== null) {
+        let url = match[1] + match[2];
+        if (match[3]) url += match[3];
+        if (url.includes('.m3u8') || url.includes('.mp4')) {
+            results.push(url);
+        }
+    }
+    
+    // 3. Hex encoded strings
+    const hexPattern = /\\x([0-9a-fA-F]{2})/g;
+    if (hexPattern.test(jsCode)) {
+        try {
+            let hexDecoded = jsCode.replace(/\\x([0-9a-fA-F]{2})/g, (m, p1) => 
+                String.fromCharCode(parseInt(p1, 16))
+            );
+            const hexUrls = hexDecoded.match(/https?:\/\/[^"'\s]+\.(?:m3u8|mp4)/gi) || [];
+            results.push(...hexUrls);
+        } catch (e) {}
+    }
+    
+    // 4. Unicode escapes
+    const unicodePattern = /\\u([0-9a-fA-F]{4})/g;
+    if (unicodePattern.test(jsCode)) {
+        try {
+            let unicodeDecoded = jsCode.replace(/\\u([0-9a-fA-F]{4})/g, (m, p1) => 
+                String.fromCharCode(parseInt(p1, 16))
+            );
+            const unicodeUrls = unicodeDecoded.match(/https?:\/\/[^"'\s]+\.(?:m3u8|mp4)/gi) || [];
+            results.push(...unicodeUrls);
+        } catch (e) {}
+    }
+    
+    // 5. Base64 encoded blocks (uzun stringler)
+    const base64Blocks = jsCode.match(/["']([A-Za-z0-9+/=_-]{50,})["']/g) || [];
+    for (const block of base64Blocks) {
+        const encoded = block.replace(/["']/g, '');
+        const decoded = decodeBase64(encoded);
         if (decoded && decoded.includes('http')) {
             const urls = decoded.match(/https?:\/\/[^"'\s]+/g) || [];
             results.push(...urls);
         }
     }
     
-    // JSON içindeki URL'ler
-    try {
-        const jsonMatches = text.match(/\{[\s\S]*?\}/g) || [];
-        for (const jsonStr of jsonMatches) {
-            try {
-                const obj = JSON.parse(jsonStr);
-                if (obj.file || obj.src || obj.url || obj.stream) {
-                    results.push(obj.file || obj.src || obj.url || obj.stream);
-                }
-                if (obj.sources && Array.isArray(obj.sources)) {
-                    for (const s of obj.sources) {
-                        if (typeof s === 'string') results.push(s);
-                        else if (s.file || s.src) results.push(s.file || s.src);
-                    }
-                }
-            } catch (e) {}
-        }
-    } catch (e) {}
+    // 6. Array/Dizi içinde URL'ler
+    const arrayPattern = /\[\s*["'](https?:\/\/[^"']+)["']\s*\]/g;
+    while ((match = arrayPattern.exec(jsCode)) !== null) {
+        results.push(match[1]);
+    }
     
-    return [...new Set(results)].filter(url => url && url.startsWith('http'));
+    // 7. Object property'leri
+    const objPattern = /(?:file|src|url|stream|source|video|hls|dash|mp4|m3u8)\s*:\s*["']([^"']+)["']/gi;
+    while ((match = objPattern.exec(jsCode)) !== null) {
+        if (match[1].includes('http')) {
+            results.push(match[1]);
+        }
+    }
+    
+    // 8. fetch/XMLHttpRequest URL'leri
+    const fetchPattern = /fetch\(["']([^"']+)["']\)/g;
+    while ((match = fetchPattern.exec(jsCode)) !== null) {
+        if (match[1].includes('http')) results.push(match[1]);
+    }
+    
+    // 9. WebSocket URL'leri (bazen HLS proxy olarak kullanılır)
+    const wsPattern = /wss?:\/\/[^"'\s]+/g;
+    const wsMatches = jsCode.match(wsPattern) || [];
+    results.push(...wsMatches);
+    
+    // 10. eval(atob(...)) içindeki kod
+    const evalAtobPattern = /eval\((atob\(["']([A-Za-z0-9+/=_-]+)["']\))\)/;
+    const evalMatch = jsCode.match(evalAtobPattern);
+    if (evalMatch) {
+        try {
+            const decoded = decodeBase64(evalMatch[2]);
+            if (decoded) {
+                const innerUrls = decoded.match(/https?:\/\/[^"'\s]+\.(?:m3u8|mp4)/gi) || [];
+                results.push(...innerUrls);
+            }
+        } catch (e) {}
+    }
+    
+    // 11. JSONP callback'leri
+    const jsonpPattern = /callback\((\{[\s\S]*?\})\)/;
+    const jsonpMatch = jsCode.match(jsonpPattern);
+    if (jsonpMatch) {
+        try {
+            const json = JSON.parse(jsonpMatch[1]);
+            if (json.file || json.url || json.src) {
+                results.push(json.file || json.url || json.src);
+            }
+            if (json.sources) {
+                for (const s of json.sources) {
+                    if (typeof s === 'string') results.push(s);
+                    else if (s.file || s.src) results.push(s.file || s.src);
+                }
+            }
+        } catch (e) {}
+    }
+    
+    // 12. JWPlayer/Video.js setup config
+    const setupPattern = /setup\((\{[\s\S]*?\})\)/;
+    const setupMatch = jsCode.match(setupPattern);
+    if (setupMatch) {
+        try {
+            let configStr = setupMatch[1]
+                .replace(/'/g, '"')
+                .replace(/(\w+):/g, '"$1":')
+                .replace(/,\s*}/g, '}')
+                .replace(/,\s*]/g, ']');
+            const playerConfig = JSON.parse(configStr);
+            if (playerConfig.file) results.push(playerConfig.file);
+            if (playerConfig.sources) {
+                for (const s of playerConfig.sources) {
+                    if (typeof s === 'string') results.push(s);
+                    else if (s.file) results.push(s.file);
+                }
+            }
+            if (playerConfig.hls) results.push(playerConfig.hls);
+            if (playerConfig.playlist) results.push(playerConfig.playlist);
+        } catch (e) {}
+    }
+    
+    // 13. document.write veya innerHTML içindeki URL'ler
+    const docWritePattern = /document\.write\(["']([^"']+)["']\)/;
+    const docMatch = jsCode.match(docWritePattern);
+    if (docMatch) {
+        const urls = docMatch[1].match(/https?:\/\/[^"'\s]+/g) || [];
+        results.push(...urls);
+    }
+    
+    // 14. iframe src'leri (dinamik oluşturulmuş)
+    const iframeSrcPattern = /iframe\.src\s*=\s*["']([^"']+)["']/;
+    const iframeMatch = jsCode.match(iframeSrcPattern);
+    if (iframeMatch) {
+        results.push(iframeMatch[1]);
+    }
+    
+    // 15. location.href veya window.open
+    const redirectPattern = /(?:location\.href|window\.open)\(["']([^"']+)["']\)/;
+    const redirectMatch = jsCode.match(redirectPattern);
+    if (redirectMatch) {
+        results.push(redirectMatch[1]);
+    }
+    
+    // Unique ve filtrele
+    const unique = [...new Set(results)].filter(url => 
+        url && 
+        typeof url === 'string' &&
+        url.startsWith('http') && 
+        (url.includes('.m3u8') || url.includes('.mp4') || url.includes('.ts') || 
+         url.includes('stream') || url.includes('playlist') || url.includes('manifest'))
+    );
+    
+    console.error("[FilmciBaba] Toplam bulunan URL:", unique.length);
+    return unique;
 }
 
 async function getStreams(input) {
@@ -217,7 +350,7 @@ async function getStreams(input) {
                 
                 const embedHtml = await embedRes.text();
                 
-                // 1. Önce beload.php'yi çek ve parse et (KRİTİK!)
+                // beload.php'yi bul ve çek
                 const beloadMatch = embedHtml.match(/src=["']?(\/beload\.php[^"'\s]*)["']?/i);
                 let videoUrls = [];
                 
@@ -240,41 +373,19 @@ async function getStreams(input) {
                     
                     if (beloadRes.ok) {
                         const beloadData = await beloadRes.text();
-                        console.error("[FilmciBaba] beload.php yanit:", beloadData.substring(0, 500));
-                        
-                        // beload.php içeriğinden URL'leri çıkar
-                        videoUrls = extractVideoUrls(beloadData);
-                        
-                        // Eğer JSON ise
-                        try {
-                            const jsonData = JSON.parse(beloadData);
-                            if (jsonData.file || jsonData.src || jsonData.url || jsonData.stream) {
-                                videoUrls.push(jsonData.file || jsonData.src || jsonData.url || jsonData.stream);
-                            }
-                            if (jsonData.sources && Array.isArray(jsonData.sources)) {
-                                for (const s of jsonData.sources) {
-                                    if (typeof s === 'string') videoUrls.push(s);
-                                    else if (s.file || s.src) videoUrls.push(s.file || s.src);
-                                }
-                            }
-                            // HLS manifest URL
-                            if (jsonData.manifest || jsonData.hls || jsonData.playlist) {
-                                videoUrls.push(jsonData.manifest || jsonData.hls || jsonData.playlist);
-                            }
-                        } catch (e) {
-                            // JSON değil, text olarak devam et
-                        }
+                        // Tam beload.php parse işlemi
+                        videoUrls = parseBeload(beloadData);
                     } else {
                         console.error("[FilmciBaba] beload.php hatasi:", beloadRes.status);
                     }
                 }
                 
-                // 2. Eğer beload.php'den bulunamazsa, embed HTML'den dene
+                // Fallback: Embed HTML'den de dene
                 if (videoUrls.length === 0) {
-                    videoUrls = extractVideoUrls(embedHtml);
+                    videoUrls = parseBeload(embedHtml);
                 }
                 
-                // 3. Hala bulunamazsa, orijinal linki dene
+                // Son çare: Orijinal link
                 if (videoUrls.length === 0 && (link.includes('/list/') || link.includes('.m3u8'))) {
                     videoUrls.push(link);
                 }
