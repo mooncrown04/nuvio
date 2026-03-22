@@ -1,5 +1,5 @@
 /**
- * Nuvio Local Scraper - FilmciBaba (V32 - Debug Mode & Nuvio Compatible)
+ * Nuvio Local Scraper - FilmciBaba (V33 - ID Fix & Deep Debug)
  */
 
 const config = {
@@ -10,135 +10,109 @@ const config = {
     id: "999b5a3c-bb95-571e-bd12-f5778eaecbfe"
 };
 
-// --- Yardımcı Araçlar ---
 const slugify = (text) => {
     const tr = {"ğ":"g","ü":"u","sh":"s","ı":"i","ö":"o","ç":"c","Ğ":"G","Ü":"U","Ş":"S","İ":"I","Ö":"O","Ç":"C"};
     return text.split('').map(c => tr[c] || c).join('').toLowerCase()
         .replace(/[^a-z0-9\s-]/g, '').replace(/\s+/g, '-').replace(/-+/g, '-').trim();
 };
 
-const extractUrls = (text) => {
-    const regex = /https?:\/\/[^"'\s]+\.(?:m3u8|mp4|ts)(?:\?[^"'\s]*)?/gi;
-    return [...new Set(text.match(regex) || [])];
-};
-
-// --- Ana Fonksiyon ---
 async function getStreams(input) {
     try {
         console.error("[FilmciBaba] >>> Scraper Baslatildi");
-        const id = input.imdbId || input.tmdbId;
-        if (!id) {
-            console.error("[FilmciBaba] Hata: IMDB/TMDB ID bulunamadi");
+        
+        // --- ID YAKALAMA MANTIĞINI GÜÇLENDİRDİK ---
+        // Nuvio'nun farklı versiyonları farklı keyler gönderebilir, hepsini kontrol ediyoruz.
+        let rawId = "";
+        if (typeof input === 'object') {
+            rawId = input.imdbId || input.imdb_id || input.tmdbId || input.tmdb_id || input.id;
+        } else if (typeof input === 'string') {
+            rawId = input;
+        }
+
+        if (!rawId) {
+            // Eğer hala ID yoksa input'un tamamını logla ki ne geldiğini görelim
+            console.error("[FilmciBaba] Hata: Gecerli bir ID bulunamadi. Gelen Input: " + JSON.stringify(input));
             return [];
         }
+
+        const cleanId = rawId.toString().trim();
+        console.error(`[FilmciBaba] Yakalanan ID: ${cleanId}`);
 
         // 1. TMDB Aşaması
-        console.error(`[FilmciBaba] TMDB Sorgusu yapiliyor: ${id}`);
-        const tmdbUrl = `${config.apiUrl}/find/${id.startsWith('tt') ? id : 'tt'+id}?api_key=${config.apiKey}&external_source=imdb_id&language=tr-TR`;
+        const finalImdbId = cleanId.startsWith('tt') ? cleanId : 'tt' + cleanId;
+        const tmdbUrl = `${config.apiUrl}/find/${finalImdbId}?api_key=${config.apiKey}&external_source=imdb_id&language=tr-TR`;
+        
+        console.error(`[FilmciBaba] TMDB Sorgusu: ${tmdbUrl}`);
         const tmdbRes = await fetch(tmdbUrl);
         const tmdbData = await tmdbRes.json();
-        const item = tmdbData.movie_results?.[0] || tmdbData.tv_results?.[0];
         
+        const item = tmdbData.movie_results?.[0] || tmdbData.tv_results?.[0];
         if (!item) {
-            console.error("[FilmciBaba] Hata: TMDB'de icerik karsiligi bulunamadi");
+            console.error(`[FilmciBaba] TMDB'de sonuc yok. ID: ${finalImdbId}`);
             return [];
         }
 
-        const title = item.title || item.name;
-        const slug = slugify(title);
+        const slug = slugify(item.title || item.name);
         const targetUrl = `${config.baseUrl}/${slug}/`;
         const ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36";
 
-        console.error(`[FilmciBaba] Hedef URL: ${targetUrl}`);
+        console.error(`[FilmciBaba] Site Hedefi: ${targetUrl}`);
 
-        // 2. Ana Site ve Cookie Aşaması
+        // 2. Site Erişimi
         const res = await fetch(targetUrl, { headers: { 'User-Agent': ua } });
-        if (!res.ok) {
-            console.error(`[FilmciBaba] Siteye ulasilamadi: HTTP ${res.status}`);
-            return [];
-        }
-
         const html = await res.text();
         const mainCookie = res.headers.get('set-cookie')?.split(';')[0] || "";
-        console.error(`[FilmciBaba] Ana Site Cookie: ${mainCookie ? "Alindi" : "Yok"}`);
 
-        // Hotstream embed ID yakalama
+        // Embed bulma
         const embedMatch = html.match(/https:\/\/hotstream\.club\/(?:embed|list)\/([a-zA-Z0-9]+)/i);
         if (!embedMatch) {
-            console.error("[FilmciBaba] Hotstream Embed linki bulunamadi. Kaynak kod degismis olabilir.");
+            console.error("[FilmciBaba] Sayfada Hotstream linki bulunamadi!");
             return [];
         }
 
         const embedUrl = embedMatch[0];
         const embedId = embedMatch[1];
-        console.error(`[FilmciBaba] Embed Bulundu: ${embedUrl} (ID: ${embedId})`);
+        console.error(`[FilmciBaba] Embed ID: ${embedId}`);
 
-        // 3. Embed Sayfası Aşaması
-        console.error("[FilmciBaba] Embed sayfasi cekiliyor...");
-        const embedRes = await fetch(embedUrl, {
-            headers: { 'User-Agent': ua, 'Referer': targetUrl, 'Cookie': mainCookie }
+        // 3. Hotstream API POST Sorgusu (En sağlam yöntem)
+        console.error("[FilmciBaba] API üzerinden kaynaklar sorgulanıyor...");
+        const apiRes = await fetch(`https://hotstream.club/api/source/${embedId}`, {
+            method: 'POST',
+            headers: {
+                'User-Agent': ua,
+                'Referer': embedUrl,
+                'X-Requested-With': 'XMLHttpRequest',
+                'Cookie': mainCookie
+            }
         });
-        const embedCookie = embedRes.headers.get('set-cookie')?.split(';')[0] || "";
-        const embedHtml = await embedRes.text();
 
         let results = [];
-
-        // Direkt link taraması
-        const directLinks = extractUrls(embedHtml);
-        if (directLinks.length > 0) {
-            console.error(`[FilmciBaba] ${directLinks.length} adet direkt link yakalandi.`);
-            directLinks.forEach(link => {
-                results.push({
-                    name: "FilmciBaba - HLS",
-                    url: link,
-                    headers: { 'User-Agent': ua, 'Referer': embedUrl, 'Cookie': embedCookie || mainCookie }
-                });
-            });
-        }
-
-        // 4. Hotstream API Aşaması (Eğer direkt link yoksa)
-        if (results.length === 0) {
-            console.error("[FilmciBaba] Direkt link yok, API sorgusu deneniyor...");
-            const apiRes = await fetch(`https://hotstream.club/api/source/${embedId}`, {
-                method: 'POST',
-                headers: {
-                    'User-Agent': ua,
-                    'Referer': embedUrl,
-                    'X-Requested-With': 'XMLHttpRequest',
-                    'Cookie': embedCookie || mainCookie
-                }
-            });
-
-            if (apiRes.ok) {
-                const apiData = await apiRes.json();
-                if (apiData.data && apiData.data.length > 0) {
-                    console.error(`[FilmciBaba] API üzerinden ${apiData.data.length} kaynak bulundu.`);
-                    apiData.data.forEach(s => {
-                        results.push({
-                            name: `FilmciBaba - ${s.label || 'HD'}`,
-                            url: s.file,
-                            headers: { 'User-Agent': ua, 'Referer': 'https://hotstream.club/' }
-                        });
+        if (apiRes.ok) {
+            const apiData = await apiRes.json();
+            if (apiData.data && Array.isArray(apiData.data)) {
+                apiData.data.forEach(s => {
+                    results.push({
+                        name: `FilmciBaba - ${s.label || 'HD'}`,
+                        url: s.file,
+                        headers: { 
+                            'User-Agent': ua, 
+                            'Referer': 'https://hotstream.club/',
+                            'Origin': 'https://hotstream.club'
+                        }
                     });
-                } else {
-                    console.error("[FilmciBaba] API bos dondu.");
-                }
-            } else {
-                console.error(`[FilmciBaba] API Hatasi: HTTP ${apiRes.status}`);
+                });
             }
         }
 
-        console.error(`[FilmciBaba] <<< Islem Tamamlandi. Toplam Stream: ${results.length}`);
+        console.error(`[FilmciBaba] Bitti. Bulunan Kaynak: ${results.length}`);
         return results;
 
     } catch (e) {
-        console.error(`[FilmciBaba] CRITICAL ERROR: ${e.message}`);
-        console.error(e.stack);
+        console.error(`[FilmciBaba] Kritik Hata: ${e.message}`);
         return [];
     }
 }
 
-// Nuvio Export
 if (typeof module !== 'undefined') {
     module.exports = { getStreams, config };
 }
