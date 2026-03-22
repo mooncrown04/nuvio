@@ -1,5 +1,5 @@
 /**
- * Nuvio Local Scraper - FilmciBaba (V20 - Ultimate Headers)
+ * Nuvio Local Scraper - FilmciBaba (V21 - Referer Sync)
  */
 
 var cheerio = require("cheerio-without-node-native");
@@ -42,42 +42,34 @@ async function getStreams(input) {
             .replace(/ /g, '-').replace(/[^\w-]+/g, '');
 
         const targetUrl = `${config.baseUrl}/${slug}/`;
+        const ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36";
+        
         const response = await fetch(targetUrl, { 
-            headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' } 
+            headers: { 'User-Agent': ua } 
         });
         const html = await response.text();
         
-        // Hotstream regex (list ve embed için)
         const matches = html.match(/https:\/\/hotstream\.club\/(?:list|embed)\/[a-zA-Z0-9+/=]+/gi);
         if (!matches) return [];
 
         let streams = [];
-        const ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36";
-        
         for (const link of [...new Set(matches)]) {
             
-            // Sunucunun 403 vermemesi için gereken full paket
-            const playHeaders = {
-                'User-Agent': ua,
-                'Referer': 'https://hotstream.club/',
-                'Origin': 'https://hotstream.club',
-                'X-Requested-With': 'com.google.android.youtube', // Bazı playerlarda bypass sağlar
-                'Accept': '*/*',
-                'Connection': 'keep-alive'
-            };
-
-            // URL içine de gömelim (ExoPlayer garantisi)
-            const pipeUrl = `${link}|User-Agent=${encodeURIComponent(ua)}&Referer=${encodeURIComponent('https://hotstream.club/')}&Origin=${encodeURIComponent('https://hotstream.club')}`;
+            // KRİTİK DEĞİŞİKLİK: Referer olarak videonun bulunduğu siteyi veriyoruz
+            const pipeUrl = `${link}|User-Agent=${encodeURIComponent(ua)}&Referer=${encodeURIComponent(config.baseUrl + '/')}&Origin=${encodeURIComponent(config.baseUrl)}`;
 
             streams.push({
-                name: "FilmciBaba (HotStream Max)",
+                name: "FilmciBaba (HotStream)",
                 url: pipeUrl,
                 isM3u8: link.includes("/list/"),
-                headers: playHeaders
+                headers: {
+                    'User-Agent': ua,
+                    'Referer': config.baseUrl + '/',
+                    'Origin': config.baseUrl
+                }
             });
         }
 
-        console.error(`[FilmciBaba] 403 Bypass denemesi yapılıyor...`);
         return streams;
 
     } catch (error) {
