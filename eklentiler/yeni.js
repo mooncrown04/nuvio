@@ -1,5 +1,5 @@
 /**
- * Nuvio Local Scraper - FilmciBaba (V33 - ID Fix & Deep Debug)
+ * Nuvio Local Scraper - FilmciBaba (V34 - TMDB ID Logic Fix)
  */
 
 const config = {
@@ -20,67 +20,72 @@ async function getStreams(input) {
     try {
         console.error("[FilmciBaba] >>> Scraper Baslatildi");
         
-        // --- ID YAKALAMA MANTIĞINI GÜÇLENDİRDİK ---
-        // Nuvio'nun farklı versiyonları farklı keyler gönderebilir, hepsini kontrol ediyoruz.
         let rawId = "";
         if (typeof input === 'object') {
-            rawId = input.imdbId || input.imdb_id || input.tmdbId || input.tmdb_id || input.id;
-        } else if (typeof input === 'string') {
+            rawId = input.imdbId || input.tmdbId || input.id;
+        } else {
             rawId = input;
         }
 
         if (!rawId) {
-            // Eğer hala ID yoksa input'un tamamını logla ki ne geldiğini görelim
-            console.error("[FilmciBaba] Hata: Gecerli bir ID bulunamadi. Gelen Input: " + JSON.stringify(input));
+            console.error("[FilmciBaba] Hata: ID yok.");
             return [];
         }
 
         const cleanId = rawId.toString().trim();
-        console.error(`[FilmciBaba] Yakalanan ID: ${cleanId}`);
+        let item = null;
 
-        // 1. TMDB Aşaması
-        const finalImdbId = cleanId.startsWith('tt') ? cleanId : 'tt' + cleanId;
-        const tmdbUrl = `${config.apiUrl}/find/${finalImdbId}?api_key=${config.apiKey}&external_source=imdb_id&language=tr-TR`;
-        
-        console.error(`[FilmciBaba] TMDB Sorgusu: ${tmdbUrl}`);
-        const tmdbRes = await fetch(tmdbUrl);
-        const tmdbData = await tmdbRes.json();
-        
-        const item = tmdbData.movie_results?.[0] || tmdbData.tv_results?.[0];
+        // --- TMDB AKILLI SORGU MANTIĞI ---
+        if (cleanId.startsWith('tt')) {
+            // IMDB ID ise 'find' kullan
+            console.error(`[FilmciBaba] IMDB ID ile araniyor: ${cleanId}`);
+            const res = await fetch(`${config.apiUrl}/find/${cleanId}?api_key=${config.apiKey}&external_source=imdb_id&language=tr-TR`);
+            const data = await res.json();
+            item = data.movie_results?.[0] || data.tv_results?.[0];
+        } else {
+            // Sayısal ID (TMDB ID) ise doğrudan movie/tv olarak dene
+            console.error(`[FilmciBaba] TMDB ID ile araniyor: ${cleanId}`);
+            for (const type of ['movie', 'tv']) {
+                const res = await fetch(`${config.apiUrl}/${type}/${cleanId}?api_key=${config.apiKey}&language=tr-TR`);
+                if (res.ok) {
+                    item = await res.json();
+                    break;
+                }
+            }
+        }
+
         if (!item) {
-            console.error(`[FilmciBaba] TMDB'de sonuc yok. ID: ${finalImdbId}`);
+            console.error("[FilmciBaba] TMDB'de icerik bulunamadi.");
             return [];
         }
 
-        const slug = slugify(item.title || item.name);
+        const title = item.title || item.name;
+        const slug = slugify(title);
         const targetUrl = `${config.baseUrl}/${slug}/`;
         const ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36";
 
-        console.error(`[FilmciBaba] Site Hedefi: ${targetUrl}`);
+        console.error(`[FilmciBaba] Bulunan: ${title} -> Hedef: ${targetUrl}`);
 
-        // 2. Site Erişimi
         const res = await fetch(targetUrl, { headers: { 'User-Agent': ua } });
+        if (!res.ok) return [];
+
         const html = await res.text();
         const mainCookie = res.headers.get('set-cookie')?.split(';')[0] || "";
 
-        // Embed bulma
         const embedMatch = html.match(/https:\/\/hotstream\.club\/(?:embed|list)\/([a-zA-Z0-9]+)/i);
         if (!embedMatch) {
-            console.error("[FilmciBaba] Sayfada Hotstream linki bulunamadi!");
+            console.error("[FilmciBaba] Embed linki yok.");
             return [];
         }
 
-        const embedUrl = embedMatch[0];
         const embedId = embedMatch[1];
-        console.error(`[FilmciBaba] Embed ID: ${embedId}`);
+        console.error(`[FilmciBaba] Kaynak cekiliyor (ID: ${embedId})...`);
 
-        // 3. Hotstream API POST Sorgusu (En sağlam yöntem)
-        console.error("[FilmciBaba] API üzerinden kaynaklar sorgulanıyor...");
         const apiRes = await fetch(`https://hotstream.club/api/source/${embedId}`, {
             method: 'POST',
             headers: {
                 'User-Agent': ua,
-                'Referer': embedUrl,
+                'Referer': embedMatch[0],
                 'X-Requested-With': 'XMLHttpRequest',
                 'Cookie': mainCookie
             }
@@ -89,26 +94,22 @@ async function getStreams(input) {
         let results = [];
         if (apiRes.ok) {
             const apiData = await apiRes.json();
-            if (apiData.data && Array.isArray(apiData.data)) {
+            if (apiData.data) {
                 apiData.data.forEach(s => {
                     results.push({
                         name: `FilmciBaba - ${s.label || 'HD'}`,
                         url: s.file,
-                        headers: { 
-                            'User-Agent': ua, 
-                            'Referer': 'https://hotstream.club/',
-                            'Origin': 'https://hotstream.club'
-                        }
+                        headers: { 'User-Agent': ua, 'Referer': 'https://hotstream.club/' }
                     });
                 });
             }
         }
 
-        console.error(`[FilmciBaba] Bitti. Bulunan Kaynak: ${results.length}`);
+        console.error(`[FilmciBaba] Bitti. Kaynak sayisi: ${results.length}`);
         return results;
 
     } catch (e) {
-        console.error(`[FilmciBaba] Kritik Hata: ${e.message}`);
+        console.error(`[FilmciBaba] Hata: ${e.message}`);
         return [];
     }
 }
