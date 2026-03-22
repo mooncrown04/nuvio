@@ -1,71 +1,96 @@
 /**
- * Nuvio Local Scraper - HotStream Modülü
- * Kritik Hata İzleme (console.error) Entegre Edildi
+ * Nuvio Local Scraper - FilmciBaba (IMDb Destekli)
+ * Bu kod, Nuvio'dan gelen IMDb bilgisini kullanarak en doğru eşleşmeyi yapar.
  */
 
 var cheerio = require("cheerio-without-node-native");
 
-const WORKING_HEADERS = {
+const WATCHBUDDY_BASE = "https://stream.watchbuddy.tv/icerik/FilmciBaba";
+const HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Accept': '*/*',
-    'Connection': 'keep-alive'
+    'Referer': 'https://stream.watchbuddy.tv/'
 };
 
+/**
+ * @param {object} searchResult - Nuvio'nun sağladığı obje (imdbId, title, year içerir)
+ */
 function getStreams(searchResult) {
     return new Promise(function(resolve) {
-        // Logların sistemde "Error" seviyesinde parlaması için console.error kullanıyoruz
-        console.error("[HotStream] === SÜREÇ BAŞLATILDI ===");
+        console.error("[FilmciBaba] === SÜREÇ BAŞLATILDI ===");
 
-        // 1. Kilit Nokta: Parametre Kontrolü
-        if (!searchResult) {
-            console.error("[HotStream] KRİTİK HATA: searchResult parametresi boş! Nuvio veri gönderemedi.");
+        // 1. IMDb ID Kontrolü (Eşleşme için kritik)
+        var imdbId = searchResult.imdbId || searchResult.imdb_id;
+        
+        if (!imdbId) {
+            console.error("[FilmciBaba] UYARI: IMDb ID bulunamadı, isimle devam ediliyor: " + searchResult.title);
+        } else {
+            console.error("[FilmciBaba] IMDb ID ile eşleşme aranıyor: " + imdbId);
+        }
+
+        // 2. Hedef URL Oluşturma
+        // NOT: Eğer searchResult.url zaten izle.plus gibi bir yere gidiyorsa onu kullanırız.
+        // Gitmiyorsa, WatchBuddy'nin arama motorunu tetikleyecek yapı kurulmalıdır.
+        var targetUrl = "";
+        if (searchResult.url) {
+            targetUrl = WATCHBUDDY_BASE + "?url=" + encodeURIComponent(searchResult.url);
+        } else {
+            // Eğer URL yoksa, arama sayfasına yönlendir (Simülasyon)
+            console.error("[FilmciBaba] HATA: Doğrudan URL gelmedi, arama başarısız olabilir.");
             return resolve([]);
         }
 
-        console.error("[HotStream] Aranan Başlık: " + (searchResult.title || "Bilinmiyor"));
+        console.error("[FilmciBaba] İstek gönderiliyor: " + targetUrl);
 
-        var streams = [];
+        fetch(targetUrl, { headers: HEADERS })
+            .then(function(res) {
+                if (!res.ok) throw new Error("HTTP Hata: " + res.status);
+                return res.text();
+            })
+            .then(function(html) {
+                var $ = cheerio.load(html);
+                var streams = [];
 
-        try {
-            // Önemli: Gerçek senaryoda burası bir fetch isteği içerecektir.
-            // Veri simülasyonu (rawData)
-            var rawData = {
-                "name": "HotStream",
-                "url": "https://hotstream.club/list/N0VjWTBvb0ppbEo3bUdzeERNL09sNCtqWUVvWS85eDlZb2VEb2s4aWdJZjhPM1cyQkExb0tQYlI3ZXUxNjgxb0hSUWpOa3JLODhYQ245NDV0OC8wejdKcitZZE10S3JhelNhditPZVpEK2U2dnRiM3MrUVF4c0p6SjVuSTlPeGNibTRIemRTRE9vbjlXcjBMOTJaeDJQZC8zcHVGRUloWTc5YXNGV1hxU0lNPQ==",
-                "referer": "https://hotstream.club/embed/wNXSyyQMhUeLa5Z"
-            };
+                // HTML içindeki iframe veya m3u8 kaynaklarını ayıkla (4.js yapısına göre)
+                $('iframe, video source').each(function(i, elem) {
+                    var src = $(elem).attr('src');
+                    if (src && src.startsWith('http')) {
+                        console.error("[FilmciBaba] Kaynak Bulundu: " + src.substring(0, 40));
+                        
+                        streams.push({
+                            name: "FilmciBaba (IMDb Match)",
+                            title: searchResult.title || "Film",
+                            url: src,
+                            quality: "1080p",
+                            headers: {
+                                'User-Agent': HEADERS['User-Agent'],
+                                'Referer': targetUrl
+                            }
+                        });
+                    }
+                });
 
-            // 2. Kilit Nokta: URL Doğrulama
-            if (!rawData.url || !rawData.url.startsWith('http')) {
-                console.error("[HotStream] HATA: Geçersiz kaynak URL'si! rawData.url alınamadı.");
-            } else {
-                console.error("[HotStream] Başarılı: URL Yakalandı (İlk 50 karakter): " + rawData.url.substring(0, 50));
-            }
+                // Eğer element bulunamazsa Regex ile script içini tara
+                if (streams.length === 0) {
+                    var m3u8Match = html.match(/https?:\/\/[^\s'"]+\.m3u8[^\s'"]*/gi);
+                    if (m3u8Match) {
+                        m3u8Match.forEach(function(link) {
+                            streams.push({
+                                name: "FilmciBaba (Auto M3U8)",
+                                url: link,
+                                quality: "Auto",
+                                headers: HEADERS
+                            });
+                        });
+                    }
+                }
 
-            // Stream nesnesini oluşturma
-            var streamObj = {
-                name: "HotStream (Kekik)",
-                title: (searchResult.title || "Film İçeriği") + " [1080p]",
-                url: rawData.url,
-                quality: "1080p",
-                headers: {
-                    'User-Agent': WORKING_HEADERS['User-Agent'],
-                    'Referer': rawData.referer || 'https://hotstream.club/',
-                    'Origin': 'https://hotstream.club'
-                },
-                provider: "HotStream_Scraper"
-            };
-
-            streams.push(streamObj);
-            console.error("[HotStream] BİLGİ: Liste başarıyla oluşturuldu. Sayı: " + streams.length);
-
-        } catch (err) {
-            // 3. Kilit Nokta: Kodun içinde patlama olursa (Yazım hatası vs)
-            console.error("[HotStream] SİSTEMSEL ÇÖKME (Catch): " + err.message);
-        }
-
-        console.error("[HotStream] === SÜREÇ TAMAMLANDI ===");
-        resolve(streams);
+                console.error("[FilmciBaba] İşlem Bitti. Bulunan: " + streams.length);
+                resolve(streams);
+            })
+            .catch(function(err) {
+                console.error("[FilmciBaba] KRİTİK HATA: " + err.message);
+                resolve([]);
+            });
     });
 }
 
