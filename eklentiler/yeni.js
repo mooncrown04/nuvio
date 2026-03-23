@@ -1,44 +1,54 @@
 /**
- * Nuvio Search-Based Scraper - izle.plus (V63)
+ * Nuvio Filtered Scraper - izle.plus (V64)
  */
 
 var config = {
-    name: "izle.plus (Arama Modu)",
+    name: "izle.plus (Nokta Atışı)",
     baseUrl: "https://izle.plus",
     proxyUrl: "https://goproxy.watchbuddy.tv/proxy/video"
 };
 
 async function getStreams(input) {
     try {
-        // Uygulamanın gönderdiği ID veya Başlık
         var query = (typeof input === 'object') ? (input.title || input.imdbId || "") : input;
-        console.error(`[Kekik-Debug] Başlatılan Arama Sorgusu: ${query}`);
+        console.error(`[Kekik-Debug] Sorgu: ${query}`);
 
         var browserUA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36";
 
-        // 1. ADIM: Sitenin kendi arama motorunu kullan (En güvenli yol)
-        // https://izle.plus/?s=ajan+zeta
+        // 1. Arama Yap
         var searchUrl = `${config.baseUrl}/?s=${encodeURIComponent(query)}`;
         var searchRes = await fetch(searchUrl, { headers: { 'User-Agent': browserUA } });
         var searchHtml = await searchRes.text();
 
-        // 2. ADIM: Arama sonuçlarından ilk geçerli film linkini yakala
-        // Regex: href içindeki izle.plus/film-adi/ yapısını bulur
-        var linkMatch = searchHtml.match(/href="(https?:\/\/izle\.plus\/[^?\/"]+\/)"/i);
-        
-        if (!linkMatch) {
-            console.error(`[Kekik-Debug] Arama sonucunda film linki bulunamadı!`);
+        // 2. KRİTİK DEĞİŞİKLİK: wp-json ve teknik linkleri filtrele
+        // Sadece ana dizinde olan ve içinde wp- geçen kelimeleri içermeyen linkleri ara
+        var allLinks = searchHtml.match(/href="(https?:\/\/izle\.plus\/[^"\/]+\/)"/gi) || [];
+        var targetUrl = "";
+
+        for (let link of allLinks) {
+            let cleanLink = link.replace('href="', '').replace('"', '');
+            // Teknik WordPress linklerini ve ana sayfayı ele
+            if (!cleanLink.includes('wp-json') && 
+                !cleanLink.includes('wp-content') && 
+                !cleanLink.includes('category') && 
+                cleanLink !== config.baseUrl + "/") {
+                targetUrl = cleanLink;
+                break; // İlk temiz linki bulduğumuzda dur
+            }
+        }
+
+        if (!targetUrl) {
+            console.error(`[Kekik-Debug] Hata: Uygun film linki bulunamadı.`);
             return [];
         }
 
-        var targetUrl = linkMatch[1];
-        console.error(`[Kekik-Debug] Hedef Film Sayfası Bulundu: ${targetUrl}`);
+        console.error(`[Kekik-Debug] Hedef Film Sayfası: ${targetUrl}`);
 
-        // 3. ADIM: Gerçek Film Sayfasına Git
+        // 3. Film Sayfasına Git
         var response = await fetch(targetUrl, { headers: { 'User-Agent': browserUA } });
         var html = await response.text();
 
-        // 4. ADIM: Video Kaynağını (HotStream/Dizipal) Yakala
+        // 4. Video ID Yakala
         var videoMatch = html.match(/(?:hotstream\.club|vidmoly\.to|dizipal[^.]+)\/(?:embed|v|list)\/([a-zA-Z0-9_-]+)/i);
 
         if (videoMatch) {
@@ -46,26 +56,21 @@ async function getStreams(input) {
             var sourceDomain = videoMatch[0].split('/')[0];
             var streamUrl = `https://${sourceDomain}/v/${videoId}`;
             
-            // Sertifika (TRACE) ve Referer hatalarını Proxy ile paketle
             var finalUrl = `${config.proxyUrl}?url=${encodeURIComponent(streamUrl)}&referer=${encodeURIComponent("https://"+sourceDomain+"/")}&ignore_ssl=true`;
-
-            console.error(`[Kekik-Debug] Başarılı! Link: ${finalUrl.substring(0, 40)}...`);
+            console.error(`[Kekik-Debug] Başarılı Link: ${finalUrl.substring(0, 50)}`);
 
             return [{
-                name: "izle.plus | " + sourceDomain,
+                name: "HotStream - " + sourceDomain,
                 url: finalUrl,
-                headers: {
-                    'User-Agent': browserUA,
-                    'Referer': `https://${sourceDomain}/`
-                }
+                headers: { 'User-Agent': browserUA, 'Referer': `https://${sourceDomain}/` }
             }];
         }
 
-        console.error(`[Kekik-Debug] Hata: Sayfada video iframe'i bulunamadı.`);
+        console.error(`[Kekik-Debug] Hata: Sayfada video bulunamadı.`);
         return [];
 
     } catch (e) {
-        console.error(`[Kekik-Debug] KRİTİK HATA: ${e.message}`);
+        console.error(`[Kekik-Debug] Hata: ${e.message}`);
         return [];
     }
 }
