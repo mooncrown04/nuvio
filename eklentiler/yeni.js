@@ -1,63 +1,70 @@
 /**
- * Nuvio Persistent Scraper - izle.plus (V58)
+ * Nuvio Debug Scraper - izle.plus (V61)
  */
 
 var config = {
-    name: "izle.plus (Direct-Source)",
+    name: "izle.plus (Full-Debug)",
     baseUrl: "https://izle.plus",
     proxyUrl: "https://goproxy.watchbuddy.tv/proxy/video"
 };
 
 async function getStreams(input) {
     try {
-        // Nuvio'dan gelen başlığı (title) al
         var title = (typeof input === 'object') ? (input.title || "") : input;
-        if (!title) return [];
+        console.error(`[Kekik-Debug] Gelen Film Başlığı: ${title}`);
 
-        // 1. ADIM: izle.plus formatında URL üret (Örn: batman-izle)
         var slug = title.toLowerCase().trim()
-                        .replace(/[^a-z0-9]+/g, '-') // Geçersiz karakterleri tire yap
-                        .replace(/^-+|-+$/g, '');   // Baştaki ve sondaki tireleri temizle
+                        .replace(/[^a-z0-9]+/g, '-')
+                        .replace(/^-+|-+$/g, '');
         
-        var targetUrl = `${config.baseUrl}/${slug}-izle/`; 
-        var deviceUA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36";
+        var targetUrl = `${config.baseUrl}/${slug}-izle/`;
+        console.error(`[Kekik-Debug] Denenen İlk URL: ${targetUrl}`);
 
-        // 2. ADIM: Siteye zorunlu fetch at
+        var browserUA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36";
+
+        // 1. ADIM: Siteye İstek At
         var response = await fetch(targetUrl, { 
-            headers: { 'User-Agent': deviceUA } 
+            headers: { 'User-Agent': browserUA } 
         });
-        
-        // Eğer -izle ekiyle bulamazsa bir de eksiz dene
+
+        console.error(`[Kekik-Debug] Site Yanıt Kodu: ${response.status}`);
+
         if (response.status === 404) {
             targetUrl = `${config.baseUrl}/${slug}/`;
-            response = await fetch(targetUrl, { headers: { 'User-Agent': deviceUA } });
+            console.error(`[Kekik-Debug] 404 Alındı, Alternatif URL Deneniyor: ${targetUrl}`);
+            response = await fetch(targetUrl, { headers: { 'User-Agent': browserUA } });
         }
 
         var html = await response.text();
+        console.error(`[Kekik-Debug] HTML Uzunluğu: ${html.length} karakter`);
 
-        // 3. ADIM: HotStream ID'sini Regex ile sök
-        var hotstreamMatch = html.match(/hotstream\.club\/(?:embed|v|list)\/([a-zA-Z0-9_-]+)/i);
+        // 2. ADIM: HotStream ID Yakalama
+        var match = html.match(/hotstream\.club\/(?:embed|v|list)\/([a-zA-Z0-9_-]+)/i);
 
-        if (hotstreamMatch && hotstreamMatch[1]) {
-            var videoId = hotstreamMatch[1];
-            var finalStream = `https://hotstream.club/v/${videoId}`;
+        if (match && match[1]) {
+            var videoId = match[1];
+            console.error(`[Kekik-Debug] Video ID Bulundu: ${videoId}`);
             
-            // Sertifika hatasını (TRACE) aşmak için Proxy parametrelerini zorla
-            var proxyUrl = `${config.proxyUrl}?url=${encodeURIComponent(finalStream)}&referer=${encodeURIComponent("https://hotstream.club/")}`;
+            var streamUrl = `https://hotstream.club/v/${videoId}`;
+            var finalUrl = `${config.proxyUrl}?url=${encodeURIComponent(streamUrl)}&referer=${encodeURIComponent("https://hotstream.club/")}&ua=${encodeURIComponent(browserUA)}`;
+
+            console.error(`[Kekik-Debug] Final Proxy URL Oluştu: ${finalUrl.substring(0, 50)}...`);
 
             return [{
-                name: "izle.plus | " + title,
-                url: proxyUrl,
+                name: "HotStream (Tarayıcı Taklidi)",
+                url: finalUrl,
                 headers: {
-                    'User-Agent': deviceUA,
-                    'Referer': "https://hotstream.club/",
-                    'Origin': "https://hotstream.club"
+                    'User-Agent': browserUA,
+                    'Referer': "https://hotstream.club/"
                 }
             }];
+        } else {
+            console.error(`[Kekik-Debug] Hata: Sayfada HotStream linki bulunamadı!`);
         }
-
         return [];
+
     } catch (e) {
+        console.error(`[Kekik-Debug] KRİTİK HATA: ${e.message}`);
         return [];
     }
 }
