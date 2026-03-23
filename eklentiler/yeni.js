@@ -1,9 +1,9 @@
 /**
- * Nuvio JW-Grabber - izle.plus (V76)
+ * Nuvio API Hunter - izle.plus (V77)
  */
 
 var config = {
-    name: "izle.plus (JW-V76)",
+    name: "izle.plus (API-V77)",
     baseUrl: "https://izle.plus",
     proxyUrl: "https://goproxy.watchbuddy.tv/proxy/video"
 };
@@ -15,57 +15,77 @@ async function getStreams(input) {
 
         var browserUA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36";
 
-        // 1. Film Sayfasını Bul
+        // 1. Film Sayfası
         var searchRes = await fetch(`${config.baseUrl}/?s=${encodeURIComponent(query)}`, { headers: { 'User-Agent': browserUA } });
         var searchHtml = await searchRes.text();
         var linkMatch = searchHtml.match(/href="(https?:\/\/izle\.plus\/(?!wp-json|wp-content|category|tag)[^"\/]+\/)"/i);
         if (!linkMatch) return [];
 
-        // 2. Embed URL'sini Al ve Sayfayı Çek
+        // 2. Embed ID Yakala
         var res = await fetch(linkMatch[1], { headers: { 'User-Agent': browserUA } });
         var html = await res.text();
         var videoMatch = html.match(/hotstream\.club\/(?:embed|v|list)\/([a-zA-Z0-9_-]+)/i);
         if (!videoMatch) return [];
+        
+        var videoId = videoMatch[1];
+        var embedUrl = `https://hotstream.club/embed/${videoId}`;
 
-        var embedUrl = `https://hotstream.club/embed/${videoMatch[1]}`;
+        // 3. API'den Linki İste (Hotstream'in gizli source ucu)
+        // Genellikle /sources/[ID] veya /api/source/[ID] olur.
+        // Ama önce ana sayfadaki "eval" veya gizli scriptleri tarayıp API yolunu bulalım.
         var playerRes = await fetch(embedUrl, { 
-            headers: { 'User-Agent': browserUA, 'Referer': linkMatch[1] } 
+            headers: { 'User-Agent': browserUA, 'Referer': linkMatch[1], 'X-Requested-With': 'XMLHttpRequest' } 
         });
         var playerHtml = await playerRes.text();
 
-        // 3. ADIM: JWPLAYER SETUP ANALİZİ
+        // 4. ADIM: API ÇAĞRISI SİMÜLASYONU
+        // Hotstream bazen /playlist/[ID].json veya /api/source/[ID] kullanır.
+        // Biz direkt link taramasını jwplayer'ın yüklediği harici scriptlere kaydıralım.
+        
         let videoUrl = "";
         
-        // JwPlayer setup içindeki "file" veya "sources" kısmını yakala
-        let jwMatch = playerHtml.match(/["']?file["']?\s*[:=]\s*["']([^"']+)["']/i) || 
-                      playerHtml.match(/sources\s*:\s*\[\s*\{\s*["']?file["']?\s*:\s*["']([^"']+)["']/i);
+        // Bu regex, jwplayer'ın playlist/sources içindeki her şeyi yakalar
+        let apiMatch = playerHtml.match(/["']?(?:file|source|src)["']?\s*[:=]\s*["']([^"']+)["']/gi);
+        
+        if (apiMatch) {
+            for (let m of apiMatch) {
+                let clean = m.match(/["'](https?:\/\/[^"']+)["']/i);
+                if (clean && (clean[1].includes("m3u8") || clean[1].includes("google") || clean[1].includes("storage"))) {
+                    videoUrl = clean[1];
+                    break;
+                }
+            }
+        }
 
-        if (jwMatch) {
-            videoUrl = jwMatch[1];
-        } else {
-            // Eğer hala bulamadıysak, Hotstream'in özel 'sources' js isteğini simüle edelim
-            // Bazen harici js içinde: var player = new jwplayer("vsplayer").setup({ ... })
-            console.error("[Kekik-Debug] JW Match başarısız, derin tarama başlatılıyor...");
-            let deepMatch = playerHtml.match(/(https?:\/\/[^"']+\.(?:m3u8|mp4)[^"']*)/i);
-            if (deepMatch) videoUrl = deepMatch[1];
+        // 5. SON ÇARE: Harici Script Tarama
+        if (!videoUrl) {
+            console.error("[Kekik-Debug] Ana sayfada yok, scriptleri deşiyoruz...");
+            // Sayfadaki tüm .js dosyalarını bulup içlerine bakalım
+            let scriptMatches = playerHtml.match(/src="([^"]+\.js)"/g);
+            if (scriptMatches) {
+                for (let s of scriptMatches) {
+                    let sUrl = s.replace('src="', '').replace('"', '');
+                    if (sUrl.includes('player') || sUrl.includes('bepeak')) {
+                        let jsRes = await fetch(sUrl.startsWith('http') ? sUrl : `https://hotstream.club${sUrl}`);
+                        let jsText = await jsRes.text();
+                        let jsVideoMatch = jsText.match(/https?:\/\/[^"']+\.(?:m3u8|mp4)[^"']*/i);
+                        if (jsVideoMatch) { videoUrl = jsVideoMatch[0]; break; }
+                    }
+                }
+            }
         }
 
         if (!videoUrl) {
-            // Son çare: HTML içindeki script taglarının sonuna bak (Logda kesilen kısım)
-            console.error("[Kekik-Debug] Link hala yok. Sayfa sonu: " + playerHtml.substring(playerHtml.length - 300));
+            console.error("[Kekik-Debug] LINK HALA YOK! API Engeli olabilir.");
             return [];
         }
 
-        console.error(`[Kekik-Debug] JW GRABBER BULDUM: ${videoUrl}`);
+        console.error(`[Kekik-Debug] SIZDIRILAN LINK: ${videoUrl}`);
 
         return [{
-            name: "HotStream (JW-V76)",
+            name: "HotStream (API-Sızdırma)",
             url: `${config.proxyUrl}?url=${encodeURIComponent(videoUrl)}&referer=${encodeURIComponent("https://hotstream.club/")}&ignore_ssl=true`,
-            headers: { 
-                'User-Agent': browserUA, 
-                'Referer': "https://hotstream.club/",
-                'Origin': "https://hotstream.club"
-            }
+            headers: { 'User-Agent': browserUA, 'Referer': "https://hotstream.club/" }
         }];
 
     } catch (e) {
