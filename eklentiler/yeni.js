@@ -1,44 +1,75 @@
 /**
- * Nuvio Diagnostic Scraper - V52 (Verbose Logging)
+ * Nuvio Official Scraper - izle.plus (V57)
  */
 
 var config = {
-    name: "Kekik-Diagnostic",
-    proxyUrl: "https://goproxy.watchbuddy.tv/proxy/video",
-    testUrl: "https://hotstream.club/v/wNXSyyQMhUeLa5Z" // Test kimliği
+    name: "izle.plus (Full-Access)",
+    baseUrl: "https://izle.plus",
+    proxyUrl: "https://goproxy.watchbuddy.tv/proxy/video"
 };
 
 async function getStreams(input) {
-    let debugInfo = "";
     try {
-        const deviceUA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36";
-        
-        // --- ADIM 1: Link Canlı mı? (Sertifika Kontrolü) ---
-        try {
-            let testRes = await fetch(config.testUrl, { 
-                method: 'HEAD', 
-                headers: { 'User-Agent': deviceUA } 
-            });
-            debugInfo += `| Status: ${testRes.status} `;
-        } catch (e) {
-            debugInfo += `| SSL_ERR: ${e.message.substring(0,15)} `;
+        // 1. Nuvio'dan gelen başlığı temizleyelim (Slug oluşturma)
+        var query = "";
+        if (typeof input === 'object') {
+            query = input.title || input.name;
+        } else {
+            query = input;
         }
 
-        // --- ADIM 2: Proxy Yanıt Veriyor mu? ---
-        const finalUrl = `${config.proxyUrl}?url=${encodeURIComponent(config.testUrl)}&referer=${encodeURIComponent("https://hotstream.club/")}`;
+        // izle.plus link yapısı genelde: film-adi-izle/ şeklindedir
+        var slug = query.toLowerCase()
+                        .trim()
+                        .replace(/[^a-z0-9]/g, '-')
+                        .replace(/-+/g, '-');
         
-        return [{
-            name: `[LOGS] ${debugInfo} | HotStream`,
-            url: finalUrl,
-            headers: {
-                'User-Agent': deviceUA,
-                'Referer': "https://hotstream.club/",
-                'X-Debug-Mode': 'true' // Bazı proxyler bunu görünce daha fazla log basar
-            }
-        }];
+        // Siteye özgü "-izle" takısını ekliyoruz (Genelde bu format kullanılır)
+        var targetUrl = `${config.baseUrl}/${slug}-izle/`;
+        var deviceUA = "Mozilla/5.0 (Linux; Android 10; Fire TV)";
+
+        // 2. Ana Siteye Git (Bu adım mecburi)
+        var response = await fetch(targetUrl, { 
+            headers: { 'User-Agent': deviceUA } 
+        });
+
+        // Eğer direkt slug tutmazsa (404 alırsak), ana sayfadan arama yapmayı deneyebiliriz
+        if (response.status === 404) {
+             // Alternatif: Direkt slug (izle eki olmadan)
+             targetUrl = `${config.baseUrl}/${slug}/`;
+             response = await fetch(targetUrl, { headers: { 'User-Agent': deviceUA } });
+        }
+
+        var html = await response.text();
+
+        // 3. HotStream/Dizipal Linkini Ayıkla
+        // Sitedeki iframe veya source etiketlerini tarar
+        var hotstreamRegex = /https?:\/\/hotstream\.club\/(?:embed|v|list)\/([a-zA-Z0-9_-]+)/i;
+        var match = html.match(hotstreamRegex);
+
+        if (match && match[1]) {
+            var videoId = match[1];
+            // 'list' yerine 'v' (video) kullanmak 404 hatasını azaltır
+            var rawStreamUrl = `https://hotstream.club/v/${videoId}`;
+            
+            // 4. Proxy Paketlemesi (Sertifika hatasını burada aşıyoruz)
+            var finalUrl = `${config.proxyUrl}?url=${encodeURIComponent(rawStreamUrl)}&referer=${encodeURIComponent("https://hotstream.club/")}`;
+
+            return [{
+                name: "HotStream - " + query,
+                url: finalUrl,
+                headers: {
+                    'User-Agent': deviceUA,
+                    'Referer': "https://hotstream.club/",
+                    'Origin': "https://hotstream.club"
+                }
+            }];
+        }
+
+        return []; // Link bulunamadıysa boş dön
 
     } catch (e) {
-        return [{ name: "CRITICAL_SCRAPER_ERROR", url: "" }];
+        return [];
     }
 }
 
