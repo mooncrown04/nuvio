@@ -1,9 +1,9 @@
 /**
- * Nuvio Native-Session - izle.plus (V80)
+ * Nuvio Hard-Recovery - izle.plus (V81)
  */
 
 var config = {
-    name: "izle.plus (Native-V80)",
+    name: "izle.plus (Hard-V81)",
     baseUrl: "https://izle.plus",
     proxyUrl: "https://goproxy.watchbuddy.tv/proxy/video"
 };
@@ -13,82 +13,58 @@ async function getStreams(input) {
         let query = (typeof input === 'object') ? (input.title || input.name || "ajan zeta") : input;
         var browserUA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
-        // 1. Arama Yap
-        let searchRes = await fetch(`${config.baseUrl}/?s=${encodeURIComponent(query)}`, { 
-            headers: { 'User-Agent': browserUA } 
-        });
-        let searchHtml = await searchRes.text();
-        let linkMatch = searchHtml.match(/href="(https?:\/\/izle\.plus\/(?!wp-json|wp-content|category|tag)[^"\/]+\/)"/i);
-        if (!linkMatch) return [];
+        // 1. Arama Sonuçları
+        let sRes = await fetch(`${config.baseUrl}/?s=${encodeURIComponent(query)}`, { headers: { 'User-Agent': browserUA } });
+        let sHtml = await sRes.text();
+        let lMatch = sHtml.match(/href="(https?:\/\/izle\.plus\/[^"\/]+\/)"/i);
+        if (!lMatch) { console.error("[Kekik-Debug] Film bulunamadı"); return []; }
 
-        // 2. Film Sayfasını ve Çerezleri Al
-        // Burada Referer ve User-Agent çok kritik
-        let movieUrl = linkMatch[1];
-        let movieRes = await fetch(movieUrl, { 
+        // 2. Sayfa İçeriği
+        let mRes = await fetch(lMatch[1], { headers: { 'User-Agent': browserUA, 'Referer': config.baseUrl } });
+        let mHtml = await mRes.text();
+
+        // 3. Hotstream ID Yakala
+        let idMatch = mHtml.match(/hotstream\.club\/(?:embed|v|list|download)\/([a-zA-Z0-9_-]+)/i);
+        if (!idMatch) { console.error("[Kekik-Debug] Hotstream ID yok"); return []; }
+        
+        // 4. Doğrudan Download Sayfasına Git (Embed yerine)
+        let dlPage = `https://hotstream.club/download/${idMatch[1]}`;
+        console.error(`[Kekik-Debug] Hedef: ${dlPage}`);
+
+        let dlRes = await fetch(dlPage, { 
             headers: { 
-                'User-Agent': browserUA,
-                'Referer': config.baseUrl
+                'User-Agent': browserUA, 
+                'Referer': lMatch[1] 
             } 
         });
-        let movieHtml = await movieRes.text();
+        let dlHtml = await dlRes.text();
 
-        // ADIM 3: DOWNLOAD BUTONU ÜZERİNDEN GİT (Burası temiz link barındırabilir)
-        let downloadMatch = movieHtml.match(/data-href="([^"]+)"/i) || movieHtml.match(/href="([^"]+hotstream\.club\/download[^"]+)"/i);
-        let finalVideoUrl = "";
-
-        if (downloadMatch) {
-            let dlUrl = downloadMatch[1];
-            console.error(`[Kekik-Debug] İndirme Linki Yakalandı: ${dlUrl}`);
-            
-            let dlRes = await fetch(dlUrl, { headers: { 'User-Agent': browserUA, 'Referer': movieUrl } });
-            let dlHtml = await dlRes.text();
-            
-            // İndirme sayfasındaki o meşhur "Click to download" linkini bulalım
-            let m3u8Match = dlHtml.match(/https?:\/\/[^"']+\.m3u8[^"']*/i);
-            if (m3u8Match) finalVideoUrl = m3u8Match[0];
+        // 5. M3U8 veya MP4 Avı (En kaba haliyle)
+        let finalUrl = "";
+        let links = dlHtml.match(/https?:\/\/[^"']+\.(?:m3u8|mp4)[^"']*/gi);
+        
+        if (links) {
+            finalUrl = links.find(l => !l.includes("google") && !l.includes("analytics"));
         }
 
-        // ADIM 4: EĞER DOWNLOAD'DA YOKSA EMBED'İ TEKRAR DENE (FULL HEADERS İLE)
-        if (!finalVideoUrl) {
-            let videoMatch = movieHtml.match(/hotstream\.club\/(?:embed|v|list)\/([a-zA-Z0-9_-]+)/i);
-            if (videoMatch) {
-                let embedUrl = `https://hotstream.club/embed/${videoMatch[1]}`;
-                let playerRes = await fetch(embedUrl, { 
-                    headers: { 
-                        'User-Agent': browserUA, 
-                        'Referer': movieUrl,
-                        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,webp,*/*;q=0.8'
-                    } 
-                });
-                let playerHtml = await playerRes.text();
-                
-                // Agresif Regex: Her türlü m3u8'i topla, Google'ı sil
-                let rawLinks = playerHtml.match(/https?:\/\/[^"']+\.m3u8[^"']*/gi);
-                if (rawLinks) {
-                    finalVideoUrl = rawLinks.find(l => !l.includes("google") && !l.includes("analytics"));
-                }
-            }
-        }
-
-        if (!finalVideoUrl) {
-            console.error("[Kekik-Debug] M3U8 Bulunamadı. Hotstream koruması aşılamıyor.");
+        if (!finalUrl) {
+            console.error("[Kekik-Debug] Link hala yok. Sayfa içeriği çok kısa.");
             return [];
         }
 
-        console.error(`[Kekik-Debug] BİNGO: ${finalVideoUrl}`);
+        console.error(`[Kekik-Debug] YAKALANDI: ${finalUrl}`);
 
         return [{
-            name: "HotStream (Session-V80)",
-            url: `${config.proxyUrl}?url=${encodeURIComponent(finalVideoUrl)}&referer=${encodeURIComponent("https://hotstream.club/")}&ignore_ssl=true`,
+            name: "HotStream (Recovery)",
+            url: `${config.proxyUrl}?url=${encodeURIComponent(finalUrl)}&referer=${encodeURIComponent("https://hotstream.club/")}&ignore_ssl=true`,
             headers: { 
                 'User-Agent': browserUA, 
-                'Referer': "https://hotstream.club/",
-                'Origin': "https://hotstream.club"
+                'Referer': "https://hotstream.club/"
             }
         }];
 
     } catch (e) {
-        console.error(`[Kekik-Debug] Hata: ${e.message}`);
+        console.error(`[Kekik-Debug] Kritik Hata: ${e.message}`);
         return [];
     }
 }
