@@ -1,54 +1,67 @@
 /**
- * Nuvio Filtered Scraper - izle.plus (V64)
+ * Nuvio Smart Search Scraper - izle.plus (V65)
  */
 
 var config = {
-    name: "izle.plus (Nokta Atışı)",
+    name: "izle.plus (Smart Search)",
     baseUrl: "https://izle.plus",
     proxyUrl: "https://goproxy.watchbuddy.tv/proxy/video"
 };
 
 async function getStreams(input) {
     try {
-        var query = (typeof input === 'object') ? (input.title || input.imdbId || "") : input;
-        console.error(`[Kekik-Debug] Sorgu: ${query}`);
+        // 1. INPUT ANALİZİ: Rakam gelirse onu kullanma, title'ı bulmaya çalış
+        var query = "";
+        if (typeof input === 'object') {
+            // Öncelik gerçek isimde, ID en son çare
+            query = input.title || input.name || input.imdbId || "";
+        } else {
+            query = input;
+        }
 
+        console.error(`[Kekik-Debug] Ham Sorgu: ${query}`);
+
+        // Eğer sorgu sadece rakamlardan oluşuyorsa (ID ise) ve başka veri yoksa
+        // Bu durumda site üzerinde ID ile arama yapmaktan başka çare kalmıyor 
+        // Ama çoğu zaman site bunu bulamaz.
+        
         var browserUA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36";
 
-        // 1. Arama Yap
+        // 2. Arama Yap
         var searchUrl = `${config.baseUrl}/?s=${encodeURIComponent(query)}`;
+        console.error(`[Kekik-Debug] Arama URL: ${searchUrl}`);
+
         var searchRes = await fetch(searchUrl, { headers: { 'User-Agent': browserUA } });
         var searchHtml = await searchRes.text();
 
-        // 2. KRİTİK DEĞİŞİKLİK: wp-json ve teknik linkleri filtrele
-        // Sadece ana dizinde olan ve içinde wp- geçen kelimeleri içermeyen linkleri ara
-        var allLinks = searchHtml.match(/href="(https?:\/\/izle\.plus\/[^"\/]+\/)"/gi) || [];
+        // 3. Link Ayıklama (Daha esnek regex)
+        // href="https://izle.plus/herhangi-bir-sey/"
+        var linkRegex = /href="(https?:\/\/izle\.plus\/([^"\/]+)\/)"/gi;
+        var match;
         var targetUrl = "";
 
-        for (let link of allLinks) {
-            let cleanLink = link.replace('href="', '').replace('"', '');
-            // Teknik WordPress linklerini ve ana sayfayı ele
-            if (!cleanLink.includes('wp-json') && 
-                !cleanLink.includes('wp-content') && 
-                !cleanLink.includes('category') && 
-                cleanLink !== config.baseUrl + "/") {
-                targetUrl = cleanLink;
-                break; // İlk temiz linki bulduğumuzda dur
+        while ((match = linkRegex.exec(searchHtml)) !== null) {
+            let foundLink = match[1];
+            let slug = match[2];
+
+            // Çöpleri temizle
+            if (!slug.includes('wp-') && !slug.includes('category') && !slug.includes('tag') && slug !== 'contact') {
+                targetUrl = foundLink;
+                break; 
             }
         }
 
         if (!targetUrl) {
-            console.error(`[Kekik-Debug] Hata: Uygun film linki bulunamadı.`);
+            console.error(`[Kekik-Debug] Hata: Arama sonucunda temiz link bulunamadı.`);
             return [];
         }
 
-        console.error(`[Kekik-Debug] Hedef Film Sayfası: ${targetUrl}`);
+        console.error(`[Kekik-Debug] Hedef Sayfa: ${targetUrl}`);
 
-        // 3. Film Sayfasına Git
+        // 4. Video ID Yakala
         var response = await fetch(targetUrl, { headers: { 'User-Agent': browserUA } });
         var html = await response.text();
 
-        // 4. Video ID Yakala
         var videoMatch = html.match(/(?:hotstream\.club|vidmoly\.to|dizipal[^.]+)\/(?:embed|v|list)\/([a-zA-Z0-9_-]+)/i);
 
         if (videoMatch) {
@@ -57,16 +70,14 @@ async function getStreams(input) {
             var streamUrl = `https://${sourceDomain}/v/${videoId}`;
             
             var finalUrl = `${config.proxyUrl}?url=${encodeURIComponent(streamUrl)}&referer=${encodeURIComponent("https://"+sourceDomain+"/")}&ignore_ssl=true`;
-            console.error(`[Kekik-Debug] Başarılı Link: ${finalUrl.substring(0, 50)}`);
 
             return [{
-                name: "HotStream - " + sourceDomain,
+                name: "HotStream (Smart)",
                 url: finalUrl,
                 headers: { 'User-Agent': browserUA, 'Referer': `https://${sourceDomain}/` }
             }];
         }
 
-        console.error(`[Kekik-Debug] Hata: Sayfada video bulunamadı.`);
         return [];
 
     } catch (e) {
