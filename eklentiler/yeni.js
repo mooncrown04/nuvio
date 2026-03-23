@@ -1,5 +1,5 @@
 /**
- * Nuvio Local Scraper - FilmciBaba (V41 - Hotstream HTML-Response Fix)
+ * Nuvio Local Scraper - FilmciBaba (V43 - Hotstream List Method)
  */
 
 const config = {
@@ -22,6 +22,7 @@ async function getStreams(input) {
         let rawId = (typeof input === 'object') ? (input.imdbId || input.tmdbId || input.id) : input;
         if (!rawId) return [];
 
+        // 1. TMDB Aşaması (Aynı kalıyor)
         const cleanId = rawId.toString().trim();
         let item = null;
         if (cleanId.startsWith('tt')) {
@@ -36,69 +37,51 @@ async function getStreams(input) {
         }
         if (!item) return [];
 
-        const title = item.title || item.name;
-        const slug = slugify(title);
+        const slug = slugify(item.title || item.name);
         const targetUrl = `${config.baseUrl}/${slug}/`;
         const chromeUA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36";
 
-        // 1. Ana Sayfa
+        // 2. Ana Sayfadan Embed URL Yakala
         const res = await fetch(targetUrl, { headers: { 'User-Agent': chromeUA } });
         const html = await res.text();
         const embedMatch = html.match(/https:\/\/hotstream\.club\/(?:embed|list)\/([a-zA-Z0-9]+)/i);
         if (!embedMatch) return [];
 
-        const embedUrl = embedMatch[0];
         const embedId = embedMatch[1];
+        const embedFullUrl = `https://hotstream.club/embed/${embedId}`;
 
-        // 2. Embed Sayfası & Key Avı
-        const embedRes = await fetch(embedUrl, {
+        // 3. Embed Sayfasını Çek ve İçindeki "/list/" Linkini Bul
+        const embedRes = await fetch(embedFullUrl, {
             headers: { 'User-Agent': chromeUA, 'Referer': targetUrl }
         });
         const embedHtml = await embedRes.text();
-        const keyMatch = embedHtml.match(/key\s*[:=]\s*["']([^"']+)["']/i);
-        const secretKey = keyMatch ? keyMatch[1] : "";
 
-        console.error(`[FilmciBaba] API Sorgusu Hazirlaniyor: ${embedId}`);
-
-        // 3. API POST (Form-Data ve Doğru Parametreler)
-        const params = new URLSearchParams();
-        params.append('r', targetUrl);
-        params.append('d', 'hotstream.club');
-        if (secretKey) params.append('key', secretKey);
-
-        const apiRes = await fetch(`https://hotstream.club/api/source/${embedId}`, {
-            method: 'POST',
-            headers: {
-                'User-Agent': chromeUA,
-                'Accept': 'application/json, text/javascript, */*; q=0.01',
-                'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
-                'X-Requested-With': 'XMLHttpRequest',
-                'Referer': embedUrl,
-                'Origin': 'https://hotstream.club'
-            },
-            body: params.toString()
-        });
-
+        // PAYLAŞTIĞIN LOGLARDAKİ ŞİFRELİ LİSTEYİ BULAN REGEX
+        const listMatch = embedHtml.match(/\/list\/([a-zA-Z0-9+/=]+)/i);
+        
         let results = [];
-        // JSON hatasını önlemek için güvenli parse
-        const responseText = await apiRes.text();
-        try {
-            const apiData = JSON.parse(responseText);
-            const sources = apiData.data || apiData.sources || [];
-            sources.forEach(s => {
-                results.push({
-                    name: `FilmciBaba - ${s.label || 'HD'}`,
-                    url: s.file,
-                    headers: { 'User-Agent': chromeUA, 'Referer': 'https://hotstream.club/' }
-                });
+
+        if (listMatch) {
+            const listUrl = `https://hotstream.club/list/${listMatch[1]}`;
+            console.error(`[FilmciBaba] HotStream List Yakalandı: ${listUrl.substring(0, 50)}...`);
+
+            // Bu link direkt m3u8 playlistidir veya json döner
+            results.push({
+                name: "HotStream (Auto)",
+                url: listUrl,
+                headers: { 
+                    'User-Agent': chromeUA, 
+                    'Referer': embedFullUrl 
+                }
             });
-        } catch (e) {
-            console.error("[FilmciBaba] API JSON donmedi, HTML taraniyor...");
-            // Yedek: HTML içinden direkt m3u8 ayıkla
-            const m3u8Match = responseText.match(/https?:\/\/[^"']+\.m3u8[^"']*/gi);
+        }
+
+        // --- YEDEK: EĞER LİST YOKSA ESKİ USUL M3U8 ARA ---
+        if (results.length === 0) {
+            const m3u8Match = embedHtml.match(/https?:\/\/[^"']+\.m3u8[^"']*/gi);
             if (m3u8Match) {
                 m3u8Match.forEach(link => {
-                    results.push({ name: "FilmciBaba (Fallback)", url: link, headers: { 'User-Agent': chromeUA } });
+                    results.push({ name: "FilmciBaba (Direct)", url: link, headers: { 'User-Agent': chromeUA, 'Referer': embedFullUrl } });
                 });
             }
         }
