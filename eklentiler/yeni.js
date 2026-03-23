@@ -1,66 +1,67 @@
 /**
- * Nuvio Debug Scraper - izle.plus (V61)
+ * Nuvio Search-Based Scraper - izle.plus (V63)
  */
 
 var config = {
-    name: "izle.plus (Full-Debug)",
+    name: "izle.plus (Arama Modu)",
     baseUrl: "https://izle.plus",
     proxyUrl: "https://goproxy.watchbuddy.tv/proxy/video"
 };
 
 async function getStreams(input) {
     try {
-        var title = (typeof input === 'object') ? (input.title || "") : input;
-        console.error(`[Kekik-Debug] Gelen Film Başlığı: ${title}`);
+        // Uygulamanın gönderdiği ID veya Başlık
+        var query = (typeof input === 'object') ? (input.title || input.imdbId || "") : input;
+        console.error(`[Kekik-Debug] Başlatılan Arama Sorgusu: ${query}`);
 
-        var slug = title.toLowerCase().trim()
-                        .replace(/[^a-z0-9]+/g, '-')
-                        .replace(/^-+|-+$/g, '');
+        var browserUA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36";
+
+        // 1. ADIM: Sitenin kendi arama motorunu kullan (En güvenli yol)
+        // https://izle.plus/?s=ajan+zeta
+        var searchUrl = `${config.baseUrl}/?s=${encodeURIComponent(query)}`;
+        var searchRes = await fetch(searchUrl, { headers: { 'User-Agent': browserUA } });
+        var searchHtml = await searchRes.text();
+
+        // 2. ADIM: Arama sonuçlarından ilk geçerli film linkini yakala
+        // Regex: href içindeki izle.plus/film-adi/ yapısını bulur
+        var linkMatch = searchHtml.match(/href="(https?:\/\/izle\.plus\/[^?\/"]+\/)"/i);
         
-        var targetUrl = `${config.baseUrl}/${slug}-izle/`;
-        console.error(`[Kekik-Debug] Denenen İlk URL: ${targetUrl}`);
-
-        var browserUA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36";
-
-        // 1. ADIM: Siteye İstek At
-        var response = await fetch(targetUrl, { 
-            headers: { 'User-Agent': browserUA } 
-        });
-
-        console.error(`[Kekik-Debug] Site Yanıt Kodu: ${response.status}`);
-
-        if (response.status === 404) {
-            targetUrl = `${config.baseUrl}/${slug}/`;
-            console.error(`[Kekik-Debug] 404 Alındı, Alternatif URL Deneniyor: ${targetUrl}`);
-            response = await fetch(targetUrl, { headers: { 'User-Agent': browserUA } });
+        if (!linkMatch) {
+            console.error(`[Kekik-Debug] Arama sonucunda film linki bulunamadı!`);
+            return [];
         }
 
+        var targetUrl = linkMatch[1];
+        console.error(`[Kekik-Debug] Hedef Film Sayfası Bulundu: ${targetUrl}`);
+
+        // 3. ADIM: Gerçek Film Sayfasına Git
+        var response = await fetch(targetUrl, { headers: { 'User-Agent': browserUA } });
         var html = await response.text();
-        console.error(`[Kekik-Debug] HTML Uzunluğu: ${html.length} karakter`);
 
-        // 2. ADIM: HotStream ID Yakalama
-        var match = html.match(/hotstream\.club\/(?:embed|v|list)\/([a-zA-Z0-9_-]+)/i);
+        // 4. ADIM: Video Kaynağını (HotStream/Dizipal) Yakala
+        var videoMatch = html.match(/(?:hotstream\.club|vidmoly\.to|dizipal[^.]+)\/(?:embed|v|list)\/([a-zA-Z0-9_-]+)/i);
 
-        if (match && match[1]) {
-            var videoId = match[1];
-            console.error(`[Kekik-Debug] Video ID Bulundu: ${videoId}`);
+        if (videoMatch) {
+            var videoId = videoMatch[1];
+            var sourceDomain = videoMatch[0].split('/')[0];
+            var streamUrl = `https://${sourceDomain}/v/${videoId}`;
             
-            var streamUrl = `https://hotstream.club/v/${videoId}`;
-            var finalUrl = `${config.proxyUrl}?url=${encodeURIComponent(streamUrl)}&referer=${encodeURIComponent("https://hotstream.club/")}&ua=${encodeURIComponent(browserUA)}`;
+            // Sertifika (TRACE) ve Referer hatalarını Proxy ile paketle
+            var finalUrl = `${config.proxyUrl}?url=${encodeURIComponent(streamUrl)}&referer=${encodeURIComponent("https://"+sourceDomain+"/")}&ignore_ssl=true`;
 
-            console.error(`[Kekik-Debug] Final Proxy URL Oluştu: ${finalUrl.substring(0, 50)}...`);
+            console.error(`[Kekik-Debug] Başarılı! Link: ${finalUrl.substring(0, 40)}...`);
 
             return [{
-                name: "HotStream (Tarayıcı Taklidi)",
+                name: "izle.plus | " + sourceDomain,
                 url: finalUrl,
                 headers: {
                     'User-Agent': browserUA,
-                    'Referer': "https://hotstream.club/"
+                    'Referer': `https://${sourceDomain}/`
                 }
             }];
-        } else {
-            console.error(`[Kekik-Debug] Hata: Sayfada HotStream linki bulunamadı!`);
         }
+
+        console.error(`[Kekik-Debug] Hata: Sayfada video iframe'i bulunamadı.`);
         return [];
 
     } catch (e) {
