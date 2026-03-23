@@ -1,84 +1,85 @@
 /**
- * Nuvio Deep-Hunter - izle.plus (V82)
+ * Nuvio Invisible Fetch - izle.plus (V83)
  */
 
 var config = {
-    name: "izle.plus (Deep-V82)",
+    name: "izle.plus (Invisible-V83)",
     baseUrl: "https://izle.plus",
     proxyUrl: "https://goproxy.watchbuddy.tv/proxy/video"
 };
 
 async function getStreams(input) {
     try {
+        console.error("[Kekik-Log] 1. Başlatıldı...");
         let query = (typeof input === 'object') ? (input.title || input.name || "ajan zeta") : input;
         var browserUA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
-        // 1. Film Arama
+        // 1. ARAMA
+        console.error("[Kekik-Log] 2. Arama yapılıyor: " + query);
         let sRes = await fetch(`${config.baseUrl}/?s=${encodeURIComponent(query)}`, { headers: { 'User-Agent': browserUA } });
         let sHtml = await sRes.text();
         let lMatch = sHtml.match(/href="(https?:\/\/izle\.plus\/(?!wp-json|wp-content|category|tag)[^"\/]+\/)"/i);
-        if (!lMatch) return [];
+        
+        if (!lMatch) { console.error("[Kekik-Log] Hata: Film Linki Yok"); return []; }
+        console.error("[Kekik-Log] 3. Film Linki: " + lMatch[1]);
 
-        // 2. Sayfa Kaynağını Al
+        // 2. SAYFA ANALİZİ
         let mRes = await fetch(lMatch[1], { headers: { 'User-Agent': browserUA, 'Referer': config.baseUrl } });
         let mHtml = await mRes.text();
 
-        // 3. ADIM: GİZLENMİŞ ID AVLAYICI
-        let videoId = "";
+        // ADIM 3: GİZLİ ID BULUCU (Regex'i genişlettik)
+        // Bazı siteler ID'yi id="video-id-12345" gibi saklar
+        let videoId = (mHtml.match(/hotstream\.club\/(?:embed|v|list|download)\/([a-zA-Z0-9_-]+)/i) || [])[1];
         
-        // A) Standart Match (Yine de kontrol edelim)
-        let standardMatch = mHtml.match(/hotstream\.club\/(?:embed|v|list|download)\/([a-zA-Z0-9_-]+)/i);
-        
-        // B) Base64 Kontrolü (hotstream.club base64'te "aG90c3RyZWFtLmNsdWI" ile başlar)
-        let b64Match = mHtml.match(/[A-Za-z0-9+/]{30,}/g); // Uzun base64 bloklarını topla
-        
-        if (standardMatch) {
-            videoId = standardMatch[1];
-        } else if (b64Match) {
-            for (let b of b64Match) {
-                try {
-                    let decoded = atob(b);
-                    if (decoded.includes("hotstream.club")) {
-                        let id = decoded.match(/\/(?:embed|v|list|download)\/([a-zA-Z0-9_-]+)/i);
-                        if (id) { videoId = id[1]; break; }
-                    }
-                } catch(e) {}
-            }
-        }
-
-        // C) Data Attributes ve Alternatif Kelimeler
         if (!videoId) {
-            let altMatch = mHtml.match(/data-(?:id|video|link|url)="([^"]+)"/i) || 
-                           mHtml.match(/["']?link["']?\s*:\s*["']([^"']+)["']/i);
-            if (altMatch) videoId = altMatch[1].replace(/https?:\/\/hotstream\.club\/(?:embed|v|download)\//i, "");
+            console.error("[Kekik-Log] 4. Standart ID yok, derin arama...");
+            // Alternatif: iframe src'lerine bak
+            let frameMatch = mHtml.match(/src="([^"]+hotstream\.club[^"]+)"/i);
+            if (frameMatch) videoId = frameMatch[1].split('/').pop();
         }
 
-        if (!videoId || videoId.length > 50) { 
-            console.error("[Kekik-Debug] ID Hala Yok! Kaynak Kodu Analizi Gerekli.");
-            // Hata tespiti için HTML'den bir parça loglayalım
-            console.error("[Kekik-Debug] HTML Örnek: " + mHtml.substring(mHtml.indexOf("<article"), mHtml.indexOf("<article") + 500));
-            return []; 
+        if (!videoId) {
+            console.error("[Kekik-Log] BAŞARISIZ: ID bulunamadı. HTML Boyutu: " + mHtml.length);
+            return [];
         }
 
-        // 4. Link Çözme (V81 mantığı ile devam)
-        let dlPage = `https://hotstream.club/download/${videoId}`;
-        let dlRes = await fetch(dlPage, { headers: { 'User-Agent': browserUA, 'Referer': lMatch[1] } });
+        console.error("[Kekik-Log] 5. Bulunan ID: " + videoId);
+
+        // 4. LİNK ÇEKME (POST yerine GET deniyoruz, referer ile)
+        let dlPage = `https://hotstream.club/embed/${videoId}`;
+        let dlRes = await fetch(dlPage, { 
+            headers: { 
+                'User-Agent': browserUA, 
+                'Referer': lMatch[1],
+                'X-Requested-With': 'XMLHttpRequest'
+            } 
+        });
         let dlHtml = await dlRes.text();
 
-        let finalUrl = (dlHtml.match(/https?:\/\/[^"']+\.m3u8[^"']*/i) || [])[0];
+        // 5. M3U8 ANALİZİ
+        let finalUrl = (dlHtml.match(/["'](https?:\/\/[^"']+\.m3u8[^"']*)["']/i) || [])[1];
 
-        if (!finalUrl) return [];
+        if (!finalUrl) {
+            console.error("[Kekik-Log] 6. Embed boş, indirme sayfası deneniyor...");
+            let backupRes = await fetch(`https://hotstream.club/download/${videoId}`, { headers: { 'User-Agent': browserUA } });
+            let backupHtml = await backupRes.text();
+            finalUrl = (backupHtml.match(/https?:\/\/[^"']+\.m3u8[^"']*/i) || [])[0];
+        }
 
-        console.error(`[Kekik-Debug] SONUNDA: ${finalUrl}`);
+        if (finalUrl) {
+            console.error("[Kekik-Log] BINGO: " + finalUrl);
+            return [{
+                name: "HotStream (V83-Fix)",
+                url: `${config.proxyUrl}?url=${encodeURIComponent(finalUrl)}&referer=${encodeURIComponent("https://hotstream.club/")}&ignore_ssl=true`,
+                headers: { 'User-Agent': browserUA, 'Referer': "https://hotstream.club/" }
+            }];
+        }
 
-        return [{
-            name: "HotStream (Deep-Scan)",
-            url: `${config.proxyUrl}?url=${encodeURIComponent(finalUrl)}&referer=${encodeURIComponent("https://hotstream.club/")}&ignore_ssl=true`,
-            headers: { 'User-Agent': browserUA, 'Referer': "https://hotstream.club/" }
-        }];
+        console.error("[Kekik-Log] Hiçbir linke ulaşılamadı.");
+        return [];
 
     } catch (e) {
-        console.error(`[Kekik-Debug] Hata: ${e.message}`);
+        console.error("[Kekik-Log] CRASH: " + e.toString());
         return [];
     }
 }
