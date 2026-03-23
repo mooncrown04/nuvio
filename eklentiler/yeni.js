@@ -1,8 +1,8 @@
 /**
- * Nuvio Local Scraper - FilmciBaba (V45 - Device & Auth Spoofing)
+ * Nuvio Local Scraper - FilmciBaba (V44 - WatchBuddy List & Export Fix)
  */
 
-const config = {
+var config = {
     name: "FilmciBaba",
     baseUrl: "https://izle.plus",
     apiUrl: "https://api.themoviedb.org/3",
@@ -12,90 +12,75 @@ const config = {
 
 async function getStreams(input) {
     try {
-        console.error("[FilmciBaba] >>> Scraper Baslatildi (Device Check Mode)");
-        
-        // 1. Cihaz Bilgisi (Android TV / Firestick Taklidi)
-        const deviceUA = "Mozilla/5.0 (Linux; Android 9; AFTS Build/PS7242) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/122.0.0.0 Mobile Safari/537.36";
-        
-        let rawId = (typeof input === 'object') ? (input.imdbId || input.tmdbId || input.id) : input;
+        console.error("[FilmciBaba] >>> Scraper Baslatildi");
+        var rawId = (typeof input === 'object') ? (input.imdbId || input.tmdbId || input.id) : input;
         if (!rawId) return [];
 
-        // ... TMDB Sorgu Bölümü (Aynı Kalıyor) ...
-        const targetUrl = `${config.baseUrl}/ajan-zeta/`; // Test için sabit veya slugify
+        var cleanId = rawId.toString().trim();
+        var item = null;
 
-        // 2. İLK TEMAS: Session Başlatma ve Çerez Toplama
-        const initRes = await fetch(targetUrl, { 
-            headers: { 'User-Agent': deviceUA } 
-        });
-        const cookies = initRes.headers.get('set-cookie') || "";
-        const html = await initRes.text();
-
-        // 3. EMBED BULMA
-        const embedMatch = html.match(/https?:\/\/hotstream\.club\/(?:embed|list|v)\/([a-zA-Z0-9]+)/i);
-        if (!embedMatch) {
-            console.error("[FilmciBaba] Embed linki bulunamadı. Site yapısı değişmiş olabilir.");
-            return [];
-        }
-
-        const embedId = embedMatch[1];
-        const embedUrl = `https://hotstream.club/embed/${embedId}`;
-
-        // 4. CIHAZ DOĞRULAMA TAKLİDİ (Referer ve Cookie Zinciri)
-        // WatchBuddy'nin yaptığı gibi auth/check aşamasını taklit ediyoruz
-        const checkRes = await fetch(embedUrl, {
-            headers: {
-                'User-Agent': deviceUA,
-                'Referer': targetUrl,
-                'Cookie': cookies,
-                'Sec-Fetch-Dest': 'iframe',
-                'Sec-Fetch-Mode': 'navigate'
+        // 1. TMDB Sorgusu
+        if (cleanId.startsWith('tt')) {
+            var res = await fetch(config.apiUrl + "/find/" + cleanId + "?api_key=" + config.apiKey + "&external_source=imdb_id&language=tr-TR");
+            var data = await res.json();
+            item = data.movie_results?.[0] || data.tv_results?.[0];
+        } else {
+            var types = ['movie', 'tv'];
+            for (var i = 0; i < types.length; i++) {
+                var res = await fetch(config.apiUrl + "/" + types[i] + "/" + cleanId + "?api_key=" + config.apiKey + "&language=tr-TR");
+                if (res.ok) { item = await res.json(); break; }
             }
-        });
-        const embedHtml = await checkRes.text();
-        const embedCookies = checkRes.headers.get('set-cookie') || cookies;
+        }
+        if (!item) return [];
 
-        // 5. LIST LINKINI AYIKLAMA
-        // Paylaştığın logdaki /list/ formatını arıyoruz
-        const listMatch = embedHtml.match(/\/list\/([a-zA-Z0-9+/=_-]+)/i) || 
-                         embedHtml.match(/["'](https?:\/\/hotstream\.club\/list\/[^"']+)["']/i);
+        // 2. Slug & Siteye Giriş
+        var title = item.title || item.name;
+        var slug = title.toLowerCase().replace(/[^a-z0-9]/g, '-').replace(/-+/g, '-');
+        var targetUrl = config.baseUrl + "/" + slug + "/";
+        var deviceUA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36";
 
-        let results = [];
-        if (listMatch) {
-            const finalLink = listMatch[1].startsWith('http') ? listMatch[1] : `https://hotstream.club/list/${listMatch[1]}`;
-            
-            console.error(`[FilmciBaba] Link Çözüldü: ${finalLink.substring(0, 30)}...`);
+        var res = await fetch(targetUrl, { headers: { 'User-Agent': deviceUA } });
+        var html = await res.text();
+
+        // 3. Hotstream Linkini Yakalama (WatchBuddy'nin bulduğu o yapı)
+        // Regex'i hem list hem embed için çok genişlettik
+        var hotstreamRegex = /https?:\/\/hotstream\.club\/(?:embed|list|v|player)\/([a-zA-Z0-9+/=_-]+)/gi;
+        var results = [];
+        var match;
+
+        while ((match = hotstreamRegex.exec(html)) !== null) {
+            var foundId = match[1];
+            // WatchBuddy loglarındaki asıl oynatıcı linkine çeviriyoruz
+            var finalUrl = "https://hotstream.club/list/" + foundId;
 
             results.push({
-                name: "HotStream (Verified Device)",
-                url: finalLink,
+                name: "HotStream (HB-V2)",
+                url: finalUrl,
                 headers: { 
                     'User-Agent': deviceUA,
-                    'Referer': embedUrl,
-                    'Cookie': embedCookies,
+                    'Referer': "https://hotstream.club/embed/" + foundId,
                     'Origin': 'https://hotstream.club'
                 }
             });
         }
 
-        // 6. FALLBACK: PROXY MANTIĞI (Eğer hala 0 ise)
+        // 4. Eğer Regex patlarsa HTML içinde m3u8 ara
         if (results.length === 0) {
-            // HTML içindeki gizli base64 veya json datayı ara
-            const apiRegex = /source\s*:\s*["']([^"']+)["']/i;
-            const apiMatch = embedHtml.match(apiRegex);
-            if (apiMatch) {
-                results.push({
-                    name: "HotStream (API-Backup)",
-                    url: apiMatch[1],
-                    headers: { 'User-Agent': deviceUA, 'Referer': embedUrl }
-                });
-            }
+            var m3u8Links = html.match(/https?:\/\/[^"']+\.m3u8[^"']*/gi) || [];
+            m3u8Links.forEach(function(link) {
+                results.push({ name: "FilmciBaba (Direct)", url: link, headers: { 'User-Agent': deviceUA } });
+            });
         }
 
-        console.error(`[FilmciBaba] Bitti. Bulunan: ${results.length}`);
+        console.error("[FilmciBaba] Bitti. Bulunan: " + results.length);
         return results;
 
     } catch (e) {
-        console.error(`[FilmciBaba] Hata: ${e.message}`);
+        console.error("[FilmciBaba] Hata: " + e.message);
         return [];
     }
 }
+
+// Nuvio'nun "function not found" hatası vermemesi için hem global hem module seviyesinde export ediyoruz
+globalThis.getStreams = getStreams;
+if (typeof module !== 'undefined') { module.exports = { getStreams, config }; }
