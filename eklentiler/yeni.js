@@ -1,12 +1,24 @@
 /**
- * Nuvio Unpacker Scraper - izle.plus (V71)
+ * Nuvio Hotstream Smasher - izle.plus (V72)
  */
 
 var config = {
-    name: "izle.plus (Unpacker)",
+    name: "izle.plus (Smasher)",
     baseUrl: "https://izle.plus",
     proxyUrl: "https://goproxy.watchbuddy.tv/proxy/video"
 };
+
+// P.A.C.K.E.R Decoder Fonksiyonu
+function unpack(code) {
+    function slice(s, a, c) {
+        var d = {};
+        while (c--) { if (a[c]) { s = s.replace(new RegExp('\\b' + c.toString(a) + '\\b', 'g'), a[c]); } }
+        return s;
+    }
+    var p = /}\('(.*)',\s*(\d+),\s*(\d+),\s*'(.*)'\.split\('\|'\)/.exec(code);
+    if (p) { return slice(p[1], p[4].split('|'), p[2]); }
+    return code;
+}
 
 async function getStreams(input) {
     try {
@@ -15,7 +27,7 @@ async function getStreams(input) {
 
         var browserUA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36";
 
-        // 1. Sayfaya Git
+        // 1. Film Sayfasını Bul
         var searchUrl = `${config.baseUrl}/?s=${encodeURIComponent(query)}`;
         var searchRes = await fetch(searchUrl, { headers: { 'User-Agent': browserUA } });
         var searchHtml = await searchRes.text();
@@ -23,53 +35,44 @@ async function getStreams(input) {
         if (!linkMatch) return [];
 
         // 2. Embed Sayfasını Çek
-        var res = await fetch(linkMatch[1], { headers: { 'User-Agent': browserUA } });
-        var html = await res.text();
-        var videoMatch = html.match(/hotstream\.club\/(?:embed|v|list)\/([a-zA-Z0-9_-]+)/i);
+        var embedRes = await fetch(linkMatch[1], { headers: { 'User-Agent': browserUA } });
+        var embedHtml = await embedRes.text();
+        var videoMatch = embedHtml.match(/hotstream\.club\/(?:embed|v|list)\/([a-zA-Z0-9_-]+)/i);
         if (!videoMatch) return [];
 
-        var embedUrl = `https://hotstream.club/embed/${videoMatch[1]}`;
-        var embedRes = await fetch(embedUrl, { headers: { 'User-Agent': browserUA, 'Referer': linkMatch[1] } });
-        var embedHtml = await embedRes.text();
+        var finalEmbedUrl = `https://hotstream.club/embed/${videoMatch[1]}`;
+        var playerRes = await fetch(finalEmbedUrl, { headers: { 'User-Agent': browserUA, 'Referer': linkMatch[1] } });
+        var playerHtml = await playerRes.text();
 
-        // 3. ADIM: ŞİFRE ÇÖZÜCÜ (Packer / Base64 / File Detection)
-        let videoUrl = "";
+        // 3. ADIM: Packer Deşifre İşlemi
+        let decrypted = playerHtml;
+        if (playerHtml.includes('eval(function(p,a,c,k,e,d)')) {
+            console.error(`[Kekik-Debug] Şifreli Packer bloğu bulundu, çözülüyor...`);
+            decrypted = unpack(playerHtml);
+        }
 
-        // Önce temiz link ara
-        let cleanMatch = embedHtml.match(/["']?file["']?\s*:\s*["'](https?:\/\/[^"']+\.(?:mp4|m3u8)[^"']*)["']/i);
+        // 4. ADIM: Deşifre edilmiş koddaki linki yakala
+        var videoUrlMatch = decrypted.match(/(https?:\/\/[^"']+\.(?:m3u8|mp4)[^"']*)/i);
         
-        if (cleanMatch) {
-            videoUrl = cleanMatch[1];
-        } else {
-            // Şifreli (Packer) varsa deşifre etmeye çalışalım (Basit mantık)
-            // Hotstream bazen 'sources' içinde de tutar
-            let sourceMatch = embedHtml.match(/sources\s*:\s*\[\{["']?file["']?\s*:\s*["']([^"']+)["']/i);
-            if (sourceMatch) videoUrl = sourceMatch[1];
+        if (!videoUrlMatch) {
+            console.error(`[Kekik-Debug] Deşifre sonrası bile link bulunamadı!`);
+            return [];
         }
 
-        if (!videoUrl) {
-            console.error(`[Kekik-Debug] Video linki hala şifreli veya bulunamadı.`);
-            // Son bir umut: Sayfa içindeki tüm m3u8'leri tara
-            let m3u8Match = embedHtml.match(/https?:\/\/[^"']+\.m3u8[^"']*/i);
-            if (m3u8Match) videoUrl = m3u8Match[0];
-        }
+        var videoUrl = videoUrlMatch[1];
+        console.error(`[Kekik-Debug] BULDUM: ${videoUrl.substring(0, 50)}...`);
 
-        if (!videoUrl) return [];
-
-        console.error(`[Kekik-Debug] BULDUM: ${videoUrl.substring(0, 60)}`);
-
-        // Proxy üzerinden gönder
         var finalUrl = `${config.proxyUrl}?url=${encodeURIComponent(videoUrl)}&referer=${encodeURIComponent("https://hotstream.club/")}&ignore_ssl=true`;
 
-        return [{
-            name: "HotStream (Unlocked)",
-            url: finalUrl,
-            headers: {
-                'User-Agent': browserUA,
-                'Referer': "https://hotstream.club/",
-                'Origin': "https://hotstream.club"
-            }
-        }];
+            return [{
+                name: "HotStream (Unlocked)",
+                url: finalUrl,
+                headers: {
+                    'User-Agent': browserUA,
+                    'Referer': "https://hotstream.club/",
+                    'Origin': "https://hotstream.club"
+                }
+            }];
 
     } catch (e) {
         console.error(`[Kekik-Debug] Hata: ${e.message}`);
