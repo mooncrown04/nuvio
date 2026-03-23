@@ -1,63 +1,53 @@
 /**
- * Nuvio Official Scraper - izle.plus (V57)
+ * Nuvio Persistent Scraper - izle.plus (V58)
  */
 
 var config = {
-    name: "izle.plus (Full-Access)",
+    name: "izle.plus (Direct-Source)",
     baseUrl: "https://izle.plus",
     proxyUrl: "https://goproxy.watchbuddy.tv/proxy/video"
 };
 
 async function getStreams(input) {
     try {
-        // 1. Nuvio'dan gelen başlığı temizleyelim (Slug oluşturma)
-        var query = "";
-        if (typeof input === 'object') {
-            query = input.title || input.name;
-        } else {
-            query = input;
-        }
+        // Nuvio'dan gelen başlığı (title) al
+        var title = (typeof input === 'object') ? (input.title || "") : input;
+        if (!title) return [];
 
-        // izle.plus link yapısı genelde: film-adi-izle/ şeklindedir
-        var slug = query.toLowerCase()
-                        .trim()
-                        .replace(/[^a-z0-9]/g, '-')
-                        .replace(/-+/g, '-');
+        // 1. ADIM: izle.plus formatında URL üret (Örn: batman-izle)
+        var slug = title.toLowerCase().trim()
+                        .replace(/[^a-z0-9]+/g, '-') // Geçersiz karakterleri tire yap
+                        .replace(/^-+|-+$/g, '');   // Baştaki ve sondaki tireleri temizle
         
-        // Siteye özgü "-izle" takısını ekliyoruz (Genelde bu format kullanılır)
-        var targetUrl = `${config.baseUrl}/${slug}-izle/`;
-        var deviceUA = "Mozilla/5.0 (Linux; Android 10; Fire TV)";
+        var targetUrl = `${config.baseUrl}/${slug}-izle/`; 
+        var deviceUA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36";
 
-        // 2. Ana Siteye Git (Bu adım mecburi)
+        // 2. ADIM: Siteye zorunlu fetch at
         var response = await fetch(targetUrl, { 
             headers: { 'User-Agent': deviceUA } 
         });
-
-        // Eğer direkt slug tutmazsa (404 alırsak), ana sayfadan arama yapmayı deneyebiliriz
+        
+        // Eğer -izle ekiyle bulamazsa bir de eksiz dene
         if (response.status === 404) {
-             // Alternatif: Direkt slug (izle eki olmadan)
-             targetUrl = `${config.baseUrl}/${slug}/`;
-             response = await fetch(targetUrl, { headers: { 'User-Agent': deviceUA } });
+            targetUrl = `${config.baseUrl}/${slug}/`;
+            response = await fetch(targetUrl, { headers: { 'User-Agent': deviceUA } });
         }
 
         var html = await response.text();
 
-        // 3. HotStream/Dizipal Linkini Ayıkla
-        // Sitedeki iframe veya source etiketlerini tarar
-        var hotstreamRegex = /https?:\/\/hotstream\.club\/(?:embed|v|list)\/([a-zA-Z0-9_-]+)/i;
-        var match = html.match(hotstreamRegex);
+        // 3. ADIM: HotStream ID'sini Regex ile sök
+        var hotstreamMatch = html.match(/hotstream\.club\/(?:embed|v|list)\/([a-zA-Z0-9_-]+)/i);
 
-        if (match && match[1]) {
-            var videoId = match[1];
-            // 'list' yerine 'v' (video) kullanmak 404 hatasını azaltır
-            var rawStreamUrl = `https://hotstream.club/v/${videoId}`;
+        if (hotstreamMatch && hotstreamMatch[1]) {
+            var videoId = hotstreamMatch[1];
+            var finalStream = `https://hotstream.club/v/${videoId}`;
             
-            // 4. Proxy Paketlemesi (Sertifika hatasını burada aşıyoruz)
-            var finalUrl = `${config.proxyUrl}?url=${encodeURIComponent(rawStreamUrl)}&referer=${encodeURIComponent("https://hotstream.club/")}`;
+            // Sertifika hatasını (TRACE) aşmak için Proxy parametrelerini zorla
+            var proxyUrl = `${config.proxyUrl}?url=${encodeURIComponent(finalStream)}&referer=${encodeURIComponent("https://hotstream.club/")}`;
 
             return [{
-                name: "HotStream - " + query,
-                url: finalUrl,
+                name: "izle.plus | " + title,
+                url: proxyUrl,
                 headers: {
                     'User-Agent': deviceUA,
                     'Referer': "https://hotstream.club/",
@@ -66,8 +56,7 @@ async function getStreams(input) {
             }];
         }
 
-        return []; // Link bulunamadıysa boş dön
-
+        return [];
     } catch (e) {
         return [];
     }
