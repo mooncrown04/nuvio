@@ -1,9 +1,9 @@
 /**
- * Nuvio API Hunter - izle.plus (V77)
+ * Nuvio POST Specialist - izle.plus (V78)
  */
 
 var config = {
-    name: "izle.plus (API-V77)",
+    name: "izle.plus (POST-V78)",
     baseUrl: "https://izle.plus",
     proxyUrl: "https://goproxy.watchbuddy.tv/proxy/video"
 };
@@ -28,62 +28,58 @@ async function getStreams(input) {
         if (!videoMatch) return [];
         
         var videoId = videoMatch[1];
-        var embedUrl = `https://hotstream.club/embed/${videoId}`;
 
-        // 3. API'den Linki İste (Hotstream'in gizli source ucu)
-        // Genellikle /sources/[ID] veya /api/source/[ID] olur.
-        // Ama önce ana sayfadaki "eval" veya gizli scriptleri tarayıp API yolunu bulalım.
-        var playerRes = await fetch(embedUrl, { 
-            headers: { 'User-Agent': browserUA, 'Referer': linkMatch[1], 'X-Requested-With': 'XMLHttpRequest' } 
-        });
-        var playerHtml = await playerRes.text();
+        // 3. ADIM: AJAX KAYNAK İSTEĞİ (Simülasyon)
+        // Hotstream'in kullandığı muhtemel API uçlarını deniyoruz
+        const apiEndpoints = [
+            `https://hotstream.club/ajax/sources/${videoId}`,
+            `https://hotstream.club/api/source/${videoId}`
+        ];
 
-        // 4. ADIM: API ÇAĞRISI SİMÜLASYONU
-        // Hotstream bazen /playlist/[ID].json veya /api/source/[ID] kullanır.
-        // Biz direkt link taramasını jwplayer'ın yüklediği harici scriptlere kaydıralım.
-        
         let videoUrl = "";
-        
-        // Bu regex, jwplayer'ın playlist/sources içindeki her şeyi yakalar
-        let apiMatch = playerHtml.match(/["']?(?:file|source|src)["']?\s*[:=]\s*["']([^"']+)["']/gi);
-        
-        if (apiMatch) {
-            for (let m of apiMatch) {
-                let clean = m.match(/["'](https?:\/\/[^"']+)["']/i);
-                if (clean && (clean[1].includes("m3u8") || clean[1].includes("google") || clean[1].includes("storage"))) {
-                    videoUrl = clean[1];
+
+        for (let endpoint of apiEndpoints) {
+            try {
+                let apiRes = await fetch(endpoint, {
+                    method: 'POST',
+                    headers: {
+                        'User-Agent': browserUA,
+                        'X-Requested-With': 'XMLHttpRequest',
+                        'Referer': `https://hotstream.club/embed/${videoId}`,
+                        'Content-Type': 'application/x-www-form-urlencoded'
+                    },
+                    body: `id=${videoId}`
+                });
+                
+                let json = await apiRes.json();
+                // Hotstream JSON formatı genellikle { data: [{file: '...'}] } veya { sources: [...] } şeklindedir
+                let rawLink = (json.data && json.data[0] && json.data[0].file) || 
+                              (json.sources && json.sources[0] && json.sources[0].file) ||
+                              json.file;
+                
+                if (rawLink) {
+                    videoUrl = rawLink;
                     break;
                 }
-            }
+            } catch (e) { continue; }
         }
 
-        // 5. SON ÇARE: Harici Script Tarama
+        // 4. Eğer API cevap vermezse, Brute-Force'u Google linklerini dışlayacak şekilde tekrarla
         if (!videoUrl) {
-            console.error("[Kekik-Debug] Ana sayfada yok, scriptleri deşiyoruz...");
-            // Sayfadaki tüm .js dosyalarını bulup içlerine bakalım
-            let scriptMatches = playerHtml.match(/src="([^"]+\.js)"/g);
-            if (scriptMatches) {
-                for (let s of scriptMatches) {
-                    let sUrl = s.replace('src="', '').replace('"', '');
-                    if (sUrl.includes('player') || sUrl.includes('bepeak')) {
-                        let jsRes = await fetch(sUrl.startsWith('http') ? sUrl : `https://hotstream.club${sUrl}`);
-                        let jsText = await jsRes.text();
-                        let jsVideoMatch = jsText.match(/https?:\/\/[^"']+\.(?:m3u8|mp4)[^"']*/i);
-                        if (jsVideoMatch) { videoUrl = jsVideoMatch[0]; break; }
-                    }
-                }
-            }
+            var playerRes = await fetch(`https://hotstream.club/embed/${videoId}`, { headers: { 'User-Agent': browserUA, 'Referer': linkMatch[1] } });
+            var playerHtml = await playerRes.text();
+            
+            // Sadece m3u8 içeren VE içinde "google" geçmeyen linkleri ara
+            let lastDitch = playerHtml.match(/https?:\/\/(?!www\.googletagmanager|www\.google-analytics)[^"']+\.m3u8[^"']*/i);
+            if (lastDitch) videoUrl = lastDitch[0];
         }
 
-        if (!videoUrl) {
-            console.error("[Kekik-Debug] LINK HALA YOK! API Engeli olabilir.");
-            return [];
-        }
+        if (!videoUrl) return [];
 
-        console.error(`[Kekik-Debug] SIZDIRILAN LINK: ${videoUrl}`);
+        console.error(`[Kekik-Debug] HEDEF VURULDU: ${videoUrl}`);
 
         return [{
-            name: "HotStream (API-Sızdırma)",
+            name: "HotStream (POST-Direct)",
             url: `${config.proxyUrl}?url=${encodeURIComponent(videoUrl)}&referer=${encodeURIComponent("https://hotstream.club/")}&ignore_ssl=true`,
             headers: { 'User-Agent': browserUA, 'Referer': "https://hotstream.club/" }
         }];
