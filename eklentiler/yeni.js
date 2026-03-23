@@ -1,64 +1,53 @@
 /**
- * Nuvio Smart Search Scraper - izle.plus (V65)
+ * Nuvio Force-Title Scraper - izle.plus (V66)
  */
 
 var config = {
-    name: "izle.plus (Smart Search)",
+    name: "izle.plus (Full-Force)",
     baseUrl: "https://izle.plus",
     proxyUrl: "https://goproxy.watchbuddy.tv/proxy/video"
 };
 
 async function getStreams(input) {
     try {
-        // 1. INPUT ANALİZİ: Rakam gelirse onu kullanma, title'ı bulmaya çalış
-        var query = "";
+        // 1. ADIM: İsim Bulma Avı
+        let query = "";
+        
         if (typeof input === 'object') {
-            // Öncelik gerçek isimde, ID en son çare
-            query = input.title || input.name || input.imdbId || "";
+            // Logdaki 1314786 yerine gerçek ismi bulana kadar her şeyi dene
+            query = input.name || input.title || input.original_title || input.title_tr || "";
+            
+            // Eğer hala sadece rakam geliyorsa veya boşsa loga bas
+            if (!query || /^\d+$/.test(query)) {
+                console.error(`[Kekik-Debug] Kritik: İsim bulunamadı, sadece ID var: ${JSON.stringify(input)}`);
+            }
         } else {
             query = input;
         }
 
-        console.error(`[Kekik-Debug] Ham Sorgu: ${query}`);
+        console.error(`[Kekik-Debug] Kullanılan Arama Terimi: ${query}`);
 
-        // Eğer sorgu sadece rakamlardan oluşuyorsa (ID ise) ve başka veri yoksa
-        // Bu durumda site üzerinde ID ile arama yapmaktan başka çare kalmıyor 
-        // Ama çoğu zaman site bunu bulamaz.
-        
         var browserUA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36";
 
-        // 2. Arama Yap
+        // 2. ADIM: Arama Yap
+        // Eğer query hala sadece rakamsa, site yine sonuç vermeyecektir.
         var searchUrl = `${config.baseUrl}/?s=${encodeURIComponent(query)}`;
-        console.error(`[Kekik-Debug] Arama URL: ${searchUrl}`);
-
         var searchRes = await fetch(searchUrl, { headers: { 'User-Agent': browserUA } });
         var searchHtml = await searchRes.text();
 
-        // 3. Link Ayıklama (Daha esnek regex)
-        // href="https://izle.plus/herhangi-bir-sey/"
-        var linkRegex = /href="(https?:\/\/izle\.plus\/([^"\/]+)\/)"/gi;
-        var match;
-        var targetUrl = "";
-
-        while ((match = linkRegex.exec(searchHtml)) !== null) {
-            let foundLink = match[1];
-            let slug = match[2];
-
-            // Çöpleri temizle
-            if (!slug.includes('wp-') && !slug.includes('category') && !slug.includes('tag') && slug !== 'contact') {
-                targetUrl = foundLink;
-                break; 
-            }
-        }
-
-        if (!targetUrl) {
-            console.error(`[Kekik-Debug] Hata: Arama sonucunda temiz link bulunamadı.`);
+        // 3. ADIM: Link Ayıklama
+        // wp-json vb. teknik sayfaları eleyerek ilk gerçek linki bul
+        var linkMatch = searchHtml.match(/href="(https?:\/\/izle\.plus\/(?!wp-json|wp-content|category|tag)[^"\/]+\/)"/i);
+        
+        if (!linkMatch) {
+            console.error(`[Kekik-Debug] Hata: '${query}' için arama sonucu bulunamadı.`);
             return [];
         }
 
-        console.error(`[Kekik-Debug] Hedef Sayfa: ${targetUrl}`);
+        var targetUrl = linkMatch[1];
+        console.error(`[Kekik-Debug] Hedef Sayfa Yakalandı: ${targetUrl}`);
 
-        // 4. Video ID Yakala
+        // 4. ADIM: Video Kaynağı Çekme
         var response = await fetch(targetUrl, { headers: { 'User-Agent': browserUA } });
         var html = await response.text();
 
@@ -72,7 +61,7 @@ async function getStreams(input) {
             var finalUrl = `${config.proxyUrl}?url=${encodeURIComponent(streamUrl)}&referer=${encodeURIComponent("https://"+sourceDomain+"/")}&ignore_ssl=true`;
 
             return [{
-                name: "HotStream (Smart)",
+                name: "izle.plus | " + sourceDomain,
                 url: finalUrl,
                 headers: { 'User-Agent': browserUA, 'Referer': `https://${sourceDomain}/` }
             }];
