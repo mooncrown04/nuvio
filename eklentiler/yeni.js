@@ -1,9 +1,9 @@
 /**
- * Nuvio Brute-Force Scraper - izle.plus (V75)
+ * Nuvio JW-Grabber - izle.plus (V76)
  */
 
 var config = {
-    name: "izle.plus (Brute-V75)",
+    name: "izle.plus (JW-V76)",
     baseUrl: "https://izle.plus",
     proxyUrl: "https://goproxy.watchbuddy.tv/proxy/video"
 };
@@ -16,13 +16,12 @@ async function getStreams(input) {
         var browserUA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36";
 
         // 1. Film Sayfasını Bul
-        var searchUrl = `${config.baseUrl}/?s=${encodeURIComponent(query)}`;
-        var searchRes = await fetch(searchUrl, { headers: { 'User-Agent': browserUA } });
+        var searchRes = await fetch(`${config.baseUrl}/?s=${encodeURIComponent(query)}`, { headers: { 'User-Agent': browserUA } });
         var searchHtml = await searchRes.text();
         var linkMatch = searchHtml.match(/href="(https?:\/\/izle\.plus\/(?!wp-json|wp-content|category|tag)[^"\/]+\/)"/i);
         if (!linkMatch) return [];
 
-        // 2. Embed URL'sini Al
+        // 2. Embed URL'sini Al ve Sayfayı Çek
         var res = await fetch(linkMatch[1], { headers: { 'User-Agent': browserUA } });
         var html = await res.text();
         var videoMatch = html.match(/hotstream\.club\/(?:embed|v|list)\/([a-zA-Z0-9_-]+)/i);
@@ -34,52 +33,39 @@ async function getStreams(input) {
         });
         var playerHtml = await playerRes.text();
 
-        // 3. ADIM: GENİŞ TARAMA (Regex Bombası)
-        let foundLinks = [];
+        // 3. ADIM: JWPLAYER SETUP ANALİZİ
+        let videoUrl = "";
         
-        // Regex 1: Standart HTTP(S) m3u8/mp4
-        let r1 = playerHtml.match(/https?:\/\/[^"']+\.(?:m3u8|mp4)[^"']*/gi);
-        if (r1) foundLinks.push(...r1);
+        // JwPlayer setup içindeki "file" veya "sources" kısmını yakala
+        let jwMatch = playerHtml.match(/["']?file["']?\s*[:=]\s*["']([^"']+)["']/i) || 
+                      playerHtml.match(/sources\s*:\s*\[\s*\{\s*["']?file["']?\s*:\s*["']([^"']+)["']/i);
 
-        // Regex 2: "file":"..." veya "src":"..." yapıları
-        let r2 = playerHtml.match(/["']?(?:file|src|source|url)["']?\s*[:=]\s*["']([^"']+)["']/gi);
-        if (r2) {
-            r2.forEach(m => {
-                let clean = m.replace(/["']?(?:file|src|source|url)["']?\s*[:=]\s*["']/, "").replace(/["']$/, "");
-                if (clean.includes("m3u8") || clean.includes("mp4")) foundLinks.push(clean);
-            });
+        if (jwMatch) {
+            videoUrl = jwMatch[1];
+        } else {
+            // Eğer hala bulamadıysak, Hotstream'in özel 'sources' js isteğini simüle edelim
+            // Bazen harici js içinde: var player = new jwplayer("vsplayer").setup({ ... })
+            console.error("[Kekik-Debug] JW Match başarısız, derin tarama başlatılıyor...");
+            let deepMatch = playerHtml.match(/(https?:\/\/[^"']+\.(?:m3u8|mp4)[^"']*)/i);
+            if (deepMatch) videoUrl = deepMatch[1];
         }
 
-        // Regex 3: Base64 olabilecek uzun metinleri ayıkla (Hotstream bazen linki b64 yapar)
-        let b64Match = playerHtml.match(/[A-Za-z0-9+/]{50,}/g);
-        if (b64Match) {
-            b64Match.forEach(b => {
-                try {
-                    let decoded = atob(b);
-                    if (decoded.includes("http") && (decoded.includes("m3u8") || decoded.includes("mp4"))) {
-                        foundLinks.push(decoded);
-                    }
-                } catch(e) {}
-            });
-        }
-
-        // Tekrar edenleri sil ve temizle
-        let uniqueLinks = [...new Set(foundLinks)].filter(l => l.startsWith('http'));
-
-        if (uniqueLinks.length === 0) {
-            console.error("[Kekik-Debug] Sayfa kodunda hiçbir video izi bulunamadı!");
-            // Logcat'e sayfanın bir kısmını bas ki neyle karşı karşıyayız görelim
-            console.error("[Kekik-Debug] HTML Snippet: " + playerHtml.substring(0, 500).replace(/\s+/g, ' '));
+        if (!videoUrl) {
+            // Son çare: HTML içindeki script taglarının sonuna bak (Logda kesilen kısım)
+            console.error("[Kekik-Debug] Link hala yok. Sayfa sonu: " + playerHtml.substring(playerHtml.length - 300));
             return [];
         }
 
-        let videoUrl = uniqueLinks[0];
-        console.error(`[Kekik-Debug] AVCI YAKALADI: ${videoUrl}`);
+        console.error(`[Kekik-Debug] JW GRABBER BULDUM: ${videoUrl}`);
 
         return [{
-            name: "HotStream (Brute-V75)",
+            name: "HotStream (JW-V76)",
             url: `${config.proxyUrl}?url=${encodeURIComponent(videoUrl)}&referer=${encodeURIComponent("https://hotstream.club/")}&ignore_ssl=true`,
-            headers: { 'User-Agent': browserUA, 'Referer': "https://hotstream.club/" }
+            headers: { 
+                'User-Agent': browserUA, 
+                'Referer': "https://hotstream.club/",
+                'Origin': "https://hotstream.club"
+            }
         }];
 
     } catch (e) {
