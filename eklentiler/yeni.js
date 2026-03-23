@@ -1,48 +1,44 @@
 /**
- * Nuvio Local Scraper - KekikStream/FilmciBaba (V50 - Proxy Stabilization)
+ * Nuvio Diagnostic Scraper - V52 (Verbose Logging)
  */
 
 var config = {
-    name: "KekikStream",
-    baseUrl: "https://stream.watchbuddy.tv",
+    name: "Kekik-Diagnostic",
     proxyUrl: "https://goproxy.watchbuddy.tv/proxy/video",
-    apiKey: "500330721680edb6d5f7f12ba7cd9023",
-    id: "999b5a3c-bb95-571e-bd12-f5778eaecbfe"
+    testUrl: "https://hotstream.club/v/wNXSyyQMhUeLa5Z" // Test kimliği
 };
 
 async function getStreams(input) {
+    let debugInfo = "";
     try {
-        var rawId = (typeof input === 'object') ? (input.imdbId || input.tmdbId) : input;
-        if (!rawId) return [];
-
-        // Loglarda görülen başarılı proxy yapısını taklit edelim
-        var deviceUA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36";
+        const deviceUA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36";
         
-        // Örnek logdaki başarılı URL yapısı
-        // Not: 'list' parametresi logda Code 0 vermişti, biz 'v' veya 'embed' deniyoruz.
-        var videoId = "wNXSyyQMhUeLa5Z"; // Bu dinamik olarak HTML'den çekilmeli
-        var hotstreamUrl = `https://hotstream.club/v/${videoId}`;
-        
-        // Proxy üzerinden güvenli URL oluşturma
-        var finalUrl = `${config.proxyUrl}?url=${encodeURIComponent(hotstreamUrl)}&referer=${encodeURIComponent("https://hotstream.club/")}`;
+        // --- ADIM 1: Link Canlı mı? (Sertifika Kontrolü) ---
+        try {
+            let testRes = await fetch(config.testUrl, { 
+                method: 'HEAD', 
+                headers: { 'User-Agent': deviceUA } 
+            });
+            debugInfo += `| Status: ${testRes.status} `;
+        } catch (e) {
+            debugInfo += `| SSL_ERR: ${e.message.substring(0,15)} `;
+        }
 
+        // --- ADIM 2: Proxy Yanıt Veriyor mu? ---
+        const finalUrl = `${config.proxyUrl}?url=${encodeURIComponent(config.testUrl)}&referer=${encodeURIComponent("https://hotstream.club/")}`;
+        
         return [{
-            name: "HotStream (Auto-Proxy)",
+            name: `[LOGS] ${debugInfo} | HotStream`,
             url: finalUrl,
             headers: {
                 'User-Agent': deviceUA,
                 'Referer': "https://hotstream.club/",
-                'Origin': "https://hotstream.club"
-            },
-            // HLS.js için düşük hafıza modu ayarı (eğer oynatıcı destekliyorsa)
-            behavior: {
-                maxBufferLength: 30, // Saniye cinsinden bufferı kısıtla (Hafıza dostu)
-                lowLatencyMode: true
+                'X-Debug-Mode': 'true' // Bazı proxyler bunu görünce daha fazla log basar
             }
         }];
 
     } catch (e) {
-        return [];
+        return [{ name: "CRITICAL_SCRAPER_ERROR", url: "" }];
     }
 }
 
