@@ -1,27 +1,16 @@
 /**
- * Nuvio Code-Spy Scraper - izle.plus (V74)
+ * Nuvio Brute-Force Scraper - izle.plus (V75)
  */
 
 var config = {
-    name: "izle.plus (Spy-Mode)",
+    name: "izle.plus (Brute-V75)",
     baseUrl: "https://izle.plus",
     proxyUrl: "https://goproxy.watchbuddy.tv/proxy/video"
 };
 
-// P.A.C.K.E.R Decoder
-function unpack(code) {
-    try {
-        var p = /}\('(.*)',\s*(\d+),\s*(\d+),\s*'(.*)'\.split\('\|'\)/.exec(code);
-        if (!p) return code;
-        var s = p[1], a = p[4].split('|'), c = parseInt(p[2]);
-        while (c--) { if (a[c]) { s = s.replace(new RegExp('\\b' + c.toString(parseInt(p[2]) > 62 ? 62 : p[3]) + '\\b', 'g'), a[c]); } }
-        return s;
-    } catch(e) { return code; }
-}
-
 async function getStreams(input) {
     try {
-        let query = (typeof input === 'object') ? (input.title || input.name || "1314786") : input;
+        let query = (typeof input === 'object') ? (input.title || input.name || "ajan zeta") : input;
         if (query.toString().includes("1314786")) query = "ajan zeta";
 
         var browserUA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36";
@@ -33,45 +22,65 @@ async function getStreams(input) {
         var linkMatch = searchHtml.match(/href="(https?:\/\/izle\.plus\/(?!wp-json|wp-content|category|tag)[^"\/]+\/)"/i);
         if (!linkMatch) return [];
 
-        // 2. Embed Sayfasına Gir
-        var embedRes = await fetch(linkMatch[1], { headers: { 'User-Agent': browserUA } });
-        var embedHtml = await embedRes.text();
-        var videoMatch = embedHtml.match(/hotstream\.club\/(?:embed|v|list)\/([a-zA-Z0-9_-]+)/i);
+        // 2. Embed URL'sini Al
+        var res = await fetch(linkMatch[1], { headers: { 'User-Agent': browserUA } });
+        var html = await res.text();
+        var videoMatch = html.match(/hotstream\.club\/(?:embed|v|list)\/([a-zA-Z0-9_-]+)/i);
         if (!videoMatch) return [];
 
-        var playerRes = await fetch(`https://hotstream.club/embed/${videoMatch[1]}`, { 
+        var embedUrl = `https://hotstream.club/embed/${videoMatch[1]}`;
+        var playerRes = await fetch(embedUrl, { 
             headers: { 'User-Agent': browserUA, 'Referer': linkMatch[1] } 
         });
         var playerHtml = await playerRes.text();
 
-        // 3. KRİTİK ADIM: DEŞİFRE ET VE LOGA BAS
-        let decrypted = playerHtml;
-        if (playerHtml.includes('eval(function')) {
-            decrypted = unpack(playerHtml);
-            
-            // Logcat sınırı (4kb) olduğu için kodu parçalayarak basıyoruz
-            console.error("[Kekik-Debug] --- DEŞİFRE EDİLEN KOD BAŞLANGIÇ ---");
-            for (let i = 0; i < decrypted.length; i += 500) {
-                console.error(`[Kekik-Debug] KOD-PARCA[${i/500}]: ` + decrypted.substring(i, i + 500));
-            }
-            console.error("[Kekik-Debug] --- DEŞİFRE EDİLEN KOD BİTİŞ ---");
-        }
-
-        // 4. Standart Yakalama Denemesi
-        var videoUrlMatch = decrypted.match(/(https?:\/\/[^"']+\.(?:m3u8|mp4)[^"']*)/i);
+        // 3. ADIM: GENİŞ TARAMA (Regex Bombası)
+        let foundLinks = [];
         
-        if (videoUrlMatch) {
-            var videoUrl = videoUrlMatch[1];
-            console.error(`[Kekik-Debug] Yakalanan URL: ${videoUrl}`);
-            
-            return [{
-                name: "HotStream (Spy-V74)",
-                url: `${config.proxyUrl}?url=${encodeURIComponent(videoUrl)}&referer=${encodeURIComponent("https://hotstream.club/")}&ignore_ssl=true`,
-                headers: { 'User-Agent': browserUA, 'Referer': "https://hotstream.club/" }
-            }];
+        // Regex 1: Standart HTTP(S) m3u8/mp4
+        let r1 = playerHtml.match(/https?:\/\/[^"']+\.(?:m3u8|mp4)[^"']*/gi);
+        if (r1) foundLinks.push(...r1);
+
+        // Regex 2: "file":"..." veya "src":"..." yapıları
+        let r2 = playerHtml.match(/["']?(?:file|src|source|url)["']?\s*[:=]\s*["']([^"']+)["']/gi);
+        if (r2) {
+            r2.forEach(m => {
+                let clean = m.replace(/["']?(?:file|src|source|url)["']?\s*[:=]\s*["']/, "").replace(/["']$/, "");
+                if (clean.includes("m3u8") || clean.includes("mp4")) foundLinks.push(clean);
+            });
         }
 
-        return [];
+        // Regex 3: Base64 olabilecek uzun metinleri ayıkla (Hotstream bazen linki b64 yapar)
+        let b64Match = playerHtml.match(/[A-Za-z0-9+/]{50,}/g);
+        if (b64Match) {
+            b64Match.forEach(b => {
+                try {
+                    let decoded = atob(b);
+                    if (decoded.includes("http") && (decoded.includes("m3u8") || decoded.includes("mp4"))) {
+                        foundLinks.push(decoded);
+                    }
+                } catch(e) {}
+            });
+        }
+
+        // Tekrar edenleri sil ve temizle
+        let uniqueLinks = [...new Set(foundLinks)].filter(l => l.startsWith('http'));
+
+        if (uniqueLinks.length === 0) {
+            console.error("[Kekik-Debug] Sayfa kodunda hiçbir video izi bulunamadı!");
+            // Logcat'e sayfanın bir kısmını bas ki neyle karşı karşıyayız görelim
+            console.error("[Kekik-Debug] HTML Snippet: " + playerHtml.substring(0, 500).replace(/\s+/g, ' '));
+            return [];
+        }
+
+        let videoUrl = uniqueLinks[0];
+        console.error(`[Kekik-Debug] AVCI YAKALADI: ${videoUrl}`);
+
+        return [{
+            name: "HotStream (Brute-V75)",
+            url: `${config.proxyUrl}?url=${encodeURIComponent(videoUrl)}&referer=${encodeURIComponent("https://hotstream.club/")}&ignore_ssl=true`,
+            headers: { 'User-Agent': browserUA, 'Referer': "https://hotstream.club/" }
+        }];
 
     } catch (e) {
         console.error(`[Kekik-Debug] Hata: ${e.message}`);
