@@ -1,5 +1,5 @@
 /**
- * Nuvio Local Scraper - FilmciBaba (V40 - Final Deep Dive)
+ * Nuvio Local Scraper - FilmciBaba (V41 - Hotstream HTML-Response Fix)
  */
 
 const config = {
@@ -22,7 +22,6 @@ async function getStreams(input) {
         let rawId = (typeof input === 'object') ? (input.imdbId || input.tmdbId || input.id) : input;
         if (!rawId) return [];
 
-        // 1. TMDB & Slug Aşaması (Stabil)
         const cleanId = rawId.toString().trim();
         let item = null;
         if (cleanId.startsWith('tt')) {
@@ -42,50 +41,50 @@ async function getStreams(input) {
         const targetUrl = `${config.baseUrl}/${slug}/`;
         const chromeUA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36";
 
-        // 2. Sayfa ve Embed Yakalama
+        // 1. Ana Sayfa
         const res = await fetch(targetUrl, { headers: { 'User-Agent': chromeUA } });
         const html = await res.text();
-        const mainCookie = res.headers.get('set-cookie')?.split(';')[0] || "";
-
         const embedMatch = html.match(/https:\/\/hotstream\.club\/(?:embed|list)\/([a-zA-Z0-9]+)/i);
         if (!embedMatch) return [];
 
         const embedUrl = embedMatch[0];
         const embedId = embedMatch[1];
 
-        // 3. Embed Sayfasından Key ve Token Avı
+        // 2. Embed Sayfası & Key Avı
         const embedRes = await fetch(embedUrl, {
-            headers: { 'User-Agent': chromeUA, 'Referer': targetUrl, 'Cookie': mainCookie }
+            headers: { 'User-Agent': chromeUA, 'Referer': targetUrl }
         });
         const embedHtml = await embedRes.text();
-        const embedCookie = embedRes.headers.get('set-cookie')?.split(';')[0] || "";
+        const keyMatch = embedHtml.match(/key\s*[:=]\s*["']([^"']+)["']/i);
+        const secretKey = keyMatch ? keyMatch[1] : "";
 
-        const key = (embedHtml.match(/key\s*[:=]\s*["']([^"']+)["']/i) || [])[1];
-        
-        // 4. API SİMGESEL SALDIRI (JSON Formatı Denemesi)
-        console.error(`[FilmciBaba] API Sorgusu Atiliyor (ID: ${embedId})`);
+        console.error(`[FilmciBaba] API Sorgusu Hazirlaniyor: ${embedId}`);
 
-        const apiResponse = await fetch(`https://hotstream.club/api/source/${embedId}`, {
+        // 3. API POST (Form-Data ve Doğru Parametreler)
+        const params = new URLSearchParams();
+        params.append('r', targetUrl);
+        params.append('d', 'hotstream.club');
+        if (secretKey) params.append('key', secretKey);
+
+        const apiRes = await fetch(`https://hotstream.club/api/source/${embedId}`, {
             method: 'POST',
             headers: {
                 'User-Agent': chromeUA,
+                'Accept': 'application/json, text/javascript, */*; q=0.01',
+                'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
                 'X-Requested-With': 'XMLHttpRequest',
                 'Referer': embedUrl,
-                'Content-Type': 'application/json', // Bu sefer JSON deniyoruz
-                'Cookie': embedCookie || mainCookie
+                'Origin': 'https://hotstream.club'
             },
-            body: JSON.stringify({
-                r: btoa(targetUrl), // Referer'ı Base64 yapma ihtimali
-                key: key,
-                d: "hotstream.club"
-            })
+            body: params.toString()
         });
 
         let results = [];
-        const apiData = await apiResponse.json().catch(() => ({}));
-        const sources = apiData.data || apiData.sources || [];
-
-        if (sources.length > 0) {
+        // JSON hatasını önlemek için güvenli parse
+        const responseText = await apiRes.text();
+        try {
+            const apiData = JSON.parse(responseText);
+            const sources = apiData.data || apiData.sources || [];
             sources.forEach(s => {
                 results.push({
                     name: `FilmciBaba - ${s.label || 'HD'}`,
@@ -93,28 +92,18 @@ async function getStreams(input) {
                     headers: { 'User-Agent': chromeUA, 'Referer': 'https://hotstream.club/' }
                 });
             });
+        } catch (e) {
+            console.error("[FilmciBaba] API JSON donmedi, HTML taraniyor...");
+            // Yedek: HTML içinden direkt m3u8 ayıkla
+            const m3u8Match = responseText.match(/https?:\/\/[^"']+\.m3u8[^"']*/gi);
+            if (m3u8Match) {
+                m3u8Match.forEach(link => {
+                    results.push({ name: "FilmciBaba (Fallback)", url: link, headers: { 'User-Agent': chromeUA } });
+                });
+            }
         }
 
-        // 5. SON ÇARE: JAVASCRIPT VARİABLE TARAMASI (Regex++ )
-        if (results.length === 0) {
-            console.error("[FilmciBaba] API başarısız, derin tarama yapılıyor...");
-            
-            // Packed JavaScript (p,a,c,k,e,d) veya düz m3u8 linklerini tara
-            const deepRegex = /(https?:\/\/[^"']+\.m3u8[^"']*|https?:\/\/[^"']+\.mp4[^"']*)/gi;
-            const matches = embedHtml.match(deepRegex) || [];
-            
-            matches.forEach(link => {
-                if (!link.includes('themoviedb') && !link.includes('hotstream.club/embed')) {
-                    results.push({
-                        name: "FilmciBaba - HLS (Deep)",
-                        url: link,
-                        headers: { 'User-Agent': chromeUA, 'Referer': 'https://hotstream.club/' }
-                    });
-                }
-            });
-        }
-
-        console.error(`[FilmciBaba] Tamamlandı. Bulunan: ${results.length}`);
+        console.error(`[FilmciBaba] Bitti. Kaynak: ${results.length}`);
         return results;
 
     } catch (e) {
