@@ -1,9 +1,9 @@
 /**
- * Nuvio Blacklist-Bypass - izle.plus (V85)
+ * Nuvio Final-Strike - izle.plus (V84)
  */
 
 var config = {
-    name: "izle.plus (V85-Final)",
+    name: "izle.plus (Final-V86)",
     baseUrl: "https://izle.plus",
     proxyUrl: "https://goproxy.watchbuddy.tv/proxy/video"
 };
@@ -16,70 +16,75 @@ async function getStreams(input) {
 
         var browserUA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
-        // 1. ARAMA
-        console.error(`[Kekik-Log] 2. Arama Terimi: ${query}`);
+        // 1. ADIM: Sayfa ve ID zaten loglarda onaylandı, hızlıca geçiyoruz
         let sRes = await fetch(`${config.baseUrl}/?s=${encodeURIComponent(query)}`, { headers: { 'User-Agent': browserUA } });
         let sHtml = await sRes.text();
-
-        // 2. LİNK AYIKLAMA (Sadece film sayfaları - wp-json vb. hariç)
-        // Regex: izle.plus/ den sonra wp- ile başlamayan ve en az bir alt dizini olan linkleri al
         let matches = sHtml.match(/href="(https?:\/\/izle\.plus\/(?!wp-)[^"\/]+\/)"/gi);
-        let movieUrl = "";
-
-        if (matches) {
-            // İlk geçerli film linkini seç (wp-json içermeyeni)
-            movieUrl = matches.map(m => m.match(/href="([^"]+)"/)[1])
-                              .find(l => !l.includes("wp-json") && !l.includes("category") && !l.includes("tag") && l.length > config.baseUrl.length + 2);
-        }
-
-        if (!movieUrl) {
-            console.error("[Kekik-Log] 3. HATA: Gerçek film sayfası bulunamadı.");
-            return [];
-        }
-        console.error("[Kekik-Log] 4. Hedef Sayfa: " + movieUrl);
-
-        // 3. FİLM SAYFASINA GİT
-        let mRes = await fetch(movieUrl, { headers: { 'User-Agent': browserUA, 'Referer': config.baseUrl } });
-        let mHtml = await mRes.text();
-
-        // 4. HOTSTREAM ID BULUCU (Iframe veya script içinden)
-        let videoId = (mHtml.match(/hotstream\.club\/(?:embed|v|download)\/([a-zA-Z0-9_-]+)/i) || [])[1];
+        let movieUrl = matches ? matches.map(m => m.match(/href="([^"]+)"/)[1]).find(l => !l.includes("wp-json") && l.length > config.baseUrl.length + 2) : null;
         
-        if (!videoId) {
-            // Eğer doğrudan link yoksa, iframe src'den yakala
-            let ifr = mHtml.match(/<iframe[^>]+src="([^"]+hotstream\.club[^"]+)"/i);
-            if (ifr) videoId = ifr[1].split('/').pop();
-        }
+        if (!movieUrl) return [];
+        console.error("[Kekik-Log] 2. Hedef: " + movieUrl);
 
-        if (!videoId) {
-            console.error("[Kekik-Log] 5. HATA: Hotstream ID bulunamadı.");
-            return [];
-        }
-        console.error("[Kekik-Log] 6. Hotstream ID: " + videoId);
+        let mRes = await fetch(movieUrl, { headers: { 'User-Agent': browserUA } });
+        let mHtml = await mRes.text();
+        let videoId = (mHtml.match(/hotstream\.club\/(?:embed|v|download)\/([a-zA-Z0-9_-]+)/i) || [])[1];
 
-        // 5. EMBED SAYFASINDAN LİNK ÇEK
+        if (!videoId) return [];
+        console.error("[Kekik-Log] 3. ID: " + videoId);
+
+        // 2. ADIM: EMBED SAYFASI DERİN ANALİZ
         let eRes = await fetch(`https://hotstream.club/embed/${videoId}`, { 
             headers: { 'User-Agent': browserUA, 'Referer': movieUrl } 
         });
         let eHtml = await eRes.text();
 
-        // m3u8 avı
-        let streamUrl = (eHtml.match(/["'](https?:\/\/[^"']+\.m3u8[^"']*)["']/i) || [])[1];
+        let finalUrl = "";
 
-        if (streamUrl) {
-            console.error("[Kekik-Log] 7. BAŞARI: " + streamUrl);
+        // Metot A: JSON Kaynakları (file: "...")
+        let fileMatch = eHtml.match(/["']?file["']?\s*:\s*["']([^"']+\.m3u8[^"']*)["']/i);
+        if (fileMatch) finalUrl = fileMatch[1];
+
+        // Metot B: Packer / Eval Unpacker (Eğer şifreliyse)
+        if (!finalUrl && eHtml.includes("eval(function")) {
+            console.error("[Kekik-Log] 4. Eval algılandı, çözülüyor...");
+            const unpack = (p,a,c,k,e,d) => {e=c=> (c<a?'':e(parseInt(c/a)))+((c=c%a)>35?String.fromCharCode(c+29):c.toString(36));if(!''.replace(/^/,String)){while(c--)d[e(c)]=k[c]||e(c);k=[e=>d[e]];e=()=>'\\w+'};while(c--)if(k[c])p=p.replace(new RegExp('\\b'+e(c)+'\\b','g'),k[c]);return p;};
+            
+            let evals = eHtml.match(/eval\(function\(p,a,c,k,e,d\).+?split\('\|'\)\)\)/g);
+            if (evals) {
+                for (let ev of evals) {
+                    let p = ev.match(/\('(.*)',\s*(\d+),\s*(\d+),\s*'(.*)'\.split/);
+                    if (p) {
+                        let dec = unpack(p[1], parseInt(p[2]), parseInt(p[3]), p[4].split('|'), 0, {});
+                        let m = dec.match(/https?:\/\/[^"']+\.m3u8[^"']*/i);
+                        if (m) { finalUrl = m[0]; break; }
+                    }
+                }
+            }
+        }
+
+        // Metot C: Ham String Taraması (Her ihtimale karşı)
+        if (!finalUrl) {
+            let rawLinks = eHtml.match(/https?:\/\/[^"']+\.m3u8[^"']*/gi);
+            if (rawLinks) finalUrl = rawLinks.find(l => !l.includes("google"));
+        }
+
+        if (finalUrl) {
+            // Hotstream linklerinde ters slash (\/) varsa temizle
+            finalUrl = finalUrl.replace(/\\/g, "");
+            console.error("[Kekik-Log] 5. BINGO: " + finalUrl);
+            
             return [{
-                name: "HotStream (V85-Auto)",
-                url: `${config.proxyUrl}?url=${encodeURIComponent(streamUrl)}&referer=${encodeURIComponent("https://hotstream.club/")}&ignore_ssl=true`,
+                name: "HotStream (Final-V86)",
+                url: `${config.proxyUrl}?url=${encodeURIComponent(finalUrl)}&referer=${encodeURIComponent("https://hotstream.club/")}&ignore_ssl=true`,
                 headers: { 'User-Agent': browserUA, 'Referer': "https://hotstream.club/" }
             }];
         }
 
-        console.error("[Kekik-Log] 8. HATA: m3u8 bulunamadı.");
+        console.error("[Kekik-Log] 6. HATA: Link hala bulunamadı.");
         return [];
 
     } catch (e) {
-        console.error("[Kekik-Log] KRİTİK HATA: " + e.toString());
+        console.error("[Kekik-Log] CRASH: " + e.toString());
         return [];
     }
 }
