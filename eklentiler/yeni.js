@@ -6,7 +6,7 @@
 var CryptoJS = require("crypto-js");
 
 // NOT: Eğer bağlantı hatası devam ederse bu BASE_URL'yi yeni bir inat adresiyle değiştir.
-var BASE_URL = "https://dizibox.rest"; 
+var BASE_URL = "https://inat-tv.xyz"; 
 var AES_KEY = "C3V4HUpUbGDOjxEl"; 
 
 // --- 1. DEŞİFRE (AES-CBC) ---
