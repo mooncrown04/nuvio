@@ -1,9 +1,3 @@
-/**
- * RecTV Nuvio Provider - v1.0 (Full Version)
- * Geliştirici: @KekikAkademi için uyarlanmıştır.
- * Kısıtlamalar: async/await YASAK, Promise zorunlu.
- */
-
 var cheerio = require("cheerio-without-node-native");
 
 var BASE_URL = "https://a.prectv67.lol";
