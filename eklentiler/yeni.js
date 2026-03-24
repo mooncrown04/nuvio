@@ -1,73 +1,77 @@
 /**
- * InatBox Universal Scraper - v1.0
- * Özellikler: AES Decryption, VK Extractor, Yandex Disk Extractor
+ * InatBox Universal Scraper - v1.1
+ * Gelişmiş Log ve Hata Takip Sistemi eklendi.
  */
 
 var CryptoJS = require("crypto-js");
 
-// --- KONFİGÜRASYON ---
-var AES_KEY = "C3V4HUpUbGDOjxEl"; // Python kodundaki en güncel key
+var AES_KEY = "C3V4HUpUbGDOjxEl"; 
 var BASE_URL = "https://dizibox.rest";
-var PROXY_URL = "https://goproxy.watchbuddy.tv/proxy/video";
 
-// --- 1. YARDIMCI FONKSİYONLAR (DECRYPTION) ---
+// --- 1. DEŞİFRE VE HATA TAKİBİ ---
 function inatDecrypt(encryptedText) {
     try {
+        if (!encryptedText || typeof encryptedText !== 'string') {
+            console.error("[Inat-Decrypt] Gelen veri boş veya string değil!");
+            return null;
+        }
+
         var key = CryptoJS.enc.Utf8.parse(AES_KEY);
         var iv = key; 
-        var firstPart = encryptedText.split(":")[0];
-        var decrypted1 = CryptoJS.AES.decrypt(firstPart, key, {
+
+        // 1. ADIM DEŞİFRE
+        var parts = encryptedText.split(":");
+        var decrypted1 = CryptoJS.AES.decrypt(parts[0], key, {
             iv: iv, mode: CryptoJS.mode.CBC, padding: CryptoJS.pad.Pkcs7
         }).toString(CryptoJS.enc.Utf8);
 
+        if (!decrypted1) {
+            console.error("[Inat-Decrypt] 1. Aşama başarısız! Key veya IV hatalı olabilir.");
+            return null;
+        }
+
+        // 2. ADIM DEŞİFRE
         var secondPart = decrypted1.split(":")[0];
         var finalDecrypted = CryptoJS.AES.decrypt(secondPart, key, {
             iv: iv, mode: CryptoJS.mode.CBC, padding: CryptoJS.pad.Pkcs7
         }).toString(CryptoJS.enc.Utf8);
 
+        if (!finalDecrypted) {
+            console.error("[Inat-Decrypt] 2. Aşama başarısız! Veri bozuk.");
+            return null;
+        }
+
         return JSON.parse(finalDecrypted);
     } catch (e) {
+        console.error("[Inat-Decrypt] KRİTİK HATA:", e.message);
         return null;
     }
 }
 
-function fetchInat(url) {
-    return new Promise(function(resolve) {
-        var host = url.split("/")[2];
-        fetch(url, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
-                'User-Agent': 'speedrestapi',
-                'Host': host,
-                'Referer': 'https://speedrestapi.com/',
-                'X-Requested-With': 'com.bp.box'
-            },
-            body: "1=" + AES_KEY + "&0=" + AES_KEY
-        })
-        .then(function(res) { return res.text(); })
-        .then(function(text) { resolve(inatDecrypt(text)); })
-        .catch(function() { resolve(null); });
-    });
-}
-
-// --- 2. EXTRACTORS (AYIKLAYICILAR) ---
-
+// --- 2. EXTRACTOR HATA TAKİBİ ---
 function universalExtractor(item) {
     return new Promise(function(resolve) {
         var url = item.chUrl;
-        var name = item.chName || "Yayın";
+        var name = item.chName || "Bilinmeyen Kanal";
 
-        // Yandex Disk Kontrolü
+        console.log("[Extractor] İşleniyor:", name, "->", url);
+
         if (url.includes("disk.yandex")) {
             fetch(url, { headers: { 'Referer': 'https://disk.yandex.com.tr/' } })
                 .then(function(res) { return res.text(); })
                 .then(function(html) {
                     var match = html.match(/https?:\/\/[^\s"]*?master-playlist\.m3u8/);
-                    resolve(match ? { name: "⌜ Yandex ⌟ " + name, url: match[0], isM3U8: true } : null);
-                }).catch(function() { resolve(null); });
+                    if (match) {
+                        resolve({ name: "⌜ Yandex ⌟ " + name, url: match[0], isM3U8: true });
+                    } else {
+                        console.error("[Extractor-Yandex] Sayfada m3u8 bulunamadı:", url);
+                        resolve(null);
+                    }
+                }).catch(function(err) {
+                    console.error("[Extractor-Yandex] Fetch Hatası:", err.message);
+                    resolve(null);
+                });
         } 
-        // VK Kontrolü
         else if (url.includes("vk.com")) {
             fetch(url, { headers: { 'X-Requested-With': 'XMLHttpRequest', 'Referer': 'https://vk.com/' } })
                 .then(function(res) { return res.text(); })
@@ -75,60 +79,60 @@ function universalExtractor(item) {
                     var match = html.match(/"([^"]*m3u8[^"]*)"/);
                     if (match) {
                         var m3u8 = match[1].replace(/\\/g, "");
-                        resolve({ name: "⌜ VK ⌟ " + name, url: m3u8, isM3U8: true, headers: { 'Referer': 'https://vk.com/' } });
-                    } else resolve(null);
-                }).catch(function() { resolve(null); });
+                        resolve({ name: "⌜ VK ⌟ " + name, url: m3u8, isM3U8: true });
+                    } else {
+                        console.error("[Extractor-VK] Video linki yakalanamadı:", url);
+                        resolve(null);
+                    }
+                }).catch(function(err) {
+                    console.error("[Extractor-VK] Fetch Hatası:", err.message);
+                    resolve(null);
+                });
         }
-        // Direkt M3U8 veya Diğerleri
         else {
-            resolve({
-                name: "⌜ Inat ⌟ " + name,
-                url: url,
-                isM3U8: url.includes(".m3u8")
-            });
+            // Hiçbirine girmiyorsa düz linktir
+            resolve({ name: "⌜ Inat ⌟ " + name, url: url, isM3U8: url.includes(".m3u8") });
         }
     });
 }
 
-// --- 3. ANA GETSTREAMS FONKSİYONU ---
-
+// --- 3. ANA DÖNGÜ VE LOGLAMA ---
 function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
     return new Promise(function(resolve) {
-        // Örnek: Ulusal kanalları çekelim (İhtiyaca göre kategori URL'si değişebilir)
         var targetUrl = BASE_URL + "/tv/ulusal.php";
+        console.log("[Inat] İstek atılıyor:", targetUrl);
 
-        fetchInat(targetUrl).then(function(items) {
-            if (!items || !Array.isArray(items)) return resolve([]);
+        fetch(targetUrl, {
+            method: 'POST',
+            headers: { 'User-Agent': 'speedrestapi', 'X-Requested-With': 'com.bp.box' },
+            body: "1=" + AES_KEY + "&0=" + AES_KEY
+        })
+        .then(function(res) { 
+            console.log("[Inat] HTTP Durumu:", res.status);
+            return res.text(); 
+        })
+        .then(function(text) {
+            var items = inatDecrypt(text);
+            if (!items) {
+                console.error("[Inat] JSON deşifre edilemedi veya boş döndü.");
+                return resolve([]);
+            }
 
-            // Reklamı ve boş linkleri filtrele
-            var validItems = items.filter(function(i) { 
-                return i.chName !== "@inattvapk" && i.chUrl && i.chUrl !== "null"; 
-            });
+            console.log("[Inat] Toplam öğe sayısı:", items.length);
 
-            // Tüm linkleri extractor'dan geçir (Paralel işlem)
-            var promises = validItems.map(function(item) {
-                return universalExtractor(item);
-            });
+            var promises = items
+                .filter(function(i) { return i.chName !== "@inattvapk" && i.chUrl; })
+                .map(function(item) { return universalExtractor(item); });
 
             Promise.all(promises).then(function(results) {
-                var finalStreams = results.filter(Boolean).map(function(s) {
-                    return {
-                        name: s.name,
-                        url: s.url,
-                        quality: "Auto",
-                        headers: s.headers || { 'User-Agent': 'speedrestapi' }
-                    };
-                });
+                var finalStreams = results.filter(Boolean);
+                console.log("[Inat] Başarıyla çözülen link sayısı:", finalStreams.length);
                 resolve(finalStreams);
             });
         })
-        .catch(function() { resolve([]); });
+        .catch(function(err) {
+            console.error("[Inat] Genel Akış Hatası:", err.message);
+            resolve([]);
+        });
     });
-}
-
-// Nuvio Export
-if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { getStreams: getStreams };
-} else {
-    global.getStreams = getStreams;
 }
