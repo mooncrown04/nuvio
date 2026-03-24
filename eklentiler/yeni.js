@@ -1,22 +1,22 @@
 /**
- * Nuvio Ghost-Protocol - izle.plus (V84)
+ * Nuvio Master-Decoder - izle.plus (V90)
  */
 
 var config = {
-    name: "izle.plus (Ghost-V89)",
+    name: "izle.plus (Final-V90)",
     baseUrl: "https://izle.plus",
     proxyUrl: "https://goproxy.watchbuddy.tv/proxy/video"
 };
 
 async function getStreams(input) {
     try {
-        console.error("[Kekik-Log] 1. Ghost Mod Aktif");
+        console.error("[Kekik-Log] 1. Decoder Aktif");
         let query = (typeof input === 'object') ? (input.title || input.name) : input;
         if (!query || /^\d+$/.test(query)) query = "Ajan Zeta";
 
         var browserUA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
-        // 1. ARAMA VE SAYFA BULMA (Bu kısım zaten çalışıyor)
+        // 1. Film Sayfası & ID (Hızlı Geçiş - Loglarda Onaylı)
         let sRes = await fetch(`${config.baseUrl}/?s=${encodeURIComponent(query)}`, { headers: { 'User-Agent': browserUA } });
         let sHtml = await sRes.text();
         let movieUrl = (sHtml.match(/href="(https?:\/\/izle\.plus\/(?!wp-)[^"\/]+\/)"/i) || [])[1];
@@ -26,62 +26,69 @@ async function getStreams(input) {
         let mHtml = await mRes.text();
         let videoId = (mHtml.match(/hotstream\.club\/(?:embed|v|download)\/([a-zA-Z0-9_-]+)/i) || [])[1];
         if (!videoId) return [];
+        console.error("[Kekik-Log] 2. ID: " + videoId);
 
-        console.error("[Kekik-Log] 2. ID Onaylandı: " + videoId);
-
-        // 2. FETCH HİLELERİ (Boyut: 0 sorununu aşmak için)
-        // Hotstream bazen linki /api/source/ID gibi gizli bir endpoint üzerinden verir.
-        // Ama en basit haliyle m3u8 linkini "tahmin" edebiliriz.
-        
-        let attempts = [
-            `https://hotstream.club/embed/${videoId}`,
-            `https://hotstream.club/v/${videoId}`,
-            `https://hotstream.club/download/${videoId}`
-        ];
+        // 2. EMBED SAYFASINI ÇÖZ (Boyutu 4364 olan sayfa)
+        let eRes = await fetch(`https://hotstream.club/embed/${videoId}`, { 
+            headers: { 'User-Agent': browserUA, 'Referer': movieUrl } 
+        });
+        let eHtml = await eRes.text();
+        console.error(`[Kekik-Log] 3. Veri Boyutu: ${eHtml.length} - Analiz Başladı...`);
 
         let finalUrl = "";
 
-        for (let target of attempts) {
-            console.error("[Kekik-Log] 3. Deneniyor: " + target);
-            try {
-                let response = await fetch(target, {
-                    method: 'GET',
-                    headers: {
-                        'User-Agent': browserUA,
-                        'Referer': movieUrl,
-                        'Accept': '*/*',
-                        'Connection': 'keep-alive'
-                    },
-                    credentials: 'omit' // Bot korumasını bazen bu gevşetir
-                });
+        // Metot 1: JSON ve Tırnak Arası (file, src, link)
+        let jsonMatch = eHtml.match(/["']?(?:file|src|link|url)["']?\s*[:=]\s*["']([^"']+\.m3u8[^"']*)["']/i);
+        if (jsonMatch) finalUrl = jsonMatch[1];
 
-                let content = await response.text();
-                console.error("[Kekik-Log] 4. Cevap Boyutu: " + content.length);
-
-                if (content.length > 0) {
-                    // m3u8 Yakala
-                    let m = content.match(/["'](https?:\/\/[^"']+\.m3u8[^"']*)["']/i);
-                    if (m) { finalUrl = m[1].replace(/\\/g, ""); break; }
+        // Metot 2: Base64 Dedektörü (Çok kritik!)
+        if (!finalUrl) {
+            let b64Blocks = eHtml.match(/[A-Za-z0-9+/]{40,}/g); // 40 karakterden uzun b64 blokları
+            if (b64Blocks) {
+                for (let b of b64Blocks) {
+                    try {
+                        let decoded = atob(b);
+                        if (decoded.includes(".m3u8")) {
+                            let m = decoded.match(/https?:\/\/[^"']+\.m3u8[^"']*/i);
+                            if (m) { finalUrl = m[0]; break; }
+                        }
+                    } catch(e) {}
                 }
-            } catch (e) {
-                console.error("[Kekik-Log] 3.X Hata: " + e.message);
             }
         }
 
+        // Metot 3: eval(atob(...)) Kombinasyonu
+        if (!finalUrl && eHtml.includes("atob(")) {
+            let atobMatch = eHtml.match(/atob\(["']([^"']+)["']\)/i);
+            if (atobMatch) {
+                try {
+                    let dec = atob(atobMatch[1]);
+                    if (dec.includes(".m3u8")) finalUrl = dec;
+                } catch(e) {}
+            }
+        }
+
+        // Metot 4: Ham Regex (En kaba hali)
+        if (!finalUrl) {
+            let raw = eHtml.match(/https?:\/\/[^"']+\.m3u8[^"']*/i);
+            if (raw) finalUrl = raw[0];
+        }
+
         if (finalUrl) {
-            console.error("[Kekik-Log] 5. BİNGO: " + finalUrl);
+            finalUrl = finalUrl.replace(/\\/g, "");
+            console.error("[Kekik-Log] 4. SONUÇ: " + finalUrl);
+            
             return [{
-                name: "HotStream (Ghost-V89)",
+                name: "HotStream (V90-Final)",
                 url: `${config.proxyUrl}?url=${encodeURIComponent(finalUrl)}&referer=${encodeURIComponent("https://hotstream.club/")}&ignore_ssl=true`,
                 headers: { 
                     'User-Agent': browserUA, 
-                    'Referer': "https://hotstream.club/",
-                    'Origin': "https://hotstream.club"
+                    'Referer': "https://hotstream.club/"
                 }
             }];
         }
 
-        console.error("[Kekik-Log] 6. Hiçbir yöntemle link alınamadı.");
+        console.error("[Kekik-Log] 5. Hata: 4364 byte içinde link bulunamadı. Yapı çok karmaşık.");
         return [];
 
     } catch (e) {
