@@ -1,73 +1,105 @@
 /**
- * Nuvio Multi-Source - izle.plus (V95)
+ * Nuvio Rec-Master - API & Token Auth (V97)
  */
 
 var config = {
-    name: "izle.plus (Multi-Source-V95)",
-    baseUrl: "https://izle.plus",
+    name: "RecTV (API-V97)",
+    mainUrl: "https://a.prectv67.lol",
+    swKey: "4F5A9C3D9A86FA54EACEDDD635185/c3c5bd17-e37b-4b94-a944-8a3688a30452",
     proxyUrl: "https://goproxy.watchbuddy.tv/proxy/video"
 };
 
+// Global değişkenler (Token takibi için)
+var _token = null;
+var _tokenTime = 0;
+
+/**
+ * Kotlin'deki getValidToken mantığı: Token yoksa veya süresi dolmuşsa yeniler.
+ */
+async function ensureToken() {
+    let now = Date.now();
+    // Token yoksa veya süresi (30 dk varsayıldı) dolmak üzereyse
+    if (!_token || (_tokenTime + 30 * 60 * 1000) < now) {
+        console.error("[Kekik-Log] Token Yenileniyor...");
+        try {
+            let res = await fetch(`${config.mainUrl}/api/attest/nonce`, {
+                headers: { "User-Agent": "googleusercontent" }
+            });
+            let text = await res.text();
+            
+            // API bazen direkt string, bazen JSON döner. Kotlin'deki try-catch mantığı:
+            try {
+                let json = JSON.parse(text);
+                _token = json.accessToken;
+            } catch(e) {
+                _token = text.trim();
+            }
+            
+            _tokenTime = now;
+            console.error("[Kekik-Log] Yeni Token Alındı.");
+        } catch (err) {
+            console.error("[Kekik-Log] Token Hatası: " + err);
+        }
+    }
+    return _token;
+}
+
 async function getStreams(input) {
     try {
-        console.error("[Kekik-Log] 1. Multi-Source Başlatıldı");
+        console.error("[Kekik-Log] 1. API Modu Başlatıldı");
         let query = (typeof input === 'object') ? (input.title || input.name) : input;
-        if (!query || /^\d+$/.test(query)) query = "Ajan Zeta";
+        
+        // 1. Token'ı Hazırla
+        let token = await ensureToken();
+        let commonHeaders = {
+            "User-Agent": "googleusercontent",
+            "Referer": "https://twitter.com/",
+            "Authorization": `Bearer ${token}`
+        };
 
-        var browserUA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
+        // 2. ARAMA (API üzerinden)
+        let sRes = await fetch(`${config.mainUrl}/api/search/${encodeURIComponent(query)}/${config.swKey}/`, {
+            headers: commonHeaders
+        });
+        let sData = await sRes.json();
+        
+        // API yanıtındaki 'posters' veya 'channels' kısmını al
+        let items = (sData.posters || []).concat(sData.channels || []);
+        if (items.length === 0) return [];
 
-        // 1. Film Sayfasını Bul
-        let sRes = await fetch(`${config.baseUrl}/?s=${encodeURIComponent(query)}`, { headers: { 'User-Agent': browserUA } });
-        let sHtml = await sRes.text();
-        let movieUrl = (sHtml.match(/href="(https?:\/\/izle\.plus\/(?!wp-)[^"\/]+\/)"/i) || [])[1];
-        if (!movieUrl) return [];
-
-        console.error("[Kekik-Log] 2. Sayfa Analizi: " + movieUrl);
-        let mRes = await fetch(movieUrl, { headers: { 'User-Agent': browserUA } });
-        let mHtml = await mRes.text();
+        let firstItem = items[0];
+        console.error("[Kekik-Log] 2. İçerik Bulundu: " + firstItem.title);
 
         let streams = [];
 
-        // 2. KAYNAK TARAMASI (Hotstream dışındakiler)
-        // Sayfadaki tüm iframe ve player linklerini topla
-        let potentialLinks = mHtml.match(/https?:\/\/(?:vidmoly|moly|uqload|fastu|voe|dood)\.[a-z]+\/(?:embed|e|v)\/[a-zA-Z0-9_-]+/gi) || [];
-        
-        // Benzersiz linkleri filtrele
-        let uniqueLinks = [...new Set(potentialLinks)];
-        console.error(`[Kekik-Log] 3. Bulunan Alternatif Sayısı: ${uniqueLinks.length}`);
-
-        for (let link of uniqueLinks) {
-            console.error("[Kekik-Log] 4. Kaynak Deneniyor: " + link);
-            
-            // Vidmoly/Moly için basit m3u8 çekici
-            try {
-                let vRes = await fetch(link, { headers: { 'User-Agent': browserUA, 'Referer': movieUrl } });
-                let vHtml = await vRes.text();
-                let m3u8 = (vHtml.match(/https?:\/\/[^"']+\.m3u8[^"']*/i) || [])[0];
-                
-                if (m3u8) {
-                    streams.push({
-                        name: link.split('/')[2].split('.')[0].toUpperCase(),
-                        url: `${config.proxyUrl}?url=${encodeURIComponent(m3u8)}&referer=${encodeURIComponent(link)}&ignore_ssl=true`,
-                        headers: { 'User-Agent': browserUA, 'Referer': link }
-                    });
-                }
-            } catch (e) { continue; }
+        // 3. KAYNAK AYRIŞTIRMA
+        // Eğer içerik bir dizi ise (Season/Episode API'sine git)
+        if (firstItem.type === "serie") {
+            console.error("[Kekik-Log] 3. Dizi saptandı, bölümler çekiliyor...");
+            let dRes = await fetch(`${config.mainUrl}/api/season/by/serie/${firstItem.id}/${config.swKey}/`, {
+                headers: commonHeaders
+            });
+            let seasons = await dRes.json();
+            // Basitlik için ilk sezonun ilk bölümünü alıyoruz (Nuvio yapısına göre geliştirilebilir)
+            let firstEp = seasons[0].episodes[0];
+            firstItem.sources = firstEp.sources;
         }
 
-        // 3. EĞER HALA BOŞSA: Sayfadaki gizli "data-video" veya "data-link" özniteliklerini ara
-        if (streams.length === 0) {
-            console.error("[Kekik-Log] 5. Gizli veri taraması...");
-            let dataLinks = mHtml.match(/data-(?:link|video|url)=["']([^"']+)["']/gi) || [];
-            for (let dl of dataLinks) {
-                let val = dl.match(/["']([^"']+)["']/)[1];
-                if (val.includes("http")) {
-                     streams.push({ name: "Alternatif", url: val });
-                }
+        // 4. LİNKLERİ OLUŞTUR
+        if (firstItem.sources && firstItem.sources.length > 0) {
+            for (let src of firstItem.sources) {
+                streams.push({
+                    name: `RecTV - ${src.type.toUpperCase()}`,
+                    url: `${config.proxyUrl}?url=${encodeURIComponent(src.url)}&referer=${encodeURIComponent("https://twitter.com/")}&ignore_ssl=true`,
+                    headers: { 
+                        "User-Agent": "googleusercontent", 
+                        "Referer": "https://twitter.com/" 
+                    }
+                });
             }
         }
 
-        console.error(`[Kekik-Log] 6. Toplam Yayın: ${streams.length}`);
+        console.error(`[Kekik-Log] 4. Başarılı! Yayın sayısı: ${streams.length}`);
         return streams;
 
     } catch (e) {
