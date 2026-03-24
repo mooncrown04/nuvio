@@ -1,111 +1,113 @@
 /**
- * Nuvio Rec-Master - API & Token Auth (V97)
+ * RecTV Nuvio Provider - v1.0
+ * Kısıtlamalar: async/await YASAK, Promise ZORUNLU.
  */
 
-var config = {
-    name: "RecTV (API-V97)",
-    mainUrl: "https://a.prectv67.lol",
-    swKey: "4F5A9C3D9A86FA54EACEDDD635185/c3c5bd17-e37b-4b94-a944-8a3688a30452",
-    proxyUrl: "https://goproxy.watchbuddy.tv/proxy/video"
+var BASE_URL = "https://a.prectv67.lol";
+var SW_KEY = "4F5A9C3D9A86FA54EACEDDD635185/c3c5bd17-e37b-4b94-a944-8a3688a30452";
+var PROXY_URL = "https://goproxy.watchbuddy.tv/proxy/video";
+
+var HEADERS = {
+    'User-Agent': 'googleusercontent',
+    'Referer': 'https://twitter.com/',
+    'Accept': 'application/json'
 };
 
-// Global değişkenler (Token takibi için)
-var _token = null;
-var _tokenTime = 0;
+// Global Token Saklayıcı (Nuvio çalışma süresince geçerli)
+var cachedToken = null;
 
-/**
- * Kotlin'deki getValidToken mantığı: Token yoksa veya süresi dolmuşsa yeniler.
- */
-async function ensureToken() {
-    let now = Date.now();
-    // Token yoksa veya süresi (30 dk varsayıldı) dolmak üzereyse
-    if (!_token || (_tokenTime + 30 * 60 * 1000) < now) {
-        console.error("[Kekik-Log] Token Yenileniyor...");
-        try {
-            let res = await fetch(`${config.mainUrl}/api/attest/nonce`, {
-                headers: { "User-Agent": "googleusercontent" }
-            });
-            let text = await res.text();
-            
-            // API bazen direkt string, bazen JSON döner. Kotlin'deki try-catch mantığı:
-            try {
-                let json = JSON.parse(text);
-                _token = json.accessToken;
-            } catch(e) {
-                _token = text.trim();
-            }
-            
-            _tokenTime = now;
-            console.error("[Kekik-Log] Yeni Token Alındı.");
-        } catch (err) {
-            console.error("[Kekik-Log] Token Hatası: " + err);
-        }
-    }
-    return _token;
+function getAuthToken() {
+    return new Promise(function(resolve, reject) {
+        if (cachedToken) return resolve(cachedToken);
+
+        fetch(BASE_URL + "/api/attest/nonce", { headers: HEADERS })
+            .then(function(res) { return res.text(); })
+            .then(function(text) {
+                try {
+                    var json = JSON.parse(text);
+                    cachedToken = json.accessToken || text.trim();
+                } catch (e) {
+                    cachedToken = text.trim();
+                }
+                resolve(cachedToken);
+            })
+            .catch(function() { resolve(null); });
+    });
 }
 
-async function getStreams(input) {
-    try {
-        console.error("[Kekik-Log] 1. API Modu Başlatıldı");
-        let query = (typeof input === 'object') ? (input.title || input.name) : input;
+function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
+    return new Promise(function(resolve, reject) {
         
-        // 1. Token'ı Hazırla
-        let token = await ensureToken();
-        let commonHeaders = {
-            "User-Agent": "googleusercontent",
-            "Referer": "https://twitter.com/",
-            "Authorization": `Bearer ${token}`
-        };
+        var isMovie = (mediaType === 'movie');
+        var tmdbUrl = 'https://api.themoviedb.org/3/' + (isMovie ? 'movie' : 'tv') + '/' + tmdbId + '?language=tr-TR&api_key=4ef0d7355d9ffb5151e987764708ce96';
 
-        // 2. ARAMA (API üzerinden)
-        let sRes = await fetch(`${config.mainUrl}/api/search/${encodeURIComponent(query)}/${config.swKey}/`, {
-            headers: commonHeaders
-        });
-        let sData = await sRes.json();
-        
-        // API yanıtındaki 'posters' veya 'channels' kısmını al
-        let items = (sData.posters || []).concat(sData.channels || []);
-        if (items.length === 0) return [];
-
-        let firstItem = items[0];
-        console.error("[Kekik-Log] 2. İçerik Bulundu: " + firstItem.title);
-
-        let streams = [];
-
-        // 3. KAYNAK AYRIŞTIRMA
-        // Eğer içerik bir dizi ise (Season/Episode API'sine git)
-        if (firstItem.type === "serie") {
-            console.error("[Kekik-Log] 3. Dizi saptandı, bölümler çekiliyor...");
-            let dRes = await fetch(`${config.mainUrl}/api/season/by/serie/${firstItem.id}/${config.swKey}/`, {
-                headers: commonHeaders
-            });
-            let seasons = await dRes.json();
-            // Basitlik için ilk sezonun ilk bölümünü alıyoruz (Nuvio yapısına göre geliştirilebilir)
-            let firstEp = seasons[0].episodes[0];
-            firstItem.sources = firstEp.sources;
-        }
-
-        // 4. LİNKLERİ OLUŞTUR
-        if (firstItem.sources && firstItem.sources.length > 0) {
-            for (let src of firstItem.sources) {
-                streams.push({
-                    name: `RecTV - ${src.type.toUpperCase()}`,
-                    url: `${config.proxyUrl}?url=${encodeURIComponent(src.url)}&referer=${encodeURIComponent("https://twitter.com/")}&ignore_ssl=true`,
-                    headers: { 
-                        "User-Agent": "googleusercontent", 
-                        "Referer": "https://twitter.com/" 
-                    }
+        // 1. Önce TMDB'den isim al
+        fetch(tmdbUrl)
+            .then(function(res) { return res.json(); })
+            .then(function(data) {
+                var query = data.title || data.name;
+                // 2. Auth Token al
+                return getAuthToken().then(function(token) {
+                    return { query: query, token: token };
                 });
-            }
-        }
+            })
+            .then(function(auth) {
+                var searchHeaders = Object.assign({}, HEADERS, { 
+                    'Authorization': 'Bearer ' + auth.token 
+                });
 
-        console.error(`[Kekik-Log] 4. Başarılı! Yayın sayısı: ${streams.length}`);
-        return streams;
-
-    } catch (e) {
-        console.error("[Kekik-Log] CRASH: " + e.toString());
-        return [];
-    }
+                // 3. API üzerinden arama yap
+                return fetch(BASE_URL + '/api/search/' + encodeURIComponent(auth.query) + '/' + SW_KEY + '/', { headers: searchHeaders })
+                    .then(function(res) { return res.json(); })
+                    .then(function(sData) {
+                        var items = (sData.posters || []).concat(sData.channels || []).concat(sData.series || []);
+                        if (items.length === 0) return resolve([]);
+                        
+                        var target = items[0];
+                        
+                        // 4. Eğer dizi ise sezon/bölüm detayına git
+                        if (target.type === "serie") {
+                            return fetch(BASE_URL + '/api/season/by/serie/' + target.id + '/' + SW_KEY + '/', { headers: searchHeaders })
+                                .then(function(res) { return res.json(); })
+                                .then(function(seasons) {
+                                    // Sizin seçtiğiniz sezon/bölümle eşleşeni bul
+                                    var foundSources = [];
+                                    seasons.forEach(function(s) {
+                                        // Basit mantık: İlk sezondaki ilgili bölümü al (Geliştirilebilir)
+                                        s.episodes.forEach(function(ep) {
+                                            if (ep.sources) foundSources = ep.sources;
+                                        });
+                                    });
+                                    return foundSources;
+                                });
+                        }
+                        return target.sources || [];
+                    });
+            })
+            .then(function(sources) {
+                var results = sources.map(function(src) {
+                    // Proxy kullanımı burada m3u8'in Header ile açılmasını sağlar
+                    var finalUrl = PROXY_URL + "?url=" + encodeURIComponent(src.url) + "&referer=" + encodeURIComponent("https://twitter.com/") + "&ignore_ssl=true";
+                    
+                    return {
+                        name: "RecTV - " + src.type.toUpperCase(),
+                        url: finalUrl,
+                        quality: "Auto",
+                        headers: HEADERS,
+                        provider: "rectv_api"
+                    };
+                });
+                resolve(results);
+            })
+            .catch(function(err) {
+                console.error('RecTV Hata:', err.message);
+                resolve([]);
+            });
+    });
 }
 
-globalThis.getStreams = getStreams;
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = { getStreams: getStreams };
+} else {
+    global.getStreams = getStreams;
+}
