@@ -1,9 +1,9 @@
 /**
- * Nuvio Final-Strike - izle.plus (V84)
+ * Nuvio Last-Stand - izle.plus (V87)
  */
 
 var config = {
-    name: "izle.plus (Final-V86)",
+    name: "izle.plus (Final-V87)",
     baseUrl: "https://izle.plus",
     proxyUrl: "https://goproxy.watchbuddy.tv/proxy/video"
 };
@@ -16,7 +16,7 @@ async function getStreams(input) {
 
         var browserUA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
-        // 1. ADIM: Sayfa ve ID zaten loglarda onaylandı, hızlıca geçiyoruz
+        // 1. ADIM: Film Sayfası ve ID (Log onaylı süreç)
         let sRes = await fetch(`${config.baseUrl}/?s=${encodeURIComponent(query)}`, { headers: { 'User-Agent': browserUA } });
         let sHtml = await sRes.text();
         let matches = sHtml.match(/href="(https?:\/\/izle\.plus\/(?!wp-)[^"\/]+\/)"/gi);
@@ -32,55 +32,52 @@ async function getStreams(input) {
         if (!videoId) return [];
         console.error("[Kekik-Log] 3. ID: " + videoId);
 
-        // 2. ADIM: EMBED SAYFASI DERİN ANALİZ
-        let eRes = await fetch(`https://hotstream.club/embed/${videoId}`, { 
-            headers: { 'User-Agent': browserUA, 'Referer': movieUrl } 
+        // 2. ADIM: DOWNLOAD SAYFASI TARAMASI (GİZLİ SİLAH)
+        // Embed sayfası boş dönüyorsa, link mutlaka indirme sayfasında bir yerdedir.
+        let dlPage = `https://hotstream.club/download/${videoId}`;
+        let dlRes = await fetch(dlPage, { 
+            headers: { 
+                'User-Agent': browserUA, 
+                'Referer': movieUrl,
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+            } 
         });
-        let eHtml = await eRes.text();
+        let dlHtml = await dlRes.text();
 
         let finalUrl = "";
 
-        // Metot A: JSON Kaynakları (file: "...")
-        let fileMatch = eHtml.match(/["']?file["']?\s*:\s*["']([^"']+\.m3u8[^"']*)["']/i);
-        if (fileMatch) finalUrl = fileMatch[1];
+        // Metot A: Ham m3u8 Taraması
+        let m3u8Links = dlHtml.match(/https?:\/\/[^"']+\.m3u8[^"']*/gi);
+        if (m3u8Links) finalUrl = m3u8Links.find(l => !l.includes("google"));
 
-        // Metot B: Packer / Eval Unpacker (Eğer şifreliyse)
-        if (!finalUrl && eHtml.includes("eval(function")) {
-            console.error("[Kekik-Log] 4. Eval algılandı, çözülüyor...");
-            const unpack = (p,a,c,k,e,d) => {e=c=> (c<a?'':e(parseInt(c/a)))+((c=c%a)>35?String.fromCharCode(c+29):c.toString(36));if(!''.replace(/^/,String)){while(c--)d[e(c)]=k[c]||e(c);k=[e=>d[e]];e=()=>'\\w+'};while(c--)if(k[c])p=p.replace(new RegExp('\\b'+e(c)+'\\b','g'),k[c]);return p;};
-            
-            let evals = eHtml.match(/eval\(function\(p,a,c,k,e,d\).+?split\('\|'\)\)\)/g);
-            if (evals) {
-                for (let ev of evals) {
-                    let p = ev.match(/\('(.*)',\s*(\d+),\s*(\d+),\s*'(.*)'\.split/);
-                    if (p) {
-                        let dec = unpack(p[1], parseInt(p[2]), parseInt(p[3]), p[4].split('|'), 0, {});
-                        let m = dec.match(/https?:\/\/[^"']+\.m3u8[^"']*/i);
-                        if (m) { finalUrl = m[0]; break; }
-                    }
-                }
-            }
+        // Metot B: Eğer m3u8 yoksa, MP4 linki ara (Bazen mp4 olarak döner)
+        if (!finalUrl) {
+            let mp4Links = dlHtml.match(/https?:\/\/[^"']+\.mp4[^"']*/gi);
+            if (mp4Links) finalUrl = mp4Links.find(l => !l.includes("google"));
         }
 
-        // Metot C: Ham String Taraması (Her ihtimale karşı)
+        // Metot C: "sources" JSON Bloğu Taraması
         if (!finalUrl) {
-            let rawLinks = eHtml.match(/https?:\/\/[^"']+\.m3u8[^"']*/gi);
-            if (rawLinks) finalUrl = rawLinks.find(l => !l.includes("google"));
+            let sourceMatch = dlHtml.match(/["']?file["']?\s*:\s*["']([^"']+)["']/i);
+            if (sourceMatch) finalUrl = sourceMatch[1];
         }
 
         if (finalUrl) {
-            // Hotstream linklerinde ters slash (\/) varsa temizle
-            finalUrl = finalUrl.replace(/\\/g, "");
+            finalUrl = finalUrl.replace(/\\/g, ""); // Ters slashları temizle
             console.error("[Kekik-Log] 5. BINGO: " + finalUrl);
             
             return [{
-                name: "HotStream (Final-V86)",
+                name: "HotStream (Last-Stand)",
                 url: `${config.proxyUrl}?url=${encodeURIComponent(finalUrl)}&referer=${encodeURIComponent("https://hotstream.club/")}&ignore_ssl=true`,
-                headers: { 'User-Agent': browserUA, 'Referer': "https://hotstream.club/" }
+                headers: { 
+                    'User-Agent': browserUA, 
+                    'Referer': "https://hotstream.club/",
+                    'Origin': "https://hotstream.club"
+                }
             }];
         }
 
-        console.error("[Kekik-Log] 6. HATA: Link hala bulunamadı.");
+        console.error("[Kekik-Log] 6. HATA: Hiçbir kaynak bulunamadı. HTML Boyutu: " + dlHtml.length);
         return [];
 
     } catch (e) {
