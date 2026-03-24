@@ -1,153 +1,132 @@
-var cheerio = require("cheerio-without-node-native");
+/**
+ * InatBox Universal Scraper - v1.0
+ * Özellikler: AES Decryption, VK Extractor, Yandex Disk Extractor
+ */
 
-var BASE_URL = "https://a.prectv67.lol";
-var SW_KEY = "4F5A9C3D9A86FA54EACEDDD635185/c3c5bd17-e37b-4b94-a944-8a3688a30452";
+var CryptoJS = require("crypto-js");
+
+// --- KONFİGÜRASYON ---
+var AES_KEY = "C3V4HUpUbGDOjxEl"; // Python kodundaki en güncel key
+var BASE_URL = "https://dizibox.rest";
 var PROXY_URL = "https://goproxy.watchbuddy.tv/proxy/video";
 
-var HEADERS = {
-    'User-Agent': 'googleusercontent',
-    'Referer': 'https://twitter.com/',
-    'Accept': 'application/json'
-};
+// --- 1. YARDIMCI FONKSİYONLAR (DECRYPTION) ---
+function inatDecrypt(encryptedText) {
+    try {
+        var key = CryptoJS.enc.Utf8.parse(AES_KEY);
+        var iv = key; 
+        var firstPart = encryptedText.split(":")[0];
+        var decrypted1 = CryptoJS.AES.decrypt(firstPart, key, {
+            iv: iv, mode: CryptoJS.mode.CBC, padding: CryptoJS.pad.Pkcs7
+        }).toString(CryptoJS.enc.Utf8);
 
-// Global Token Saklayıcı
-var cachedToken = null;
+        var secondPart = decrypted1.split(":")[0];
+        var finalDecrypted = CryptoJS.AES.decrypt(secondPart, key, {
+            iv: iv, mode: CryptoJS.mode.CBC, padding: CryptoJS.pad.Pkcs7
+        }).toString(CryptoJS.enc.Utf8);
 
-/**
- * API yetkilendirmesi için Bearer Token alır.
- */
-function getAuthToken() {
+        return JSON.parse(finalDecrypted);
+    } catch (e) {
+        return null;
+    }
+}
+
+function fetchInat(url) {
     return new Promise(function(resolve) {
-        if (cachedToken) return resolve(cachedToken);
-
-        fetch(BASE_URL + "/api/attest/nonce", { headers: HEADERS })
-            .then(function(res) { return res.text(); })
-            .then(function(text) {
-                try {
-                    var json = JSON.parse(text);
-                    cachedToken = json.accessToken || text.trim();
-                } catch (e) {
-                    cachedToken = text.trim();
-                }
-                console.log('[RecTV] Token Hazır.');
-                resolve(cachedToken);
-            })
-            .catch(function() { 
-                console.error('[RecTV] Token Alınamadı!');
-                resolve(null); 
-            });
+        var host = url.split("/")[2];
+        fetch(url, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+                'User-Agent': 'speedrestapi',
+                'Host': host,
+                'Referer': 'https://speedrestapi.com/',
+                'X-Requested-With': 'com.bp.box'
+            },
+            body: "1=" + AES_KEY + "&0=" + AES_KEY
+        })
+        .then(function(res) { return res.text(); })
+        .then(function(text) { resolve(inatDecrypt(text)); })
+        .catch(function() { resolve(null); });
     });
 }
 
-/**
- * Ana Akış Fonksiyonu
- */
+// --- 2. EXTRACTORS (AYIKLAYICILAR) ---
+
+function universalExtractor(item) {
+    return new Promise(function(resolve) {
+        var url = item.chUrl;
+        var name = item.chName || "Yayın";
+
+        // Yandex Disk Kontrolü
+        if (url.includes("disk.yandex")) {
+            fetch(url, { headers: { 'Referer': 'https://disk.yandex.com.tr/' } })
+                .then(function(res) { return res.text(); })
+                .then(function(html) {
+                    var match = html.match(/https?:\/\/[^\s"]*?master-playlist\.m3u8/);
+                    resolve(match ? { name: "⌜ Yandex ⌟ " + name, url: match[0], isM3U8: true } : null);
+                }).catch(function() { resolve(null); });
+        } 
+        // VK Kontrolü
+        else if (url.includes("vk.com")) {
+            fetch(url, { headers: { 'X-Requested-With': 'XMLHttpRequest', 'Referer': 'https://vk.com/' } })
+                .then(function(res) { return res.text(); })
+                .then(function(html) {
+                    var match = html.match(/"([^"]*m3u8[^"]*)"/);
+                    if (match) {
+                        var m3u8 = match[1].replace(/\\/g, "");
+                        resolve({ name: "⌜ VK ⌟ " + name, url: m3u8, isM3U8: true, headers: { 'Referer': 'https://vk.com/' } });
+                    } else resolve(null);
+                }).catch(function() { resolve(null); });
+        }
+        // Direkt M3U8 veya Diğerleri
+        else {
+            resolve({
+                name: "⌜ Inat ⌟ " + name,
+                url: url,
+                isM3U8: url.includes(".m3u8")
+            });
+        }
+    });
+}
+
+// --- 3. ANA GETSTREAMS FONKSİYONU ---
+
 function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
-    return new Promise(function(resolve, reject) {
-        
-        var isMovie = (mediaType === 'movie');
-        var tmdbUrl = 'https://api.themoviedb.org/3/' + (isMovie ? 'movie' : 'tv') + '/' + tmdbId + '?language=tr-TR&api_key=4ef0d7355d9ffb5151e987764708ce96';
+    return new Promise(function(resolve) {
+        // Örnek: Ulusal kanalları çekelim (İhtiyaca göre kategori URL'si değişebilir)
+        var targetUrl = BASE_URL + "/tv/ulusal.php";
 
-        console.log('[RecTV] Başlatıldı:', tmdbId, 'Tip:', mediaType);
+        fetchInat(targetUrl).then(function(items) {
+            if (!items || !Array.isArray(items)) return resolve([]);
 
-        // 1. TMDB Bilgisini Al
-        fetch(tmdbUrl)
-            .then(function(res) { return res.json(); })
-            .then(function(data) {
-                var query = data.title || data.name;
-                if (!query) throw new Error('İsim bulunamadı');
+            // Reklamı ve boş linkleri filtrele
+            var validItems = items.filter(function(i) { 
+                return i.chName !== "@inattvapk" && i.chUrl && i.chUrl !== "null"; 
+            });
 
-                // 2. Token Al ve Arama Yap
-                return getAuthToken().then(function(token) {
-                    var searchHeaders = Object.assign({}, HEADERS, { 
-                        'Authorization': 'Bearer ' + token 
-                    });
-                    
-                    var searchUrl = BASE_URL + '/api/search/' + encodeURIComponent(query) + '/' + SW_KEY + '/';
-                    return fetch(searchUrl, { headers: searchHeaders })
-                        .then(function(res) { return res.json(); })
-                        .then(function(sData) {
-                            return { searchData: sData, token: token, title: query };
-                        });
-                });
-            })
-            .then(function(ctx) {
-                var sData = ctx.searchData;
-                var items = (sData.posters || []).concat(sData.channels || []).concat(sData.series || []);
-                
-                if (items.length === 0) {
-                    console.log('[RecTV] Sonuç bulunamadı:', ctx.title);
-                    return resolve([]);
-                }
+            // Tüm linkleri extractor'dan geçir (Paralel işlem)
+            var promises = validItems.map(function(item) {
+                return universalExtractor(item);
+            });
 
-                var target = items[0]; // İlk ve en alakalı sonucu al
-                var searchHeaders = Object.assign({}, HEADERS, { 'Authorization': 'Bearer ' + ctx.token });
-
-                // 3. EĞER DİZİ İSE: Sezon ve Bölüm Eşleştirme Yap
-                if (target.type === "serie" || (target.label && target.label.toLowerCase().includes("dizi"))) {
-                    console.log('[RecTV] Dizi saptandı, bölümler taranıyor...');
-                    
-                    return fetch(BASE_URL + '/api/season/by/serie/' + target.id + '/' + SW_KEY + '/', { headers: searchHeaders })
-                        .then(function(res) { return res.json(); })
-                        .then(function(seasons) {
-                            var finalSources = [];
-                            
-                            // Sezonları döngüye al
-                            for (var i = 0; i < seasons.length; i++) {
-                                var s = seasons[i];
-                                var sNumber = parseInt(s.title.match(/\d+/) || (i + 1));
-                                
-                                if (sNumber === parseInt(seasonNum)) {
-                                    // Doğru sezondaki bölümleri döngüye al
-                                    for (var j = 0; j < s.episodes.length; j++) {
-                                        var ep = s.episodes[j];
-                                        var epNumber = parseInt(ep.title.match(/\d+/) || (j + 1));
-                                        
-                                        if (epNumber === parseInt(episodeNum)) {
-                                            finalSources = ep.sources || [];
-                                            break;
-                                        }
-                                    }
-                                    break;
-                                }
-                            }
-                            return finalSources;
-                        });
-                }
-                
-                // 4. EĞER FİLM İSE: Doğrudan kaynakları al
-                return target.sources || [];
-            })
-            .then(function(sources) {
-                if (!sources || sources.length === 0) {
-                    console.log('[RecTV] Yayın kaynağı bulunamadı.');
-                    return resolve([]);
-                }
-
-                // 5. Linkleri Proxy Üzerinden Hazırla
-                var results = sources.map(function(src) {
-                    var finalUrl = PROXY_URL + "?url=" + encodeURIComponent(src.url) + "&referer=" + encodeURIComponent("https://twitter.com/") + "&ignore_ssl=true";
-                    
+            Promise.all(promises).then(function(results) {
+                var finalStreams = results.filter(Boolean).map(function(s) {
                     return {
-                        name: "⌜ RecTV ⌟ | " + src.type.toUpperCase(),
-                        url: finalUrl,
+                        name: s.name,
+                        url: s.url,
                         quality: "Auto",
-                        headers: HEADERS,
-                        provider: "rectv_api"
+                        headers: s.headers || { 'User-Agent': 'speedrestapi' }
                     };
                 });
-
-                console.log('[RecTV] Toplam Yayın:', results.length);
-                resolve(results);
-            })
-            .catch(function(err) {
-                console.error('[RecTV] Kritik Hata:', err.message);
-                resolve([]);
+                resolve(finalStreams);
             });
+        })
+        .catch(function() { resolve([]); });
     });
 }
 
-// Export yapısı
+// Nuvio Export
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = { getStreams: getStreams };
 } else {
