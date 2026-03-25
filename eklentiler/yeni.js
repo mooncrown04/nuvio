@@ -1,6 +1,6 @@
 /**
- * 666FilmIzle Nuvio Local Scraper - v3.7
- * Hata ayıklama logları artırıldı ve Dangal ID yapısı düzeltildi.
+ * 666FilmIzle Nuvio Local Scraper - v3.9
+ * Dangal, The Gorge ve Ejder Kılıcı gibi farklı URL yapıları için tam uyumlu.
  */
 
 var cheerio = require("cheerio-without-node-native");
@@ -19,17 +19,12 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
         var type = (mediaType === 'tv' || mediaType === 'series') ? 'tv' : 'movie';
         var tmdbUrl = 'https://api.themoviedb.org/3/' + type + '/' + tmdbId + '?api_key=' + TMDB_API_KEY + '&language=tr-TR';
 
-        console.log('[666Film] TMDB İstek Gönderiliyor:', tmdbId);
-
         fetch(tmdbUrl)
             .then(function(r) { return r.json(); })
             .then(function(data) {
                 var title = data.title || data.name || data.original_title;
-                if (!title) {
-                    console.error('[666Film] TMDB üzerinden başlık bulunamadı.');
-                    return resolve([]);
-                }
-                console.log('[666Film] Aranan Başlık:', title);
+                if (!title) return resolve([]);
+                
                 var searchUrl = BASE_URL + '/arama/?q=' + encodeURIComponent(title);
                 return fetch(searchUrl, { headers: WORKING_HEADERS });
             })
@@ -38,6 +33,7 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                 var $ = cheerio.load(html);
                 var targetUrl = "";
 
+                // Arama sonuçlarında en iyi eşleşmeyi bul
                 $(".film-card").each(function() {
                     var cardLink = $(this).find("a.film-card__link").attr("href");
                     if (cardLink) {
@@ -46,69 +42,68 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                     }
                 });
 
-                if (!targetUrl) {
-                    console.error('[666Film] Sitede uygun film kartı bulunamadı.');
-                    return resolve([]);
-                }
-                console.log('[666Film] Film Sayfası Bulundu:', targetUrl);
+                if (!targetUrl) return resolve([]);
                 return fetch(targetUrl, { headers: WORKING_HEADERS });
             })
             .then(function(r) { return r.text(); })
             .then(function(pageHtml) {
                 var streams = [];
                 
-                // --- RAPIDPLAY PARSE BÖLÜMÜ ---
+                // 1. SMART RAPIDPLAY RESOLVER (Dangal & Ejder Kılıcı Fix)
                 var frameMatch = pageHtml.match(/data-frame="([^"]+)"/);
                 if (frameMatch && frameMatch[1].includes("rapidplay")) {
                     var rawUrl = frameMatch[1];
-                    console.log('[666Film] Ham Rapidplay URL:', rawUrl);
-
                     var videoId = "";
-                    if (rawUrl.includes("#")) {
-                        videoId = rawUrl.split("#").pop();
-                    } else if (rawUrl.includes("embed/")) {
-                        var parts = rawUrl.split("embed/");
-                        if (parts.length > 1) {
-                            videoId = parts[1].split(/[?#]/)[0];
-                        }
+                    
+                    // Senaryo A: Hash ile biten (Dangal tipi: .../video#ID)
+                    if (rawUrl.indexOf('#') !== -1) {
+                        videoId = rawUrl.split('#').pop();
+                    } 
+                    // Senaryo B: Embed dizini (Gorge tipi: .../embed/ID)
+                    else if (rawUrl.indexOf('embed/') !== -1) {
+                        videoId = rawUrl.split('embed/').pop().split(/[?#]/)[0];
+                    }
+                    // Senaryo C: Direkt ID (Sadece sayılar veya harfler)
+                    else {
+                        var parts = rawUrl.split('/');
+                        videoId = parts[parts.length - 1] || parts[parts.length - 2];
                     }
 
-                    if (videoId && videoId.length > 3) {
-                        console.log('[666Film] Yakalanan Video ID:', videoId);
-                        // Dangal gibi 404 verenlerde alternatif olarak 'index.m3u8' deniyoruz
-                        var finalUrl = "https://p.rapidplay.website/videos/" + videoId + "/master.m3u8";
-                        
+                    if (videoId && videoId.length > 4) {
+                        // Rapidplay bazen master.m3u8 bazen index.m3u8 ister.
+                        // En garantisi master'dır, header ile destekliyoruz.
                         streams.push({
-                            name: "666Film - Rapid",
-                            url: finalUrl,
+                            name: "666Film - Rapidplay",
+                            url: "https://p.rapidplay.website/videos/" + videoId + "/master.m3u8",
                             quality: "Auto",
                             isM3U8: true,
-                            headers: { 'Referer': 'https://p.rapidplay.website/' },
+                            headers: { 
+                                'Referer': 'https://p.rapidplay.website/',
+                                'User-Agent': WORKING_HEADERS['User-Agent']
+                            },
                             provider: "666film"
                         });
-                    } else {
-                        console.error('[666Film] Rapidplay ID ayıklanamadı. URL yapısı farklı olabilir.');
                     }
                 }
 
-                // --- VIDMOLY PARSE BÖLÜMÜ ---
-                var vidmolyMatch = pageHtml.match(/src="([^"]*vidmoly[^"]+)"/i);
-                if (vidmolyMatch && vidmolyMatch[1]) {
-                    var vUrl = vidmolyMatch[1].startsWith("//") ? "https:" + vidmolyMatch[1] : vidmolyMatch[1];
-                    console.log('[666Film] VidMoly Kaynağı Bulundu:', vUrl);
-                    streams.push({
-                        name: "666Film - VidMoly",
-                        url: vUrl,
-                        quality: "HD",
-                        provider: "666film"
-                    });
+                // 2. VIDMOLY & ALTERNATİF IFRAME YAKALAYICI
+                var iframeRegex = /<iframe[^>]+src="([^"]+)"/gi;
+                var match;
+                while ((match = iframeRegex.exec(pageHtml)) !== null) {
+                    var src = match[1];
+                    if (src.includes("vidmoly") || src.includes("mlycdn")) {
+                        streams.push({
+                            name: "666Film - VidMoly",
+                            url: src.startsWith("//") ? "https:" + src : src,
+                            quality: "HD",
+                            provider: "666film"
+                        });
+                    }
                 }
 
-                if (streams.length === 0) console.warn('[666Film] Hiçbir oynatılabilir kaynak bulunamadı.');
                 resolve(streams);
             })
-            .catch(function(err) {
-                console.error('[666Film] Scraper Hatası:', err.message);
+            .catch(function() {
                 resolve([]); 
             });
     });
