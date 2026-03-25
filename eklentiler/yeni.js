@@ -1,102 +1,84 @@
 /**
- * 666FilmIzle Nuvio Scraper - v1.6
- * Sorun: Gelen veriler 'null' görünüyor.
- * Çözüm: Parametreleri tek tek kontrol et ve fallback (yedek) mekanizması kur.
+ * 666FilmIzle Nuvio Scraper - v1.8
+ * Örnek Yapı: /film/3094-the-gorge-izle/
  */
 
 var BASE_URL = "https://666filmizle.site";
-var TMDB_KEY = "65c3f6f9662a67a030704945a0b93855";
 
-async function getStreams(arg1, arg2, arg3) {
+async function getStreams(data, mediaType, title) {
     return new Promise(async (resolve) => {
-        // --- PARAMETRE ANALİZİ (Loglar hayat kurtarır) ---
-        console.log("[666Film] Arg1:", arg1, "| Arg2:", arg2, "| Arg3:", arg3);
+        // --- LOG ANALİZİ ---
+        console.log("[666Film] Gelen Veri:", data);
 
-        let finalTitle = "";
-        let finalId = "";
-        let type = "movie";
+        let targetUrl = "";
 
-        // 1. ADIM: Nuvio'nun gönderdiği karmaşık yapıyı çöz
-        if (typeof arg1 === 'object' && arg1 !== null) {
-            finalTitle = arg1.title || arg1.name;
-            finalId = arg1.tmdbId || arg1.id;
-        } else {
-            finalId = arg1;
-            finalTitle = arg3; // Genelde 3. parametre başlıktır
-        }
+        // 1. DURUM: Eğer Nuvio doğrudan sayfa linkini gönderiyorsa
+        if (typeof data === 'string' && data.includes("/film/")) {
+            targetUrl = data.startsWith("http") ? data : BASE_URL + data;
+            console.log("[666Film] Direkt Link Kullanılıyor:", targetUrl);
+        } 
+        // 2. DURUM: Eğer sadece isim veya ID geliyorsa arama yap
+        else {
+            let searchQuery = title || data;
+            if (!searchQuery || searchQuery === "null") {
+                console.error("[666Film] HATA: Arama için isim veya link gelmedi!");
+                return resolve([]);
+            }
 
-        // 2. ADIM: Eğer hala null ise veya ID gelmişse TMDB'den ismi zorla al
-        if (!finalTitle || finalTitle === "null" || !isNaN(finalTitle)) {
-            if (finalId && finalId !== "null") {
-                console.log("[666Film] İsim bulunamadı, ID üzerinden TMDB'ye gidiliyor:", finalId);
-                try {
-                    const res = await fetch(`https://api.themoviedb.org/3/movie/${finalId}?api_key=${TMDB_KEY}&language=tr-TR`);
-                    const data = await res.json();
-                    finalTitle = data.title || data.name;
-                } catch (e) {
-                    console.error("[666Film] TMDB Fetch Hatası!");
-                }
+            console.log("[666Film] İsim ile aranıyor:", searchQuery);
+            const searchRes = await fetch(`${BASE_URL}/arama/?q=${encodeURIComponent(searchQuery)}`);
+            const searchHtml = await searchRes.text();
+            const match = searchHtml.match(/href="(\/film\/[^"]+)"/i);
+
+            if (match && match[1]) {
+                targetUrl = BASE_URL + match[1];
+                console.log("[666Film] Arama Sonucu Bulundu:", targetUrl);
             }
         }
 
-        // 3. ADIM: Arama Yap (Final Check)
-        if (!finalTitle || finalTitle === "null") {
-            console.error("[666Film] HATA: Film ismi hiçbir şekilde elde edilemedi!");
+        // --- SAYFA ANALİZİ ---
+        if (!targetUrl) {
+            console.error("[666Film] İşlenecek bir URL bulunamadı.");
             return resolve([]);
         }
 
-        console.log("[666Film] Arama terimi kesinleşti:", finalTitle);
-        const searchUrl = `${BASE_URL}/arama/?q=${encodeURIComponent(finalTitle)}`;
-
         try {
-            const response = await fetch(searchUrl);
+            const response = await fetch(targetUrl);
             const html = await response.text();
+            const streams = [];
 
-            // Film sayfası linkini bul (/film/...)
-            const cardMatch = html.match(/href="(\/film\/[^"]+)"/i);
+            // Rapidplay Ayıklama (Örn: #3094 kısmını çeker)
+            const rapidRegex = /data-frame="([^"]*rapidplay\.website[^"]*)#([^"]+)"/g;
+            let r;
+            while ((r = rapidRegex.exec(html)) !== null) {
+                streams.push({
+                    name: "⌜ Rapidplay ⌟",
+                    url: `https://p.rapidplay.website/videos/${r[2]}/master.m3u8`,
+                    quality: "Auto",
+                    headers: { 'Referer': 'https://p.rapidplay.website/' },
+                    isM3U8: true
+                });
+            }
 
-            if (cardMatch && cardMatch[1]) {
-                const pageUrl = BASE_URL + cardMatch[1];
-                console.log("[666Film] Sayfa Bulundu:", pageUrl);
-
-                const pageRes = await fetch(pageUrl);
-                const pageHtml = await pageRes.text();
-                const streams = [];
-
-                // Rapidplay (Kotlin Mantığı)
-                const rapidRegex = /data-frame="([^"]*rapidplay\.website[^"]*)#([^"]+)"/g;
-                let r;
-                while ((r = rapidRegex.exec(pageHtml)) !== null) {
+            // Standart Iframe Ayıklama
+            const iframeRegex = /<iframe[^>]+src="([^"]+)"/g;
+            let i;
+            while ((i = iframeRegex.exec(html)) !== null) {
+                let src = i[1];
+                if (!src.includes("youtube") && !src.includes("google")) {
                     streams.push({
-                        name: "⌜ Rapidplay ⌟",
-                        url: `https://p.rapidplay.website/videos/${r[2]}/master.m3u8`,
-                        quality: "Auto",
-                        headers: { 'Referer': 'https://p.rapidplay.website/' },
-                        isM3U8: true
+                        name: "⌜ Player ⌟",
+                        url: src.startsWith("//") ? "https:" + src : src,
+                        quality: "Auto"
                     });
                 }
-
-                // Standart Iframe
-                const iframeRegex = /<iframe[^>]+src="([^"]+)"/g;
-                let i;
-                while ((i = iframeRegex.exec(pageHtml)) !== null) {
-                    if (!i[1].includes("youtube") && !i[1].includes("google")) {
-                        streams.push({
-                            name: "⌜ Player ⌟",
-                            url: i[1].startsWith("//") ? "https:" + i[1] : i[1],
-                            quality: "Auto"
-                        });
-                    }
-                }
-
-                console.log(`[666Film] İşlem Tamam! Bulunan: ${streams.length}`);
-                resolve(streams);
-            } else {
-                console.error("[666Film] Sitede sonuç yok:", finalTitle);
-                resolve([]);
             }
+
+            console.log(`[666Film] Bitti. ${streams.length} kaynak eklendi.`);
+            resolve(streams);
+
         } catch (err) {
-            console.error("[666Film] Akış Hatası:", err.message);
+            console.error("[666Film] Sayfa hatası:", err.message);
             resolve([]);
         }
     });
