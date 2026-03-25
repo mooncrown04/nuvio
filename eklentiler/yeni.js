@@ -1,6 +1,6 @@
 /**
- * 666FilmIzle Nuvio Local Scraper - v3.5
- * Dangal ve benzeri filmlerdeki 404 (Rapidplay) hatası düzeltildi.
+ * 666FilmIzle Nuvio Local Scraper - v3.6
+ * 404 Hataları için URL yapısı ve Regex tamamen güncellendi.
  */
 
 var cheerio = require("cheerio-without-node-native");
@@ -10,6 +10,7 @@ var TMDB_API_KEY = "500330721680edb6d5f7f12ba7cd9023";
 
 var WORKING_HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
     'Accept-Language': 'tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7',
     'Referer': BASE_URL + '/'
 };
@@ -48,31 +49,41 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
             .then(function(pageHtml) {
                 var streams = [];
                 
-                // 1. GELİŞTİRİLMİŞ RAPIDPLAY YAKALAYICI (404 FIX)
-                // Dangal gibi filmlerde # işaretinden sonraki ID'yi daha garanti yakalar
-                var rapidRegex = /data-frame="([^"]*rapidplay\.website[^"]*(?:#|\/embed\/)([^"#?]+))"/g;
-                var m;
-                while ((m = rapidRegex.exec(pageHtml)) !== null) {
-                    var videoId = m[2];
-                    if (videoId) {
-                        // Bazı videolarda master.m3u8 404 verirken index.m3u8 çalışır.
+                // 1. YENİ RAPIDPLAY ÇÖZÜCÜ (v3.6)
+                // data-frame içindeki URL'den ID'yi daha agresif çeker
+                var frameMatch = pageHtml.match(/data-frame="([^"]+)"/);
+                if (frameMatch && frameMatch[1].includes("rapidplay")) {
+                    var rawUrl = frameMatch[1];
+                    // ID'yi ayıklayalım (embed/ID veya #ID formatı için)
+                    var videoId = "";
+                    if (rawUrl.includes("#")) {
+                        videoId = rawUrl.split("#").pop();
+                    } else if (rawUrl.includes("embed/")) {
+                        videoId = rawUrl.split("embed/").pop().split(/[?#]/)[0];
+                    }
+
+                    if (videoId && videoId.length > 5) {
                         streams.push({
                             name: "666Film - Auto",
-                            url: "https://p.rapidplay.website/videos/" + videoId + "/index.m3u8",
+                            url: "https://p.rapidplay.website/videos/" + videoId + "/master.m3u8",
                             quality: "Auto",
                             isM3U8: true,
-                            headers: { 'Referer': 'https://p.rapidplay.website/' },
+                            headers: { 
+                                'Referer': 'https://p.rapidplay.website/',
+                                'User-Agent': WORKING_HEADERS['User-Agent']
+                            },
                             provider: "666film"
                         });
                     }
                 }
 
-                // 2. VİDMOLY KONTROLÜ
-                var vidmolyMatch = pageHtml.match(/src="([^"]*vidmoly[^"]+)"/i);
-                if (vidmolyMatch && vidmolyMatch[1]) {
+                // 2. VİDMOLY KONTROLÜ (Alternatif olarak kalsın)
+                var vidmolyRegex = /src="([^"]*vidmoly\.to\/embed\/([^".?# ]+)[^"]*)"/i;
+                var vMatch = pageHtml.match(vidmolyRegex);
+                if (vMatch && vMatch[1]) {
                     streams.push({
                         name: "666Film - VidMoly",
-                        url: vidmolyMatch[1].startsWith("//") ? "https:" + vidmolyMatch[1] : vidmolyMatch[1],
+                        url: vMatch[1].startsWith("//") ? "https:" + vMatch[1] : vMatch[1],
                         quality: "HD",
                         provider: "666film"
                     });
