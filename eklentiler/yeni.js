@@ -1,5 +1,5 @@
 /**
- * 666FilmIzle Scraper - v7.5 (Dangal 404 Detaylandırma)
+ * 666FilmIzle Scraper - v8.0 (Anti-404 & Auto-Fallback)
  */
 
 var cheerio = require("cheerio-without-node-native");
@@ -14,8 +14,6 @@ async function getStreams(tmdbId, mediaType) {
         const movieData = await tmdbRes.json();
         const title = movieData.title || movieData.name;
 
-        console.log(`[666-ANALIZ] Film Araniyor: ${title}`);
-
         const searchHtml = await (await fetch(`${BASE_URL}/arama/?q=${encodeURIComponent(title)}`)).text();
         const $search = cheerio.load(searchHtml);
         let filmUrl = "";
@@ -25,62 +23,51 @@ async function getStreams(tmdbId, mediaType) {
             if (link) { filmUrl = link.startsWith('http') ? link : BASE_URL + link; return false; }
         });
 
-        if (!filmUrl) {
-            console.error("[666-ANALIZ] Sitede film bulunamadı.");
-            return [];
-        }
+        if (!filmUrl) return [];
 
         const pageHtml = await (await fetch(filmUrl)).text();
-        
-        // --- KRİTİK ANALİZ BÖLGESİ ---
-        const frameMatch = pageHtml.match(/data-frame="([^"]+)"/);
         const streams = [];
 
-        if (frameMatch) {
-            const rawFrame = frameMatch[1];
-            console.log(`[666-ANALIZ] Siteden Gelen Ham Link: ${rawFrame}`);
-
-            // ID Çıkarma
-            const videoId = rawFrame.split(/[#/]/).filter(p => p.length > 5).pop()?.split('?')[0];
-            
-            if (videoId) {
-                const testUrl = `https://p.rapidplay.website/videos/${videoId}/master.m3u8`;
-                console.log(`[666-ANALIZ] Denenecek Final Link: ${testUrl}`);
-
-                // SUNUCU YANITI KONTROLÜ (404 mü değil mi?)
-                const checkRes = await fetch(testUrl, { method: 'HEAD' });
-                console.log(`[666-ANALIZ] Sunucu Durum Kodu: ${checkRes.status}`); 
-
-                if (checkRes.status === 404) {
-                    console.error("[666-ANALIZ] DİKKAT: Link sunucuda yok (404)! Dangal ID'si hatalı veya sunucu yolu farklı.");
-                }
-
-                streams.push({
-                    name: "Rapidplay (S1)",
-                    url: testUrl,
-                    quality: "Auto",
-                    isM3U8: true,
-                    headers: { 'Referer': 'https://rapidplay.website/' },
-                    provider: "666film"
-                });
-            }
-        }
-
-        // Vidmoly'yi her zaman ekleyelim çünkü Dangal'da tek kurtuluş olabilir
+        // 1. ADIM: VİDMOLY KONTROLÜ (Dangal için en garanti yol)
         const vidmolyMatch = pageHtml.match(/https:\/\/vidmoly\.to\/embed-([^.]+)\.html/);
         if (vidmolyMatch) {
-            console.log(`[666-ANALIZ] Vidmoly Alternatifi Bulundu: ${vidmolyMatch[0]}`);
             streams.push({
-                name: "Vidmoly (Yedek)",
+                name: "Vidmoly (Hızlı Başlat)",
                 url: vidmolyMatch[0],
                 quality: "HD",
                 provider: "666film"
             });
         }
 
+        // 2. ADIM: RAPIDPLAY KONTROLÜ
+        const frameMatch = pageHtml.match(/data-frame="([^"]+)"/);
+        if (frameMatch) {
+            const videoId = frameMatch[1].split(/[#/]/).filter(p => p.length > 5).pop()?.split('?')[0];
+            if (videoId) {
+                const rapidUrl = `https://p.rapidplay.website/videos/${videoId}/master.m3u8`;
+                
+                // Sadece Dangal değil, tüm filmler için 404 kontrolü yapalım
+                try {
+                    const check = await fetch(rapidUrl, { method: 'HEAD' });
+                    if (check.status !== 404) {
+                        streams.push({
+                            name: "Rapidplay (Sunucu)",
+                            url: rapidUrl,
+                            quality: "Auto",
+                            isM3U8: true,
+                            headers: { 'Referer': 'https://rapidplay.website/' },
+                            provider: "666film"
+                        });
+                    }
+                } catch (e) {
+                    // Fetch başarısız olsa bile listeye ekle (belki cihazdan erişilir)
+                    streams.push({ name: "Rapidplay (Alternatif)", url: rapidUrl, isM3U8: true, provider: "666film" });
+                }
+            }
+        }
+
         return streams;
     } catch (e) {
-        console.error(`[666-ANALIZ] HATA: ${e.message}`);
         return [];
     }
 }
