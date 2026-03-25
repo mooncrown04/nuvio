@@ -1,6 +1,6 @@
 /**
- * 666FilmIzle Scraper - v6.0 (Dangal & Gorge Fix)
- * Rapidplay 404 hatalarına karşı alternatif kaynak öncelikli sürüm.
+ * 666FilmIzle Scraper - v7.0 (Deep Debugging)
+ * Sorunu anlamak için tüm adımları loglar.
  */
 
 var cheerio = require("cheerio-without-node-native");
@@ -8,80 +8,87 @@ var cheerio = require("cheerio-without-node-native");
 var BASE_URL = "https://666filmizle.site";
 var TMDB_API_KEY = "500330721680edb6d5f7f12ba7cd9023";
 
-var HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-    'Referer': BASE_URL + '/'
-};
-
 async function getStreams(tmdbId, mediaType) {
     try {
-        const type = (mediaType === 'tv' || mediaType === 'series') ? 'tv' : 'movie';
-        const tmdbRes = await fetch(`https://api.themoviedb.org/3/${type}/${tmdbId}?api_key=${TMDB_API_KEY}&language=tr-TR`);
+        console.log("[666-DEBUG] Islem basladi. TMDB ID:", tmdbId);
+
+        // 1. ADIM: TMDB'den film adını al
+        const tmdbRes = await fetch(`https://api.themoviedb.org/3/movie/${tmdbId}?api_key=${TMDB_API_KEY}&language=tr-TR`);
         const movieData = await tmdbRes.json();
-        const title = movieData.title || movieData.name;
+        const title = movieData.title;
+        console.log("[666-DEBUG] Film Adi:", title);
 
-        if (!title) return [];
-
-        const searchHtml = await (await fetch(`${BASE_URL}/arama/?q=${encodeURIComponent(title)}`, { headers: HEADERS })).text();
-        const $search = cheerio.load(searchHtml);
-        let filmUrl = "";
+        // 2. ADIM: Sitede arama yap
+        const searchUrl = `${BASE_URL}/arama/?q=${encodeURIComponent(title)}`;
+        console.log("[666-DEBUG] Arama URL:", searchUrl);
         
+        const searchRes = await fetch(searchUrl);
+        const searchHtml = await searchRes.text();
+        const $search = cheerio.load(searchHtml);
+        
+        let filmPageUrl = "";
         $search(".film-card").each((i, el) => {
             const link = $search(el).find("a.film-card__link").attr("href");
-            if (link) { filmUrl = link.startsWith('http') ? link : BASE_URL + link; return false; }
+            if (link) { 
+                filmPageUrl = link.startsWith('http') ? link : BASE_URL + link;
+                return false; 
+            }
         });
 
-        if (!filmUrl) return [];
+        console.log("[666-DEBUG] Sitedeki Film Sayfasi:", filmPageUrl);
 
-        const pageHtml = await (await fetch(filmUrl, { headers: HEADERS })).text();
+        if (!filmPageUrl) {
+            console.error("[666-DEBUG] HATA: Film sayfasi bulunamadi!");
+            return [];
+        }
+
+        // 3. ADIM: Film sayfasını analiz et (ID ve Frame yakalama)
+        const pageRes = await fetch(filmPageUrl);
+        const pageHtml = await pageRes.text();
+        console.log("[666-DEBUG] Sayfa Kaynagi Alindi (Uzunluk):", pageHtml.length);
+
+        const frameMatch = pageHtml.match(/data-frame="([^"]+)"/);
+        console.log("[666-DEBUG] Ham data-frame verisi:", frameMatch ? frameMatch[1] : "BULUNAMADI");
+
         const streams = [];
 
-        // 1. ALTERNATİF: VİDMOLY (Dangal gibi filmlerde Rapidplay'den daha stabildir)
+        if (frameMatch) {
+            const rawUrl = frameMatch[1];
+            // ID'yi temizle (En kritik yer)
+            const videoId = rawUrl.split(/[#/]/).filter(p => p.length > 5).pop()?.split('?')[0];
+            
+            if (videoId) {
+                const finalM3U8 = `https://p.rapidplay.website/videos/${videoId}/master.m3u8`;
+                console.log("[666-DEBUG] OLUSTURULAN FINAL URL:", finalM3U8);
+                
+                streams.push({
+                    name: "Rapidplay (Debug)",
+                    url: finalM3U8,
+                    quality: "Auto",
+                    isM3U8: true,
+                    headers: { 'Referer': 'https://rapidplay.website/' },
+                    provider: "666film"
+                });
+            } else {
+                console.error("[666-DEBUG] HATA: Video ID ayiklanamadi! Ham URL:", rawUrl);
+            }
+        }
+
+        // Vidmoly Kontrolü
         const vidmolyMatch = pageHtml.match(/https:\/\/vidmoly\.to\/embed-([^.]+)\.html/);
         if (vidmolyMatch) {
+            console.log("[666-DEBUG] Vidmoly Kaynagi Bulundu:", vidmolyMatch[0]);
             streams.push({
-                name: "666Film - Vidmoly (Stabil)",
+                name: "Vidmoly (Debug)",
                 url: vidmolyMatch[0],
                 quality: "HD",
                 provider: "666film"
             });
         }
 
-        // 2. RAPIDPLAY ANALİZİ
-        const frameMatch = pageHtml.match(/data-frame="([^"]+)"/);
-        if (frameMatch) {
-            const rawFrameUrl = frameMatch[1];
-            // ID Yakalama (The Gorge için çalışan mantık)
-            const videoId = rawFrameUrl.split(/[#/]/).filter(p => p.length > 5).pop()?.split('?')[0];
-
-            if (videoId) {
-                // Sadece çalışan tek ana linki ekliyoruz (Kafa karışıklığı olmasın)
-                streams.push({
-                    name: "666Film - Rapidplay (Sunucu 1)",
-                    url: `https://p.rapidplay.website/videos/${videoId}/master.m3u8`,
-                    quality: "Auto",
-                    isM3U8: true,
-                    headers: { 'Referer': 'https://rapidplay.website/', 'Origin': 'https://rapidplay.website' },
-                    provider: "666film"
-                });
-            }
-        }
-
-        // 3. DAİLYMOTİON / DİĞERLERİ
-        if (pageHtml.includes('dailymotion.com')) {
-            const dailyMatch = pageHtml.match(/https:\/\/www\.dailymotion\.com\/embed\/video\/([^"]+)/);
-            if (dailyMatch) {
-                streams.push({
-                    name: "666Film - Dailymotion",
-                    url: dailyMatch[0],
-                    quality: "720p",
-                    provider: "666film"
-                });
-            }
-        }
-
         return streams;
     } catch (e) {
+        console.error("[666-DEBUG] SISTEMSEL HATA:", e.message);
         return [];
     }
 }
