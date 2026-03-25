@@ -1,125 +1,116 @@
 /**
- * InatBox Universal Scraper - v2.1
- * Proxy içermez. Sadece Direct Bağlantı.
+ * 666FilmIzle Nuvio Scraper - v1.0
+ * Sadece paylaşılan Kotlin dosyasındaki mantık uyarlandı.
  */
 
-var CryptoJS = require("crypto-js");
+// Not: Nuvio ortamında HTML parçalamak için cheerio yoksa regex kullanılabilir.
+// Burada standart cheerio/JSDOM mantığıyla yapı kuruldu.
 
-// NOT: Eğer bağlantı hatası devam ederse bu BASE_URL'yi yeni bir inat adresiyle değiştir.
-var BASE_URL = "https://inat-tv.xyz"; 
-var AES_KEY = "C3V4HUpUbGDOjxEl"; 
+var BASE_URL = "https://666filmizle.site";
 
-// --- 1. DEŞİFRE (AES-CBC) ---
-function inatDecrypt(encryptedText) {
-    try {
-        if (!encryptedText || encryptedText.length < 10) return null;
+/**
+ * Arama Fonksiyonu (Search API)
+ */
+function search(query) {
+    return new Promise(function(resolve) {
+        var searchUrl = BASE_URL + "/arama/?q=" + encodeURIComponent(query);
         
-        var key = CryptoJS.enc.Utf8.parse(AES_KEY);
-        var iv = key; 
+        fetch(searchUrl)
+            .then(function(res) { return res.text(); })
+            .then(function(html) {
+                // Regex ile film kartlarını yakalıyoruz (Kotlin: a.film-card__link)
+                var results = [];
+                var cardRegex = /<a class="film-card__link" href="([^"]+)">[\s\S]*?<h3>([^<]+)<\/h3>/g;
+                var match;
 
-        var parts = encryptedText.split(":");
-        var step1 = CryptoJS.AES.decrypt(parts[0], key, {
-            iv: iv, mode: CryptoJS.mode.CBC, padding: CryptoJS.pad.Pkcs7
-        }).toString(CryptoJS.enc.Utf8);
-
-        if (!step1) return null;
-
-        var secondPart = step1.split(":")[0];
-        var final = CryptoJS.AES.decrypt(secondPart, key, {
-            iv: iv, mode: CryptoJS.mode.CBC, padding: CryptoJS.pad.Pkcs7
-        }).toString(CryptoJS.enc.Utf8);
-
-        return JSON.parse(final);
-    } catch (e) {
-        console.error("[Inat] Deşifre Hatası:", e.message);
-        return null;
-    }
-}
-
-// --- 2. AYIKLAYICILAR (VK, YANDEX) ---
-function runExtractor(item) {
-    return new Promise(function(resolve) {
-        var url = item.chUrl;
-        var name = item.chName || "Yayın";
-
-        // Yandex Disk Ayıklayıcı (Kotlin DiskYandexComTr.kt'den uyarlandı)
-        if (url.indexOf("disk.yandex") !== -1) {
-            fetch(url, { headers: { 'Referer': 'https://disk.yandex.com.tr/' } })
-                .then(function(res) { return res.text(); })
-                .then(function(html) {
-                    var m = html.match(/https?:\/\/[^\s"]*?master-playlist\.m3u8/);
-                    resolve(m ? { name: "⌜ Yandex ⌟ " + name, url: m[0], isM3U8: true } : null);
-                }).catch(function() { resolve(null); });
-        } 
-        // VK Ayıklayıcı (Kotlin Vk.kt'den uyarlandı)
-        else if (url.indexOf("vk.com") !== -1) {
-            fetch(url, { headers: { 'X-Requested-With': 'XMLHttpRequest', 'Referer': 'https://vk.com/' } })
-                .then(function(res) { return res.text(); })
-                .then(function(html) {
-                    var m = html.match(/"([^"]*m3u8[^"]*)"/);
-                    if (m) {
-                        var m3u8 = m[1].replace(/\\/g, "");
-                        resolve({ name: "⌜ VK ⌟ " + name, url: m3u8, isM3U8: true, headers: { 'Referer': 'https://vk.com/' } });
-                    } else resolve(null);
-                }).catch(function() { resolve(null); });
-        }
-        // Standart Linkler (CDNJWPlayer vb.)
-        else {
-            resolve({
-                name: "⌜ Inat ⌟ " + name,
-                url: url,
-                isM3U8: url.indexOf(".m3u8") !== -1
+                while ((match = cardRegex.exec(html)) !== null) {
+                    results.push({
+                        title: match[2].trim(),
+                        url: match[1].startsWith("http") ? match[1] : BASE_URL + match[1],
+                        type: "movie"
+                    });
+                }
+                resolve(results);
+            })
+            .catch(function(err) {
+                console.error("[666Film] Arama Hatası:", err.message);
+                resolve([]);
             });
-        }
     });
 }
 
-// --- 3. ANA AKIŞ ---
-function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
+/**
+ * Yayın Linklerini Çekme (loadLinks)
+ */
+function getStreams(url) {
     return new Promise(function(resolve) {
-        // Loglardaki timeout hatasını engellemek için sadece istek atıyoruz
-        // Eğer dizibox.rest kapalıysa burası boş dönecektir.
-        var targetUrl = BASE_URL + "/tv/ulusal.php";
+        console.log("[666Film] Kaynaklar aranıyor:", url);
 
-        fetch(targetUrl, {
-            method: 'POST',
-            headers: { 
-                'User-Agent': 'speedrestapi', 
-                'X-Requested-With': 'com.bp.box'
-            },
-            body: "1=" + AES_KEY + "&0=" + AES_KEY
-        })
-        .then(function(res) { return res.text(); })
-        .then(function(text) {
-            var items = inatDecrypt(text);
-            if (!items) return resolve([]);
+        fetch(url)
+            .then(function(res) { return res.text(); })
+            .then(function(html) {
+                var streams = [];
+                
+                // 1. ADIM: Rapidplay ve data-frame butonları (Kotlin: button.player-sources__btn)
+                var btnRegex = /data-frame="([^"]+)"/g;
+                var match;
 
-            var promises = items
-                .filter(function(i) { return i.chName !== "@inattvapk" && i.chUrl && i.chUrl !== "null"; })
-                .map(function(item) { return runExtractor(item); });
+                while ((match = btnRegex.exec(html)) !== null) {
+                    var iframeSrc = match[1];
 
-            Promise.all(promises).then(function(results) {
-                var streams = results.filter(Boolean).map(function(s) {
-                    return {
-                        name: s.name,
-                        url: s.url,
-                        quality: "Auto",
-                        headers: s.headers || { 'User-Agent': 'speedrestapi' }
-                    };
-                });
+                    // Kotlin: if (iframeSrc.contains("rapidplay.website"))
+                    if (iframeSrc.indexOf("rapidplay.website") !== -1) {
+                        var id = iframeSrc.split("#").pop();
+                        if (id && id !== iframeSrc) {
+                            streams.push({
+                                name: "⌜ Rapidplay ⌟",
+                                url: "https://p.rapidplay.website/videos/" + id + "/master.m3u8",
+                                quality: "Auto",
+                                headers: { 'Referer': 'https://p.rapidplay.website/' },
+                                isM3U8: true
+                            });
+                        }
+                    } else {
+                        // Diğer standart iframe'ler
+                        streams.push({
+                            name: "⌜ Player ⌟",
+                            url: iframeSrc,
+                            quality: "Auto"
+                        });
+                    }
+                }
+
+                // 2. ADIM: Sayfa içindeki direkt iframe'ler (Kotlin: div.player-content iframe)
+                var iframeRegex = /<iframe[^>]+src="([^"]+)"/g;
+                while ((match = iframeRegex.exec(html)) !== null) {
+                    var src = match[1];
+                    // YouTube fragmanlarını ele (Kotlin: !iframeSrc.contains("youtube"))
+                    if (src.indexOf("youtube") === -1 && src.indexOf("google") === -1) {
+                        streams.push({
+                            name: "⌜ Alternatif ⌟",
+                            url: src,
+                            quality: "Auto"
+                        });
+                    }
+                }
+
+                console.log("[666Film] Toplam Bulunan:", streams.length);
                 resolve(streams);
+            })
+            .catch(function(err) {
+                console.error("[666Film] Yükleme Hatası:", err.message);
+                resolve([]);
             });
-        })
-        .catch(function(err) {
-            console.error("[Inat] Bağlantı Hatası (Proxy Kapalı):", err.message);
-            resolve([]);
-        });
     });
 }
 
-// --- 4. NUVIO EXPORT ---
+// --- NUVIO EXPORTS ---
 if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { getStreams: getStreams };
+    module.exports = { 
+        getStreams: getStreams,
+        search: search 
+    };
 } else {
     global.getStreams = getStreams;
+    global.search = search;
 }
