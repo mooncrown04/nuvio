@@ -1,6 +1,5 @@
 /**
- * 666FilmIzle Scraper - v7.0 (Deep Debugging)
- * Sorunu anlamak için tüm adımları loglar.
+ * 666FilmIzle Scraper - v7.5 (Dangal 404 Detaylandırma)
  */
 
 var cheerio = require("cheerio-without-node-native");
@@ -10,76 +9,69 @@ var TMDB_API_KEY = "500330721680edb6d5f7f12ba7cd9023";
 
 async function getStreams(tmdbId, mediaType) {
     try {
-        console.log("[666-DEBUG] Islem basladi. TMDB ID:", tmdbId);
-
-        // 1. ADIM: TMDB'den film adını al
-        const tmdbRes = await fetch(`https://api.themoviedb.org/3/movie/${tmdbId}?api_key=${TMDB_API_KEY}&language=tr-TR`);
+        const type = (mediaType === 'tv' || mediaType === 'series') ? 'tv' : 'movie';
+        const tmdbRes = await fetch(`https://api.themoviedb.org/3/${type}/${tmdbId}?api_key=${TMDB_API_KEY}&language=tr-TR`);
         const movieData = await tmdbRes.json();
-        const title = movieData.title;
-        console.log("[666-DEBUG] Film Adi:", title);
+        const title = movieData.title || movieData.name;
 
-        // 2. ADIM: Sitede arama yap
-        const searchUrl = `${BASE_URL}/arama/?q=${encodeURIComponent(title)}`;
-        console.log("[666-DEBUG] Arama URL:", searchUrl);
-        
-        const searchRes = await fetch(searchUrl);
-        const searchHtml = await searchRes.text();
+        console.log(`[666-ANALIZ] Film Araniyor: ${title}`);
+
+        const searchHtml = await (await fetch(`${BASE_URL}/arama/?q=${encodeURIComponent(title)}`)).text();
         const $search = cheerio.load(searchHtml);
+        let filmUrl = "";
         
-        let filmPageUrl = "";
         $search(".film-card").each((i, el) => {
             const link = $search(el).find("a.film-card__link").attr("href");
-            if (link) { 
-                filmPageUrl = link.startsWith('http') ? link : BASE_URL + link;
-                return false; 
-            }
+            if (link) { filmUrl = link.startsWith('http') ? link : BASE_URL + link; return false; }
         });
 
-        console.log("[666-DEBUG] Sitedeki Film Sayfasi:", filmPageUrl);
-
-        if (!filmPageUrl) {
-            console.error("[666-DEBUG] HATA: Film sayfasi bulunamadi!");
+        if (!filmUrl) {
+            console.error("[666-ANALIZ] Sitede film bulunamadı.");
             return [];
         }
 
-        // 3. ADIM: Film sayfasını analiz et (ID ve Frame yakalama)
-        const pageRes = await fetch(filmPageUrl);
-        const pageHtml = await pageRes.text();
-        console.log("[666-DEBUG] Sayfa Kaynagi Alindi (Uzunluk):", pageHtml.length);
-
+        const pageHtml = await (await fetch(filmUrl)).text();
+        
+        // --- KRİTİK ANALİZ BÖLGESİ ---
         const frameMatch = pageHtml.match(/data-frame="([^"]+)"/);
-        console.log("[666-DEBUG] Ham data-frame verisi:", frameMatch ? frameMatch[1] : "BULUNAMADI");
-
         const streams = [];
 
         if (frameMatch) {
-            const rawUrl = frameMatch[1];
-            // ID'yi temizle (En kritik yer)
-            const videoId = rawUrl.split(/[#/]/).filter(p => p.length > 5).pop()?.split('?')[0];
+            const rawFrame = frameMatch[1];
+            console.log(`[666-ANALIZ] Siteden Gelen Ham Link: ${rawFrame}`);
+
+            // ID Çıkarma
+            const videoId = rawFrame.split(/[#/]/).filter(p => p.length > 5).pop()?.split('?')[0];
             
             if (videoId) {
-                const finalM3U8 = `https://p.rapidplay.website/videos/${videoId}/master.m3u8`;
-                console.log("[666-DEBUG] OLUSTURULAN FINAL URL:", finalM3U8);
-                
+                const testUrl = `https://p.rapidplay.website/videos/${videoId}/master.m3u8`;
+                console.log(`[666-ANALIZ] Denenecek Final Link: ${testUrl}`);
+
+                // SUNUCU YANITI KONTROLÜ (404 mü değil mi?)
+                const checkRes = await fetch(testUrl, { method: 'HEAD' });
+                console.log(`[666-ANALIZ] Sunucu Durum Kodu: ${checkRes.status}`); 
+
+                if (checkRes.status === 404) {
+                    console.error("[666-ANALIZ] DİKKAT: Link sunucuda yok (404)! Dangal ID'si hatalı veya sunucu yolu farklı.");
+                }
+
                 streams.push({
-                    name: "Rapidplay (Debug)",
-                    url: finalM3U8,
+                    name: "Rapidplay (S1)",
+                    url: testUrl,
                     quality: "Auto",
                     isM3U8: true,
                     headers: { 'Referer': 'https://rapidplay.website/' },
                     provider: "666film"
                 });
-            } else {
-                console.error("[666-DEBUG] HATA: Video ID ayiklanamadi! Ham URL:", rawUrl);
             }
         }
 
-        // Vidmoly Kontrolü
+        // Vidmoly'yi her zaman ekleyelim çünkü Dangal'da tek kurtuluş olabilir
         const vidmolyMatch = pageHtml.match(/https:\/\/vidmoly\.to\/embed-([^.]+)\.html/);
         if (vidmolyMatch) {
-            console.log("[666-DEBUG] Vidmoly Kaynagi Bulundu:", vidmolyMatch[0]);
+            console.log(`[666-ANALIZ] Vidmoly Alternatifi Bulundu: ${vidmolyMatch[0]}`);
             streams.push({
-                name: "Vidmoly (Debug)",
+                name: "Vidmoly (Yedek)",
                 url: vidmolyMatch[0],
                 quality: "HD",
                 provider: "666film"
@@ -88,7 +80,7 @@ async function getStreams(tmdbId, mediaType) {
 
         return streams;
     } catch (e) {
-        console.error("[666-DEBUG] SISTEMSEL HATA:", e.message);
+        console.error(`[666-ANALIZ] HATA: ${e.message}`);
         return [];
     }
 }
