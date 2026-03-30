@@ -1,62 +1,84 @@
-const axios = require('axios');
-const cheerio = require('cheerio');
+/**
+ * Nuvio Local Scraper - PornHub & Chaturbate
+ * Sunucu gerektirmez, doğrudan uygulama içinde çalışır.
+ */
 
-// 1. KAZIYICI: PornHub Mantığı (Sadeleştirilmiş)
-async function getPornHubStream(id) {
-    try {
-        const embedUrl = `https://www.pornhub.com/embed/${id}`;
-        const { data } = await axios.get(embedUrl);
+// Nuvio'nun içindeki cheerio kütüphanesini çağırıyoruz
+var cheerio = require("cheerio-without-node-native");
+
+/**
+ * Nuvio bu fonksiyonu otomatik tetikler.
+ * @param {string} id - İçeriğin ID'si (Örn: cb_modeladi veya ph_videoid)
+ */
+function getStreams(id, mediaType) {
+    return new Promise(function(resolve, reject) {
         
-        // Gönderdiğin kodun içindeki Regex mantığı
-        const regexp = /videoUrl["']?\s*:\s*["']?(https?:\\?\/\\?\/[a-z]+\.phncdn\.com[^"']+)/gi;
-        const match = regexp.exec(data);
-        
-        if (match && match[1]) {
-            let url = match[1].replace(/[\\/]+/g, '/').replace(/(https?:\/)/, '$1/');
-            return [{
-                name: "PornHub - HD",
-                url: url.startsWith('/') ? `https:${url}` : url,
-                quality: "720p"
-            }];
+        // 1. ID Kontrolü (PornHub mu yoksa Chaturbate mi?)
+        if (id.indexOf('ph_') !== -1) {
+            // PORNHUB MANTIĞI
+            var videoId = id.replace('ph_', '');
+            var embedUrl = "https://www.pornhub.com/embed/" + videoId;
+
+            fetch(embedUrl, {
+                headers: { 'User-Agent': 'Mozilla/5.0' }
+            })
+            .then(function(res) { return res.text(); })
+            .then(function(html) {
+                // Senin paylaştığın Regex mantığı
+                var regexp = /videoUrl["']?\s*:\s*["']?(https?:\\?\/\\?\/[a-z]+\.phncdn\.com[^"']+)/gi;
+                var match = regexp.exec(html);
+
+                if (match && match[1]) {
+                    var finalUrl = match[1].replace(/[\\/]+/g, '/').replace(/(https?:\/)/, '$1/');
+                    resolve([{
+                        name: "PornHub Local",
+                        title: "HD İzle",
+                        url: finalUrl,
+                        quality: "720p"
+                    }]);
+                } else {
+                    resolve([]);
+                }
+            })
+            .catch(function() { resolve([]); });
+
+        } else if (id.indexOf('cb_') !== -1) {
+            // CHATURBATE MANTIĞI
+            var user = id.replace('cb_', '');
+            var apiUrl = "https://chaturbate.com/get_edge_hls_url_ajax/";
+
+            fetch(apiUrl, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                    'X-Requested-With': 'XMLHttpRequest',
+                    'Referer': 'https://chaturbate.com/' + user
+                },
+                body: "room_slug=" + user + "&bandwidth=high"
+            })
+            .then(function(res) { return res.json(); })
+            .then(function(json) {
+                if (json.success && json.url) {
+                    resolve([{
+                        name: "Chaturbate Canlı",
+                        title: user,
+                        url: json.url,
+                        live: true
+                    }]);
+                } else {
+                    resolve([]);
+                }
+            })
+            .catch(function() { resolve([]); });
+        } else {
+            resolve([]);
         }
-    } catch (e) { return []; }
-    return [];
+    });
 }
 
-// 2. KAZIYICI: SinemaCX Mantığı (Async/Await Versiyonu)
-async function getSinemaCXStream(tmdbId, mediaType) {
-    try {
-        // TMDB'den isim al
-        const tmdbUrl = `https://api.themoviedb.org/3/${mediaType}/${tmdbId}?language=tr-TR&api_key=4ef0d7355d9ffb5151e987764708ce96`;
-        const tmdbRes = await axios.get(tmdbUrl);
-        const query = tmdbRes.data.title || tmdbRes.data.name;
-
-        // Site içi arama
-        const searchRes = await axios.get(`https://www.sinema.news/?s=${encodeURIComponent(query)}`);
-        const $ = cheerio.load(searchRes.data);
-        const targetUrl = $("div.icerik div.frag-k div.yanac a").first().attr("href");
-
-        if (!targetUrl) return [];
-
-        // İframe ve Video Çekme
-        const pageRes = await axios.get(targetUrl);
-        const $page = cheerio.load(pageRes.data);
-        const iframeRaw = $page("iframe").first().attr("data-vsrc") || $page("iframe").first().attr("src");
-        
-        if (iframeRaw && iframeRaw.includes("player.filmizle.in")) {
-            const videoId = iframeRaw.split("/").pop().split("?")[0];
-            const apiRes = await axios.post(`https://player.filmizle.in/player/index.php?data=${videoId}&do=getVideo`, null, {
-                headers: { 'X-Requested-With': 'XMLHttpRequest', 'Referer': iframeRaw }
-            });
-            
-            if (apiRes.data.securedLink) {
-                return [{
-                    name: "SinemaCX - 1080p",
-                    url: apiRes.data.securedLink,
-                    quality: "1080p"
-                }];
-            }
-        }
-    } catch (e) { return []; }
-    return [];
+// Nuvio'nun fonksiyonu tanıması için dışa aktar
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = { getStreams: getStreams };
+} else {
+    global.getStreams = getStreams;
 }
