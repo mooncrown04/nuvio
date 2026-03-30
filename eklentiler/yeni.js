@@ -1,82 +1,67 @@
 /**
- * Nuvio Local Scraper - PornHub & Chaturbate
- * Sunucu gerektirmez, doğrudan uygulama içinde çalışır.
+ * Nuvio Local Scraper - PornHub
+ * Sunucusuz (Render gerektirmez) direkt uygulama içi çalışır.
  */
 
-// Nuvio'nun içindeki cheerio kütüphanesini çağırıyoruz
 var cheerio = require("cheerio-without-node-native");
 
-/**
- * Nuvio bu fonksiyonu otomatik tetikler.
- * @param {string} id - İçeriğin ID'si (Örn: cb_modeladi veya ph_videoid)
- */
 function getStreams(id, mediaType) {
     return new Promise(function(resolve, reject) {
         
-        // 1. ID Kontrolü (PornHub mu yoksa Chaturbate mi?)
-        if (id.indexOf('ph_') !== -1) {
-            // PORNHUB MANTIĞI
-            var videoId = id.replace('ph_', '');
-            var embedUrl = "https://www.pornhub.com/embed/" + videoId;
+        // 1. ID Kontrolü (Sadece PornHub ID'lerini kabul et)
+        // Örn ID: "ph55e43... " veya "cb_..." ayrımı yapabilirsiniz
+        var videoId = id.replace('ph_', ''); // ID'den prefix temizleme
+        var embedUrl = "https://www.pornhub.com/embed/" + videoId;
 
-            fetch(embedUrl, {
-                headers: { 'User-Agent': 'Mozilla/5.0' }
-            })
-            .then(function(res) { return res.text(); })
-            .then(function(html) {
-                // Senin paylaştığın Regex mantığı
-                var regexp = /videoUrl["']?\s*:\s*["']?(https?:\\?\/\\?\/[a-z]+\.phncdn\.com[^"']+)/gi;
-                var match = regexp.exec(html);
+        // 2. Sayfayı Fetch ile Çek
+        fetch(embedUrl, {
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            }
+        })
+        .then(function(res) { 
+            return res.text(); 
+        })
+        .then(function(html) {
+            // 3. Adaptöründeki Regex Mantığını Uygula
+            // videoUrl:"https://..." formatındaki linki yakalar
+            var regexp = /videoUrl["']?\s*:\s*["']?(https?:\\?\/\\?\/[a-z]+\.phncdn\.com[^"']+)/gi;
+            var match = regexp.exec(html);
 
-                if (match && match[1]) {
-                    var finalUrl = match[1].replace(/[\\/]+/g, '/').replace(/(https?:\/)/, '$1/');
-                    resolve([{
-                        name: "PornHub Local",
-                        title: "HD İzle",
-                        url: finalUrl,
-                        quality: "720p"
-                    }]);
-                } else {
-                    resolve([]);
-                }
-            })
-            .catch(function() { resolve([]); });
+            if (!match || !match[1]) {
+                return resolve([]); // Link bulunamadıysa boş dön
+            }
 
-        } else if (id.indexOf('cb_') !== -1) {
-            // CHATURBATE MANTIĞI
-            var user = id.replace('cb_', '');
-            var apiUrl = "https://chaturbate.com/get_edge_hls_url_ajax/";
+            // 4. URL'yi Temizle (Senin adaptöründeki normalleştirme)
+            var cleanUrl = match[1]
+                .replace(/[\\/]+/g, '/') 
+                .replace(/(https?:\/)/, '$1/');
 
-            fetch(apiUrl, {
-                method: 'POST',
+            // URL "/" ile başlıyorsa düzelt
+            if (cleanUrl.charAt(0) === '/') {
+                cleanUrl = "https:" + cleanUrl;
+            }
+
+            // 5. Nuvio'ya Yayın Linkini Gönder
+            resolve([{
+                name: "PornHub (Yerel)",
+                title: "Video Oynat",
+                url: cleanUrl,
+                quality: "720p",
                 headers: {
-                    'Content-Type': 'application/x-www-form-urlencoded',
-                    'X-Requested-With': 'XMLHttpRequest',
-                    'Referer': 'https://chaturbate.com/' + user
-                },
-                body: "room_slug=" + user + "&bandwidth=high"
-            })
-            .then(function(res) { return res.json(); })
-            .then(function(json) {
-                if (json.success && json.url) {
-                    resolve([{
-                        name: "Chaturbate Canlı",
-                        title: user,
-                        url: json.url,
-                        live: true
-                    }]);
-                } else {
-                    resolve([]);
+                    'Referer': 'https://www.pornhub.com/',
+                    'User-Agent': 'Mozilla/5.0'
                 }
-            })
-            .catch(function() { resolve([]); });
-        } else {
+            }]);
+        })
+        .catch(function(err) {
+            console.log("PornHub Scraper Hatası: " + err);
             resolve([]);
-        }
+        });
     });
 }
 
-// Nuvio'nun fonksiyonu tanıması için dışa aktar
+// Modül dışa aktarma (Nuvio standartı)
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = { getStreams: getStreams };
 } else {
