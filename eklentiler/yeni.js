@@ -1,72 +1,66 @@
 /**
- * Nuvio Local Scraper - PornTube Katalog Uyumlu
- * Manifest ID: pw.ers.porntube
- * Desteklenen ID'ler: ptXXXX, porndbXXXX
+ * @name PornHub
+ * @author Kraptor123
+ * @version 1.0.0
  */
 
-var cheerio = require("cheerio-without-node-native");
+const mainUrl = "https://www.pornhub.com";
 
-function getStreams(id, mediaType) {
-    return new Promise(function(resolve, reject) {
-        
-        // 1. ID Ayıklama (Manifestteki idPrefixes'e göre)
-        // Katalogdan gelen ID "pt12345" veya "porndb:12345" olabilir.
-        // Bizim kazıyıcının çalışması için sadece rakam/kod kısmını alıyoruz.
-        var cleanId = id.replace('pt', '').replace('porndb', '').replace(':', '');
-        
-        // 2. PornHub Embed URL'sini Oluştur
-        // Not: Eğer katalogdaki ID'ler direkt PornHub ID'si ise bu çalışır.
-        var embedUrl = "https://www.pornhub.com/embed/" + cleanId;
+const headers = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Cookie': 'hasVisited=1; accessAgeDisclaimerPH=1'
+};
 
-        fetch(embedUrl, {
-            headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Referer': 'https://www.pornhub.com/'
-            }
-        })
-        .then(function(res) { 
-            return res.text(); 
-        })
-        .then(function(html) {
-            // 3. Video URL'sini Regex ile Ayıkla (Paylaştığın adaptör mantığı)
-            var regexp = /videoUrl["']?\s*:\s*["']?(https?:\\?\/\\?\/[a-z]+\.phncdn\.com[^"']+)/gi;
-            var match = regexp.exec(html);
+async function search(query, page = 1) {
+    const url = `${mainUrl}/video/search?search=${encodeURIComponent(query)}&page=${page}`;
+    const res = await http.get(url, { headers });
+    const doc = jsparse(res.body);
 
-            if (!match || !match[1]) {
-                return resolve([]); 
-            }
-
-            // 4. URL Normalleştirme
-            var videoUrl = match[1]
-                .replace(/[\\/]+/g, '/') 
-                .replace(/(https?:\/)/, '$1/');
-
-            if (videoUrl.indexOf('/') === 0) {
-                videoUrl = "https:" + videoUrl;
-            }
-
-            // 5. Nuvio'ya Oynatılabilir Linki Dön
-            resolve([{
-                name: "PornTube Local",
-                title: "HD Kaynak (Kazıyıcı)",
-                url: videoUrl,
-                quality: "720p",
-                headers: {
-                    'User-Agent': 'Mozilla/5.0',
-                    'Referer': 'https://www.pornhub.com/'
-                }
-            }]);
-        })
-        .catch(function(err) {
-            console.log("Local Scraper Hatası: " + err);
-            resolve([]);
-        });
+    return doc.select("div.gridWrapper li.pcVideoListItem").map(item => {
+        const link = item.selectFirst("a");
+        const img = item.selectFirst("img");
+        return {
+            title: img?.attr("alt") || "No Title",
+            url: mainUrl + link?.attr("href"),
+            poster: img?.attr("data-mediumthumb") || img?.attr("src")
+        };
     });
 }
 
-// Nuvio'nun fonksiyonu tanıması için exports
-if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { getStreams: getStreams };
-} else {
-    global.getStreams = getStreams;
+async function loadLinks(videoUrl, callback) {
+    const res = await http.get(videoUrl, { headers, referer: mainUrl + "/" });
+    const html = res.body;
+
+    // flashvars içindeki JSON verisini ayıklama
+    const flashvarsMatch = html.match(/var flashvars_\d+ = ({.*?});/s) || html.match(/var flashvars = ({.*?});/s);
+    
+    if (flashvarsMatch) {
+        try {
+            const data = JSON.parse(flashvarsMatch[1]);
+            const definitions = data.mediaDefinitions;
+
+            definitions.forEach(def => {
+                if (def.videoUrl && def.videoUrl !== "") {
+                    callback({
+                        name: `PornHub - ${def.quality}p`,
+                        url: def.videoUrl,
+                        quality: parseInt(def.quality),
+                        isM3u8: def.format === "hls" || def.videoUrl.includes(".m3u8")
+                    });
+                }
+            });
+        } catch (e) {
+            console.error("Link parsing error:", e);
+        }
+    }
 }
+
+// Nuvio'nun beklediği export yapısı
+export default {
+    search,
+    loadLinks,
+    mainPage: [
+        { title: "Featured", url: `${mainUrl}/video` },
+        { title: "Trending", url: `${mainUrl}/video?o=tr` }
+    ]
+};
