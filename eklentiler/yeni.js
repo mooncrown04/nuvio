@@ -1,58 +1,50 @@
 /**
- * Nuvio / SineWix - VidSrc.xyz Extractor (Error Log Optimized)
- * Tüm çıktılar console.error olarak ayarlanmıştır.
+ * Nuvio / SineWix - VidSrc.xyz API v3 (Direct API Method)
+ * HTML kazımak yerine doğrudan API üzerinden sunucuları çeker.
  */
 
 var cheerio = require("cheerio-without-node-native");
 
 const SOURCE_URL = "https://vidsrc.xyz/embed";
-var BASEDOM = "https://cloudnestra.com"; 
+const API_BASE = "https://vidsrc.xyz/ajax/embed";
 
 function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
     return new Promise(function(resolve) {
         var type = mediaType === 'movie' ? 'movie' : 'tv';
-        var url = SOURCE_URL + "/" + type + "/" + tmdbId;
-        if (type === 'tv') url += "/" + seasonNum + "-" + episodeNum;
+        // vidsrc.xyz formatı: /movie/ID veya /tv/ID/S-E
+        var embedPath = "/" + type + "/" + tmdbId;
+        if (type === 'tv') embedPath += "/" + seasonNum + "-" + episodeNum;
 
+        var fullEmbedUrl = SOURCE_URL + embedPath;
         var streams = [];
 
-        // Cihazın logları görmesi için console.error kullanıyoruz
-        console.error('[VidSrc-v2] ISLEM BASLATILDI -> ' + url);
+        console.error('[VidSrc-v3] ISLEM BASLADI: ' + fullEmbedUrl);
 
-        fetch(url, { headers: { "Referer": SOURCE_URL } })
-            .then(function(res) { 
-                if(!res.ok) console.error('[VidSrc-v2] EMBED SAYFASI HATASI: ' + res.status);
-                return res.text(); 
+        // ADIM 1: Önce ana sayfayı bir kez çek (Cookie ve Session için gerekebilir)
+        fetch(fullEmbedUrl, { headers: { "Referer": "https://vidsrc.xyz/" } })
+            .then(function(res) {
+                console.error('[VidSrc-v3] ANA SAYFA DURUMU: ' + res.status);
+                // ADIM 2: Doğrudan API'ye "Bana bu video için sunucuları ver" diyoruz
+                // API formatı: /ajax/embed/episode/TMDB_ID/sources (vidsrc.xyz bazen tmdb'yi id olarak kullanır)
+                return fetch(API_BASE + embedPath + "/sources", {
+                    headers: { 
+                        "X-Requested-With": "XMLHttpRequest",
+                        "Referer": fullEmbedUrl 
+                    }
+                });
             })
-            .then(function(html) {
-                var $ = cheerio.load(html);
-                
-                // Iframe'den BASEDOM güncelleme
-                var baseFrameSrc = $("iframe").attr("src") || "";
-                if (baseFrameSrc) {
-                    var match = baseFrameSrc.match(/^(https?:\/\/[^/]+)/);
-                    if (match) {
-                        BASEDOM = match[1];
-                        console.error('[VidSrc-v2] NEW BASEDOM: ' + BASEDOM);
-                    }
+            .then(function(res) { return res.json(); })
+            .then(function(json) {
+                if (!json.result || json.result.length === 0) {
+                    console.error('[VidSrc-v3] HATA: API SUNUCU DÖNMEDİ (JSON boş veya geçersiz)');
+                    // Eğer API boş dönerse eski usul HTML denemesi yapalım (Yedek)
+                    throw new Error("API_EMPTY");
                 }
 
-                var serverPromises = [];
-                var servers = $(".serversList .server");
-                
-                if (servers.length === 0) {
-                    console.error('[VidSrc-v2] KRITIK: SUNUCU LISTESI BULUNAMADI (HTML BOŞ OLABILIR)');
-                }
+                console.error('[VidSrc-v3] API ' + json.result.length + ' SUNUCU BULDU.');
 
-                servers.each(function() {
-                    var server = $(this);
-                    var dataHash = server.attr("data-hash");
-                    var serverName = server.text().trim();
-
-                    if (dataHash) {
-                        console.error('[VidSrc-v2] SUNUCU BULUNDU: ' + serverName + ' [HASH: ' + dataHash + ']');
-                        serverPromises.push(processServer(dataHash, serverName, url));
-                    }
+                var serverPromises = json.result.map(function(s) {
+                    return processServerV3(s.id, s.title, fullEmbedUrl);
                 });
 
                 return Promise.all(serverPromises);
@@ -61,52 +53,42 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                 results.forEach(function(res) {
                     if (res) streams = streams.concat(res);
                 });
-                
-                if (streams.length === 0) console.error('[VidSrc-v2] SONUC: HIC STREAM BULUNAMADI');
-                else console.error('[VidSrc-v2] BASARILI: ' + streams.length + ' LINK EKLENDI');
-                
+                console.error('[VidSrc-v3] BITTI: ' + streams.length + ' LINK HAZIR.');
                 resolve(streams);
             })
             .catch(function(err) {
-                console.error('[VidSrc-v2] KRITIK HATA YAKALANDI: ' + err.message);
+                console.error('[VidSrc-v3] DURDURULDU: ' + err.message);
                 resolve([]);
             });
     });
 }
 
-function processServer(hash, name, referer) {
-    var rcpUrl = BASEDOM + "/rcp/" + hash;
-    return fetch(rcpUrl, { headers: { "Referer": referer } })
-        .then(function(res) { return res.text(); })
-        .then(function(html) {
-            // file: '...' veya src: '...' içindeki linki yakala
-            var match = html.match(/src:\s*'([^']*)'/) || html.match(/file:\s*'([^']*)'/);
-            
-            if (!match) {
-                console.error('[VidSrc-v2] SERVER HATASI (' + name + '): Link regex ile bulunamadi.');
-                return null;
-            }
+function processServerV3(sourceId, serverName, referer) {
+    // API: /ajax/embed/source/SOURCE_ID
+    var sourceApiUrl = API_BASE + "/source/" + sourceId;
+    
+    return fetch(sourceApiUrl, {
+        headers: { "X-Requested-With": "XMLHttpRequest", "Referer": referer }
+    })
+        .then(function(res) { return res.json(); })
+        .then(function(data) {
+            if (!data.result || !data.result.url) return null;
 
-            var streamUrl = match[1];
-            if (streamUrl.indexOf('//') === 0) streamUrl = 'https:' + streamUrl;
-
-            console.error('[VidSrc-v2] LINK COZULDU (' + name + '): ' + streamUrl.substring(0, 50) + '...');
+            // URL genellikle şifreli veya direkt olabilir
+            var finalUrl = data.result.url;
+            console.error('[VidSrc-v3] LINK ALINDI (' + serverName + '): ' + finalUrl.substring(0, 40) + '...');
 
             return [{
-                name: '⌜ VidSrc ⌟ | ' + name,
-                url: streamUrl,
+                name: '⌜ VidSrc ⌟ | ' + serverName,
+                url: finalUrl,
                 quality: 'Auto',
-                headers: { "Referer": BASEDOM + "/", "User-Agent": "Mozilla/5.0" },
-                provider: 'vidsrc_v2'
+                headers: { "Referer": "https://vidsrc.xyz/", "User-Agent": "Mozilla/5.0" },
+                provider: 'vidsrc_v3'
             }];
         })
-        .catch(function(e) { 
-            console.error('[VidSrc-v2] SERVER FETCH HATASI (' + name + '): ' + e.message);
-            return null; 
-        });
+        .catch(function() { return null; });
 }
 
-// Dışa aktarma
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = { getStreams: getStreams };
 } else {
