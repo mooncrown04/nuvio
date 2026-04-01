@@ -1,99 +1,85 @@
 /**
- * Nuvio Local Scraper - VidSrc & Cloudnestra Hybrid
- * Stremio SDK mantığından Nuvio formatına dönüştürülmüştür.
+ * Nuvio Local Scraper - VidSrc (Düzeltilmiş Versiyon)
  */
 
 var cheerio = require("cheerio-without-node-native");
 
 const HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Referer': 'https://vidsrc.to/',
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8'
+    'Accept': 'application/json, text/javascript, */*; q=0.01',
+    'X-Requested-With': 'XMLHttpRequest'
 };
 
 function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
     return new Promise(function(resolve) {
         var streams = [];
         var type = mediaType === 'movie' ? 'movie' : 'tv';
-        
-        // 1. URL İnşası
         var embedUrl = "https://vidsrc.to/embed/" + type + "/" + tmdbId;
-        if (type === 'tv') {
-            embedUrl += "/" + seasonNum + "/" + episodeNum;
-        }
+        if (type === 'tv') embedUrl += "/" + seasonNum + "/" + episodeNum;
 
-        console.log('[VidSrc-Adv] Başlatıldı. Hedef:', embedUrl);
+        console.log('[VidSrc-Adv] Başlatıldı:', embedUrl);
 
-        // 2. İlk Sayfayı Çek
-        fetch(embedUrl, { headers: HEADERS })
-            .then(function(res) {
-                if (!res.ok) throw new Error('Vidsrc ana sayfa hatası: ' + res.status);
-                return res.text();
-            })
+        fetch(embedUrl, { headers: { 'User-Agent': HEADERS['User-Agent'] } })
+            .then(function(res) { return res.text(); })
             .then(function(html) {
-                // Stremio kodundaki Iframe yakalama mantığı
                 var iframeMatch = html.match(/<iframe[^>]+src=["']([^"']+)["']/i);
                 var iframeSrc = iframeMatch ? iframeMatch[1] : null;
 
                 if (iframeSrc) {
                     if (iframeSrc.startsWith('//')) iframeSrc = 'https:' + iframeSrc;
-                    console.log('[VidSrc-Adv] Iframe bulundu, yönleniliyor:', iframeSrc);
-                    
-                    // 3. Iframe içine gir (Cloudnestra vb. kontrolü)
+                    console.log('[VidSrc-Adv] Iframe bulundu:', iframeSrc);
                     return fetch(iframeSrc, { headers: { 'Referer': embedUrl, 'User-Agent': HEADERS['User-Agent'] } });
-                } else {
-                    // Iframe yoksa direkt sayfada m3u8 ara
-                    return { text: function() { return html; }, direct: true };
                 }
+                return { text: function() { return html; } };
             })
-            .then(function(res) {
-                return typeof res.text === 'function' ? res.text() : res;
-            })
+            .then(function(res) { return res.text(); })
             .then(function(pageContent) {
-                // Cloudnestra API Token Kontrolü (Stremio kodundaki özel mantık)
                 var tokenMatch = pageContent.match(/\/rcp\/([^\/"]+)/);
                 
                 if (tokenMatch) {
                     var token = tokenMatch[1];
-                    console.log('[VidSrc-Adv] Cloudnestra Token Yakalandı:', token);
-                    
-                    // Bu kısım genellikle POST ister, Nuvio fetch ile deniyoruz
                     var apiUrl = "https://cloudnestra.com/api/source/" + token;
-                    return fetch(apiUrl, { method: 'POST', headers: { 'X-Requested-With': 'XMLHttpRequest' } })
-                        .then(function(apiRes) { return apiRes.json(); })
-                        .then(function(apiJson) {
-                            if (apiJson.sources && apiJson.sources.length > 0) {
-                                return apiJson.sources[0].file;
-                            }
+                    console.log('[VidSrc-Adv] API Sorgulanıyor:', apiUrl);
+
+                    // --- KRİTİK DÜZELTME BAŞLANGICI ---
+                    return fetch(apiUrl, { 
+                        method: 'POST', 
+                        headers: HEADERS 
+                    })
+                    .then(function(apiRes) {
+                        // Cevabın JSON olup olmadığını kontrol et
+                        var contentType = apiRes.headers.get("content-type");
+                        if (contentType && contentType.indexOf("application/json") !== -1) {
+                            return apiRes.json();
+                        } else {
+                            console.error('[VidSrc-Adv] API JSON dönmedi, Content-Type:', contentType);
                             return null;
-                        });
+                        }
+                    })
+                    .then(function(apiJson) {
+                        // null kontrolü (logdaki hatayı engelleyen kısım)
+                        if (apiJson && apiJson.sources && apiJson.sources.length > 0) {
+                            return apiJson.sources[0].file;
+                        }
+                        return null;
+                    });
+                    // --- KRİTİK DÜZELTME BİTİŞİ ---
                 }
 
-                // API yoksa Regex ile m3u8 ara
-                var patterns = [
-                    /"file"\s*:\s*"(https?:[^"]+\.m3u8[^"]*)"/,
-                    /file\s*:\s*"(https?:[^"]+\.m3u8[^"]*)"/,
-                    /"(https?:[^"]+\.m3u8[^"]*)"/
-                ];
-
-                for (var i = 0; i < patterns.length; i++) {
-                    var m = pageContent.match(patterns[i]);
-                    if (m) return m[1];
-                }
-                return null;
+                // API yoksa m3u8 regex fallback
+                var match = pageContent.match(/file\s*:\s*["'](https?.*?\.m3u8.*?)["']/);
+                return match ? match[1] : null;
             })
-            .then(function(finalVideoUrl) {
-                if (finalVideoUrl) {
-                    console.log('[VidSrc-Adv] BAŞARILI. Final URL:', finalVideoUrl);
+            .then(function(finalUrl) {
+                if (finalUrl) {
+                    console.log('[VidSrc-Adv] Başarılı:', finalUrl);
                     streams.push({
-                        name: '⌜ VidSrc ⌟ | Cloudnestra',
-                        url: finalVideoUrl,
+                        name: '⌜ VidSrc ⌟',
+                        url: finalUrl,
                         quality: 'Auto',
                         headers: { 'Referer': 'https://vidsrc.to/' },
                         provider: 'vidsrc_to'
                     });
-                } else {
-                    console.error('[VidSrc-Adv] Video linki hiçbir desene uymadı.');
                 }
                 resolve(streams);
             })
