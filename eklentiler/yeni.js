@@ -1,6 +1,6 @@
 /**
- * VidSrc TO - API v7 (Final Fix)
- * ExoPlayer format hatasını gidermek için doğrudan kaynak linkine odaklanır.
+ * VidSrc TO - Universal Data Scraper (v8)
+ * Sınıf isimlerine (class) bakmaksızın tüm data-id'leri toplar.
  */
 
 var cheerio = require("cheerio-without-node-native");
@@ -15,7 +15,7 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
         if (type === 'tv') url += "/" + seasonNum + "/" + episodeNum;
 
         var streams = [];
-        console.error('[VidSrc-v7] ISLEM BASLATILDI: ' + url);
+        console.error('[VidSrc-v8] BASLATILDI: ' + url);
 
         var headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
@@ -26,57 +26,66 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
             .then(function(res) { return res.text(); })
             .then(function(html) {
                 var $ = cheerio.load(html);
-                
-                // 1. ADIM: data-id içeren sunucuları bul
-                var servers = $('.source'); 
-                if (servers.length === 0) {
-                    console.error('[VidSrc-v7] HATA: Sunucu listesi bos.');
-                    throw new Error("NO_SERVERS");
-                }
-
                 var serverPromises = [];
-                servers.each(function() {
-                    var id = $(this).attr('data-id');
-                    var name = $(this).text().trim();
-                    if (id) {
-                        console.error('[VidSrc-v7] KAYNAK BULUNDU: ' + name);
-                        serverPromises.push(resolveSource(id, name, url));
+                
+                // ESNEK SEÇİCİ: İçinde 'data-id' olan tüm elementleri tara
+                // Bu sayede class ismi değişse bile ID'yi yakalarız.
+                $('[data-id]').each(function(i, elem) {
+                    var id = $(elem).attr('data-id');
+                    var name = $(elem).text().trim() || ("Sunucu " + (i + 1));
+                    
+                    // Sadece sayısal/hash benzeri ID'leri al (gereksiz verileri ele)
+                    if (id && id.length > 3) {
+                        console.error('[VidSrc-v8] ID YAKALANDI: ' + name + ' -> ' + id);
+                        serverPromises.push(resolveSourceV8(id, name, url));
                     }
                 });
+
+                if (serverPromises.length === 0) {
+                    console.error('[VidSrc-v8] HATA: Sayfada hicbir data-id bulunamadı.');
+                    // YEDEK: Regex ile HTML içinde arama yap
+                    var matches = html.match(/data-id="([^"]+)"/g);
+                    if (matches) {
+                        console.error('[VidSrc-v8] YEDEK: Regex ile ' + matches.length + ' ID bulundu.');
+                        matches.forEach(function(m) {
+                            var id = m.split('"')[1];
+                            serverPromises.push(resolveSourceV8(id, "Server", url));
+                        });
+                    }
+                }
 
                 return Promise.all(serverPromises);
             })
             .then(function(results) {
                 results.forEach(function(res) { if (res) streams = streams.concat(res); });
-                console.error('[VidSrc-v7] TAMAMLANDI: ' + streams.length + ' adet link.');
+                console.error('[VidSrc-v8] SONUC: ' + streams.length + ' adet link eklendi.');
                 resolve(streams);
             })
             .catch(function(err) {
-                console.error('[VidSrc-v7] DURDURULDU: ' + err.message);
+                console.error('[VidSrc-v8] DURDURULDU: ' + err.message);
                 resolve([]);
             });
     });
 }
 
-function resolveSource(id, serverName, referer) {
-    // vidsrc.to/ajax/embed/source/ID adresine istek atarak gerçek linki çözüyoruz
+function resolveSourceV8(id, serverName, referer) {
     return fetch(TO_AJAX + "/source/" + id, {
-        headers: { 'Referer': referer, 'X-Requested-With': 'XMLHttpRequest' }
+        headers: { 
+            'Referer': referer, 
+            'X-Requested-With': 'XMLHttpRequest',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        }
     })
     .then(function(res) { return res.json(); })
     .then(function(data) {
         if (data.status === 200 && data.result && data.result.url) {
-            // VidSrc.to linkleri şifreli (Base64 + RC4 vb.) olabilir
-            // Ama genellikle player linkidir. Nuvio player bunu açabilmeli.
-            var finalUrl = data.result.url;
-            console.error('[VidSrc-v7] LINK COZULDU (' + serverName + ')');
-
+            console.error('[VidSrc-v8] BASARILI: ' + serverName);
             return [{
                 name: '⌜ VidSrc ⌟ | ' + serverName,
-                url: finalUrl,
+                url: data.result.url,
                 quality: 'Auto',
                 headers: { "Referer": "https://vidsrc.to/" },
-                provider: 'vidsrc_v7'
+                provider: 'vidsrc_v8'
             }];
         }
         return null;
