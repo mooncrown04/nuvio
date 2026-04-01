@@ -1,66 +1,74 @@
 /**
- * @name PornHub
- * @author Kraptor123
- * @version 1.0.0
+ * Nuvio Local Scraper - VidSrc & Subtitles
+ * Playwright mantığının Nuvio (Client-side) uyarlaması
  */
 
-const mainUrl = "https://www.pornhub.com";
+var cheerio = require("cheerio-without-node-native");
 
-const headers = {
+const WORKING_HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Cookie': 'hasVisited=1; accessAgeDisclaimerPH=1'
+    'Accept': '*/*'
 };
 
-async function search(query, page = 1) {
-    const url = `${mainUrl}/video/search?search=${encodeURIComponent(query)}&page=${page}`;
-    const res = await http.get(url, { headers });
-    const doc = jsparse(res.body);
+function getStreams(searchResult) {
+    return new Promise(function(resolve) {
+        var streams = [];
+        var tmdbId = searchResult.tmdb_id;
+        var type = searchResult.type === 'tv' ? 'tv' : 'movie';
+        
+        // VidSrc URL yapısı (Playwright kodundaki mantık)
+        var baseUrl = "https://vidsrc.xyz/embed/" + type + "/" + tmdbId;
+        if (type === 'tv') {
+            baseUrl += "/" + searchResult.season + "/" + searchResult.episode;
+        }
 
-    return doc.select("div.gridWrapper li.pcVideoListItem").map(item => {
-        const link = item.selectFirst("a");
-        const img = item.selectFirst("img");
-        return {
-            title: img?.attr("alt") || "No Title",
-            url: mainUrl + link?.attr("href"),
-            poster: img?.attr("data-mediumthumb") || img?.attr("src")
-        };
+        // 1. ADIM: Embed sayfasını çek
+        fetch(baseUrl, { headers: WORKING_HEADERS })
+            .then(function(res) { return res.text(); })
+            .then(function(html) {
+                var $ = cheerio.load(html);
+                
+                // Playwright'daki "#the_frame" veya kaynak seçici mantığı
+                // Not: Client-side'da m3u8 linkini bulmak için genellikle 
+                // sayfadaki scriptlerin içinden regex ile çekmek gerekir.
+                var sourceRegex = /file:"(.*?\.m3u8)"/g; 
+                var match = sourceRegex.exec(html);
+                var hlsUrl = match ? match[1] : null;
+
+                if (hlsUrl) {
+                    streams.push({
+                        name: "VidSrc (Auto)",
+                        title: searchResult.title,
+                        url: hlsUrl,
+                        quality: "1080p",
+                        headers: {
+                            'Referer': 'https://vidsrc.xyz/',
+                            'User-Agent': WORKING_HEADERS['User-Agent']
+                        },
+                        subtitles: [], // Altyazılar aşağıda eklenebilir
+                        provider: "vidsrc_scraper"
+                    });
+                }
+
+                // 2. ADIM: OpenSubtitles API Entegrasyonu (Proxy üzerinden)
+                // Nuvio'da API anahtarlarını doğrudan kodun içine yazman gerekir
+                return resolve(streams);
+            })
+            .catch(function(err) {
+                console.error('VidSrc Error:', err.message);
+                resolve([]);
+            });
     });
 }
 
-async function loadLinks(videoUrl, callback) {
-    const res = await http.get(videoUrl, { headers, referer: mainUrl + "/" });
-    const html = res.body;
-
-    // flashvars içindeki JSON verisini ayıklama
-    const flashvarsMatch = html.match(/var flashvars_\d+ = ({.*?});/s) || html.match(/var flashvars = ({.*?});/s);
-    
-    if (flashvarsMatch) {
-        try {
-            const data = JSON.parse(flashvarsMatch[1]);
-            const definitions = data.mediaDefinitions;
-
-            definitions.forEach(def => {
-                if (def.videoUrl && def.videoUrl !== "") {
-                    callback({
-                        name: `PornHub - ${def.quality}p`,
-                        url: def.videoUrl,
-                        quality: parseInt(def.quality),
-                        isM3u8: def.format === "hls" || def.videoUrl.includes(".m3u8")
-                    });
-                }
-            });
-        } catch (e) {
-            console.error("Link parsing error:", e);
-        }
-    }
+// Altyazı SRT -> VTT dönüşümü (Nuvio için basitleştirilmiş)
+function srtToVtt(srtText) {
+    return "WEBVTT\n\n" + srtText
+        .replace(/(\d{2}:\d{2}:\d{2}),(\d{3})/g, "$1.$2");
 }
 
-// Nuvio'nun beklediği export yapısı
-export default {
-    search,
-    loadLinks,
-    mainPage: [
-        { title: "Featured", url: `${mainUrl}/video` },
-        { title: "Trending", url: `${mainUrl}/video?o=tr` }
-    ]
-};
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = { getStreams: getStreams };
+} else {
+    global.getStreams = getStreams;
+}
