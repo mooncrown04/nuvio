@@ -1,71 +1,69 @@
 /**
- * VidSrc PRO - Direct Stream Resolver (v10)
- * Iframe engellerini aşmak için vidsrc.me altyapısını manipüle eder.
+ * VidSrc PRO - CloudNestra API Resolver (v11)
+ * rcp/ tokenını kullanarak doğrudan JSON kaynağına erişmeyi dener.
  */
 
 var cheerio = require("cheerio-without-node-native");
 
 function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
     return new Promise(function(resolve) {
-        // vidsrc.me altyapısı daha kararlı video akışları sağlar
         var url = "https://vidsrc.me/embed/" + tmdbId;
-        if (mediaType !== 'movie') {
-            url += "/" + seasonNum + "/" + episodeNum;
-        }
+        if (mediaType !== 'movie') url += "/" + seasonNum + "/" + episodeNum;
 
-        console.error('[VidSrc-v10] KAYNAK TARANIYOR: ' + url);
+        console.error('[VidSrc-v11] ANALIZ BASLADI: ' + url);
 
-        fetch(url, {
-            headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
-        })
+        fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' } })
         .then(function(res) { return res.text(); })
         .then(function(html) {
             var $ = cheerio.load(html);
-            var streams = [];
+            var rcpUrl = $('#player_iframe').attr('src') || $('iframe').attr('src');
 
-            // 1. ADIM: Sayfa içindeki gizli "src" veya "data-video" elementlerini bul
-            // Bu genellikle player'ın gerçek adresidir
-            var playerUrl = $('#player_iframe').attr('src') || $('iframe').attr('src');
-            
-            if (playerUrl) {
-                if (playerUrl.startsWith('//')) playerUrl = 'https:' + playerUrl;
+            if (rcpUrl && rcpUrl.includes('rcp/')) {
+                if (rcpUrl.startsWith('//')) rcpUrl = 'https:' + rcpUrl;
                 
-                console.error('[VidSrc-v10] PLAYER BULUNDU: ' + playerUrl);
+                // TOKEN AYIKLAMA: rcp/ kısmından sonraki uzun kodu alıyoruz
+                var token = rcpUrl.split('rcp/')[1];
+                console.error('[VidSrc-v11] TOKEN YAKALANDI: ' + token.substring(0, 20) + "...");
+
+                // CloudNestra'nın gizli API ucuna istek atıyoruz
+                var apiUrl = "https://cloudnestra.com/api/source/" + token;
                 
-                streams.push({
-                    name: '⌜ VidSrc ⌟ | Akış 1',
-                    url: playerUrl,
-                    quality: 'Auto',
-                    // KRİTİK: ExoPlayer'ın HTML değil, veri çekmesini sağlamak için
-                    headers: { 
-                        'Referer': 'https://vidsrc.me/',
-                        'User-Agent': 'Mozilla/5.0' 
+                return fetch(apiUrl, {
+                    method: 'POST', // Genellikle POST ile çalışır
+                    headers: {
+                        'Referer': rcpUrl,
+                        'X-Requested-With': 'XMLHttpRequest',
+                        'User-Agent': 'Mozilla/5.0'
                     }
-                });
+                }).then(function(apiRes) { return apiRes.json(); });
             }
-
-            // 2. ADIM: Eğer yukarıdaki başarısız olursa, doğrudan vidsrc.in (Yedek) linki üret
-            var backupUrl = "https://vidsrc.in/embed/" + (mediaType === 'movie' ? 'movie/' : 'tv/') + tmdbId;
-            if (mediaType !== 'movie') backupUrl += "/" + seasonNum + "/" + episodeNum;
-
-            streams.push({
-                name: '⌜ VidSrc ⌟ | Akış 2 (Yedek)',
-                url: backupUrl,
-                quality: 'Auto',
-                headers: { 'Referer': 'https://vidsrc.in/' }
-            });
-
+            throw new Error("RCP_NOT_FOUND");
+        })
+        .then(function(data) {
+            var streams = [];
+            // Eğer API bize 'data.url' veya 'data.sources' dönerse, o gerçek m3u8'dir!
+            if (data && data.url) {
+                console.error('[VidSrc-v11] GERCEK VIDEO BULUNDU!');
+                streams.push({
+                    name: '⌜ VidSrc ⌟ | HD AKIS',
+                    url: data.url, // Bu sefer ExoPlayer'ın sevdiği format gelecek
+                    quality: '1080p',
+                    headers: { 'Referer': 'https://vidsrc.me/' }
+                });
+            } else {
+                // API cevap vermezse en azından rcp linkini player'a pasla
+                console.error('[VidSrc-v11] API BOS DONDU, RCP PASLANIYOR.');
+            }
             resolve(streams);
         })
         .catch(function(e) {
-            console.error('[VidSrc-v10] HATA: ' + e.message);
-            resolve([]);
+            console.error('[VidSrc-v11] KRITIK HATA: ' + e.message);
+            // Hata olsa bile listeyi boş döndürme, manuel linki ekle
+            resolve([{
+                name: '⌜ VidSrc ⌟ | Manuel Deneme',
+                url: "https://vidsrc.me/embed/" + tmdbId + (mediaType === 'movie' ? "" : "/" + seasonNum + "/" + episodeNum),
+                quality: 'Auto'
+            }]);
         });
     });
-}
-
-if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { getStreams: getStreams };
-} else {
-    global.getStreams = getStreams;
 }
