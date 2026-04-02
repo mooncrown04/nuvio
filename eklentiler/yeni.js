@@ -1,5 +1,5 @@
 // ============================================================
-//  M3U Provider — birlesik.m3u (v2.0 - Keskin Eşleştirme)
+//  M3U Provider — Keskin Eşleştirme & Dinamik İsimlendirme (v4.0)
 // ============================================================
 
 var M3U_URL      = 'https://raw.githubusercontent.com/mooncrown04/m3u/refs/heads/main/birlesik.m3u';
@@ -9,7 +9,7 @@ var _m3uCache     = null;
 var _m3uFetchedAt = 0;
 var CACHE_TTL     = 3600 * 1000; 
 
-// ── M3U İndir ───────────────────────────────────────────────
+// ── 1. M3U İndirme ve Parse ──────────────────────────────────
 function fetchM3u() {
     var now = Date.now();
     if (_m3uCache && (now - _m3uFetchedAt) < CACHE_TTL) return Promise.resolve(_m3uCache);
@@ -45,7 +45,6 @@ function parseExtInf(meta, url) {
     var yearM = titleRaw.match(/\((\d{4})\)/);
     var year = yearM ? yearM[1] : '';
     
-    // Temizleme işlemleri
     var title = titleRaw.replace(/\[\d{2}\.\d{2}\.\d{4}[^\]]*\]/g, '').replace(/\(\d{4}\)/g, '').trim();
     title = title.replace(/\s*[-–]{2,}[\s\S]*/, '').trim();
     
@@ -53,8 +52,8 @@ function parseExtInf(meta, url) {
     var logo = logoM ? logoM[1] : '';
     var tmdbPosterPath = null;
     if (logo.includes('image.tmdb.org')) {
-        var pathM = logo.match(/\/t\/p\/w\d+\/(.+)$/);
-        if (pathM) tmdbPosterPath = pathM[1];
+        var pathM = logo.match(/\/t\/p\/w\d+\/([^\s?]+)/);
+        if (pathM) tmdbPosterPath = pathM[1].replace(/^\//, '');
     }
 
     var imdbM = url.match(/\b(tt\d+)\b/);
@@ -62,14 +61,55 @@ function parseExtInf(meta, url) {
         title: title,
         year: year,
         url: url,
-        logo: logo,
         tmdbPosterPath: tmdbPosterPath,
         imdbId: imdbM ? imdbM[1] : null,
         group: (meta.match(/group-title="([^"]+)"/) || [])[1] || ''
     };
 }
 
-// ── TMDB Bilgisi (IMDb ID Dahil) ──────────────────────────────
+// ── 2. Normalize ve Keskin Skorlama ──────────────────────────
+function normalize(s) {
+    return (s || '').toLowerCase()
+        .replace(/[\u0130\u0131]/g, 'i').replace(/[\u00fc]/g, 'u').replace(/[\u00f6]/g, 'o')
+        .replace(/[\u015f]/g, 's').replace(/[\u011f]/g, 'g').replace(/[\u00e7]/g, 'c')
+        .replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+function getMatchScore(entry, tmdb) {
+    if (entry.imdbId && tmdb.imdbId && entry.imdbId === tmdb.imdbId) return 1000;
+
+    var et = normalize(entry.title);
+    var qt = normalize(tmdb.titleTr);
+    var qe = normalize(tmdb.titleEn);
+
+    var checkWords = function(target, query) {
+        if (!query) return 0;
+        var words = query.split(' ').filter(function(w) { return w.length > 2; });
+        if (words.length === 0) return 0;
+        
+        var foundAll = true;
+        words.forEach(function(w) {
+            if (!target.includes(w)) foundAll = false; 
+        });
+        return foundAll ? 20 : 0;
+    };
+
+    var titleScore = Math.max(checkWords(et, qt), checkWords(et, qe));
+    if (titleScore === 0) return 0; 
+
+    if (entry.year && tmdb.year) {
+        if (entry.year !== tmdb.year) return 0; 
+        titleScore += 30;
+    }
+
+    if (entry.tmdbPosterPath && tmdb.posterPath && entry.tmdbPosterPath === tmdb.posterPath) {
+        titleScore += 80;
+    }
+
+    return titleScore;
+}
+
+// ── 3. TMDB Verisi ───────────────────────────────────────────
 function fetchTmdbInfo(tmdbId, mediaType) {
     var type = (mediaType === 'tv') ? 'tv' : 'movie';
     return fetch('https://api.themoviedb.org/3/' + type + '/' + tmdbId + '?api_key=' + TMDB_API_KEY + '&language=tr-TR&append_to_response=external_ids')
@@ -85,94 +125,45 @@ function fetchTmdbInfo(tmdbId, mediaType) {
     });
 }
 
-// ── Normalize ve Skorlama ─────────────────────────────────────
-function normalize(s) {
-    return (s || '').toLowerCase()
-        .replace(/[\u0130\u0131]/g, 'i').replace(/[\u00fc]/g, 'u').replace(/[\u00f6]/g, 'o')
-        .replace(/[\u015f]/g, 's').replace(/[\u011f]/g, 'g').replace(/[\u00e7]/g, 'c')
-        .replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, ' ').trim();
-}
-
-function titleScore(entryTitle, qTr, qEn) {
-    var et = normalize(entryTitle);
-    var qt = normalize(qTr);
-    var qe = normalize(qEn);
-    if (et === qt || et === qe) return 20;
-
-    var check = function(target, query) {
-        if (!query) return 0;
-        var words = query.split(' ').filter(w => w.length > 2);
-        var matches = words.filter(w => target.includes(w)).length;
-        return (matches >= words.length / 2) ? matches * 3 : 0;
-    };
-    return Math.max(check(et, qt), check(et, qe));
-}
-
-// ── Eşleştirme Motoru ────────────────────────────────────────
-function findMatches(entries, tmdb) {
-    var results = [];
-    entries.forEach(function(e) {
-        var score = 0;
-
-        // 1. IMDb ID Eşleşmesi (Altın Kural)
-        if (e.imdbId && tmdb.imdbId && e.imdbId === tmdb.imdbId) score += 100;
-
-        // 2. Poster Path Eşleşmesi
-        if (e.tmdbPosterPath && tmdb.posterPath && e.tmdbPosterPath === tmdb.posterPath) score += 80;
-
-        // 3. Başlık Skoru
-        score += titleScore(e.title, tmdb.titleTr, tmdb.titleEn);
-
-        // 4. Yıl Kontrolü ve Ceza Sistemi
-        if (e.year && tmdb.year) {
-            if (e.year === tmdb.year) score += 10;
-            else score -= 20; // Yıl farklıysa skoru ağır düşür
-        }
-
-        if (score >= 10) results.push({ entry: e, score: score });
-    });
-
-    return results.sort((a, b) => b.score - a.score);
-}
-
-// ── Stream Üretimi ───────────────────────────────────────────
-function entryToStream(entry) {
-    var isVidmody = entry.url.includes('vidmody.com');
-    if (isVidmody) {
-        // Vidmody için daha önce yazdığımız fetchVidmodyStreams fonksiyonu buraya entegre edilebilir
-        // Basitlik için şimdilik direkt link dönüyoruz:
-        return Promise.resolve([{
-            url: entry.url,
-            name: 'Vidmody HD',
-            quality: '1080p',
-            headers: { 'Referer': 'https://vidmody.com/' }
-        }]);
-    }
-    return Promise.resolve([{
-        url: entry.url,
-        name: entry.group || 'M3U Kaynak',
-        quality: 'Auto'
-    }]);
-}
-
-// ── Ana Fonksiyon ────────────────────────────────────────────
+// ── 4. Ana Fonksiyon (Dinamik İsimlendirme Dahil) ────────────
 function getStreams(tmdbId, mediaType) {
-    if (mediaType === 'tv') return Promise.resolve([]); // Sadece film desteği
+    if (mediaType === 'tv') return Promise.resolve([]); 
 
     return fetchTmdbInfo(tmdbId, mediaType)
     .then(function(tmdb) {
         return fetchM3u().then(function(entries) {
-            var matches = findMatches(entries, tmdb);
-            if (matches.length === 0) return [];
+            var matches = [];
+            entries.forEach(function(e) {
+                var score = getMatchScore(e, tmdb);
+                if (score >= 20) matches.push({ entry: e, score: score });
+            });
 
-            // En yüksek skorlu ilk 3 eşleşmeyi al
-            var promises = matches.slice(0, 3).map(m => entryToStream(m.entry));
+            matches.sort(function(a, b) { return b.score - a.score; });
+            
+            // İlk 3 en iyi eşleşmeyi göster
+            var promises = matches.slice(0, 3).map(function(m) {
+                var isVidmody = m.entry.url.includes('vidmody.com');
+                var yearLabel = m.entry.year || tmdb.year;
+                
+                // GÖRÜNÜM: "Film Adı [2024] - 1080p"
+                var fullDisplayName = m.entry.title + ' [' + yearLabel + '] - 1080p';
+
+                return Promise.resolve([{
+                    url: m.entry.url,
+                    name: isVidmody ? 'Vidmody' : (m.entry.group || 'M3U'), 
+                    title: fullDisplayName, // Detayda görünen isim
+                    quality: '1080p',
+                    headers: isVidmody ? { 'Referer': 'https://vidmody.com/' } : {}
+                }]);
+            });
+
             return Promise.all(promises).then(function(res) {
                 return [].concat.apply([], res);
             });
         });
     })
-    .catch(() => []);
+    .catch(function() { return []; });
 }
 
+// Export
 if (typeof module !== 'undefined') module.exports = { getStreams };
