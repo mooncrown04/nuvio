@@ -2,7 +2,7 @@
 //  M3U Provider — Keskin Eşleştirme & Film İsmi Gösterimi (v5.0)
 // ============================================================
 
-var M3U_URL      = 'https://raw.githubusercontent.com/mooncrown04/m3u/refs/heads/main/birlesik.m3u';
+var M3U_URL      = 'https://raw.githubusercontent.com/mooncrown04/m3ubirlestir/refs/heads/main/birlesik_sinema.m3u';
 var TMDB_API_KEY = '500330721680edb6d5f7f12ba7cd9023';
 
 var _m3uCache     = null;
