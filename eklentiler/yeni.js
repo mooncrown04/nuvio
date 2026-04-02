@@ -1,5 +1,5 @@
 // ============================================================
-//  M3U Provider — Keskin Eşleştirme & Dinamik İsimlendirme (v4.0)
+//  M3U Provider — Keskin Eşleştirme & Film İsmi Gösterimi (v5.0)
 // ============================================================
 
 var M3U_URL      = 'https://raw.githubusercontent.com/mooncrown04/m3u/refs/heads/main/birlesik.m3u';
@@ -125,7 +125,7 @@ function fetchTmdbInfo(tmdbId, mediaType) {
     });
 }
 
-// ── 4. Ana Fonksiyon (Dinamik İsimlendirme Dahil) ────────────
+// ── 4. Ana Fonksiyon (Dinamik İsimlendirme Sabitlendi) ───────
 function getStreams(tmdbId, mediaType) {
     if (mediaType === 'tv') return Promise.resolve([]); 
 
@@ -145,13 +145,14 @@ function getStreams(tmdbId, mediaType) {
                 var isVidmody = m.entry.url.includes('vidmody.com');
                 var yearLabel = m.entry.year || tmdb.year;
                 
-                // GÖRÜNÜM: "Film Adı [2024] - 1080p"
-                var fullDisplayName = m.entry.title + ' [' + yearLabel + '] - 1080p';
+                // Burası kritik: Liste ekranında görünen isim "name" alanıdır.
+                // Bulunan film ismini buraya yazıyoruz.
+                var finalName = m.entry.title + ' (' + yearLabel + ')';
 
                 return Promise.resolve([{
                     url: m.entry.url,
-                    name: isVidmody ? 'Vidmody' : (m.entry.group || 'M3U'), 
-                    title: fullDisplayName, // Detayda görünen isim
+                    name: finalName, // EKRANDA GÖRÜNECEK ANA İSİM
+                    title: isVidmody ? 'Vidmody HD - 1080p' : (m.entry.group || 'M3U'), // Alt bilgi/Detay
                     quality: '1080p',
                     headers: isVidmody ? { 'Referer': 'https://vidmody.com/' } : {}
                 }]);
