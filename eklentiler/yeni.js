@@ -1,7 +1,7 @@
 var M3U_URL      = 'https://raw.githubusercontent.com/mooncrown04/m3ubirlestir/refs/heads/main/birlesik_sinema.m3u';
 var TMDB_API_KEY = '500330721680edb6d5f7f12ba7cd9023';
 
-// Sadece temel temizlik (Türkçe karakterleri düzelt, küçük harf yap)
+// Sadece temel temizlik (Türkçe karakterleri düzelt, küçük harf yap v1)
 function softClean(s) {
     return (s || '').toLowerCase()
         .replace(/[\u0130\u0131]/g, 'i').replace(/[\u00fc]/g, 'u').replace(/[\u00f6]/g, 'o')
