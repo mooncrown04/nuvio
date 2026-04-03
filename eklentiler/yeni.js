@@ -6,7 +6,7 @@ function normalize(s) {
     return s.toLowerCase()
         .replace(/[\u0130\u0131]/g, 'i').replace(/[\u00fc]/g, 'u').replace(/[\u00f6]/g, 'o')
         .replace(/[\u015f]/g, 's').replace(/[\u011f]/g, 'g').replace(/[\u00e7]/g, 'c')
-        .replace(/[^a-z0-9]/g, '') // En agresif temizlik: Sadece harf ve rakam
+        .replace(/[^a-z0-9]/g, '') // Boşluk dahil her şeyi siler, en temiz eşleşmeyi sağlar
         .trim();
 }
 
@@ -14,14 +14,14 @@ async function getStreams(tmdbId, mediaType) {
     if (mediaType === 'tv') return [];
 
     try {
-        const tmdbRes = await fetch(`https://api.themoviedb.org/3/movie/${tmdbId}?api_key=${TMDB_API_KEY}&language=tr-TR`);
+        // 1. TMDB'den hem Türkçe hem İngilizce isimleri ve harici ID'leri al
+        const tmdbRes = await fetch(`https://api.themoviedb.org/3/movie/${tmdbId}?api_key=${TMDB_API_KEY}&language=tr-TR&append_to_response=external_ids`);
         const d = await tmdbRes.json();
         
         const qTr = normalize(d.title);
         const qEn = normalize(d.original_title);
+        const imdbId = d.external_ids ? d.external_ids.imdb_id : null; // Örn: tt5074352
         const year = (d.release_date || '').slice(0, 4);
-
-        console.error("DEBUG: ARANAN -> " + d.title + " ID: " + tmdbId);
 
         const m3uRes = await fetch(M3U_URL);
         const text = await m3uRes.text();
@@ -34,27 +34,35 @@ async function getStreams(tmdbId, mediaType) {
                 const url = lines[i+1] ? lines[i+1].trim() : '';
                 if (!url || !url.startsWith('http')) continue;
 
-                // Satır içindeki ID kontrolü (Örn: tmdb-id="360814")
-                const hasIdMatch = line.includes(tmdbId.toString());
-                
                 const lastCommaIndex = line.lastIndexOf(',');
                 const m3uFullName = lastCommaIndex !== -1 ? line.substring(lastCommaIndex + 1).trim() : "";
                 const m3uNameClean = normalize(m3uFullName);
 
                 let score = 0;
 
-                if (hasIdMatch) {
-                    score = 100; // ID eşleşmesi varsa rakipsizdir
-                } else if (m3uNameClean === qTr || m3uNameClean === qEn) {
-                    score = 95; // İsim birebir (temizlenmiş haliyle) aynı
-                } else if (m3uNameClean.includes(qTr) || (qEn && m3uNameClean.includes(qEn))) {
-                    score = 70; // İsim bir şekilde içinde geçiyor
-                    if (year && m3uFullName.includes(year)) {
-                        score += 20; // Yıl da varsa bonus
+                // --- GELİŞMİŞ EŞLEŞME MANTIĞI ---
+
+                // 1. IMDb ID EŞLEŞMESİ (URL içinde tt5074352 geçiyor mu?)
+                if (imdbId && url.includes(imdbId)) {
+                    score = 100; 
+                } 
+                // 2. TMDB ID EŞLEŞMESİ (Satır içinde numara geçiyor mu?)
+                else if (line.includes(tmdbId.toString())) {
+                    score = 98;
+                }
+                // 3. TAM İSİM EŞLEŞMESİ
+                else if (m3uNameClean === qTr || m3uNameClean === qEn) {
+                    score = 95;
+                }
+                // 4. KISMİ İSİM EŞLEŞMESİ
+                else if ((qTr && m3uNameClean.includes(qTr)) || (qEn && m3uNameClean.includes(qEn))) {
+                    score = 75;
+                    // Yıl kontrolü (Örn: year="2016" satırda var mı?)
+                    if (year && line.includes(year)) {
+                        score += 15;
                     }
                 }
 
-                // EĞER SKOR VARSA (ID eşleştiyse veya isim geçiyorsa) EKLE
                 if (score > 0) {
                     results.push({
                         url: url,
@@ -67,11 +75,9 @@ async function getStreams(tmdbId, mediaType) {
             }
         }
 
-        // Skorlara göre diz, en iyileri döndür
         return results.sort((a, b) => b.score - a.score);
 
     } catch (e) {
-        console.error("DEBUG: HATA -> " + e.message);
         return [];
     }
 }
