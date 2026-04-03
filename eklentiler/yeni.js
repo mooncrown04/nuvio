@@ -1,5 +1,5 @@
 // ============================================================
-//  M3U Provider — Keskin Eşleştirme & Film İsmi Gösterimi (v5.0)
+//  M3U Provider — Keskin Eşleştirme & Year Tag Öncelikli (v5.1)
 // ============================================================
 
 var M3U_URL      = 'https://raw.githubusercontent.com/mooncrown04/m3ubirlestir/refs/heads/main/birlesik_sinema.m3u';
@@ -41,12 +41,28 @@ function parseM3u(text) {
 }
 
 function parseExtInf(meta, url) {
+    // 1. ÖNCELİK: year="..." tagına bak
+    var yearTagM = meta.match(/year="(\d{4})"/);
+    var year = "";
+
+    if (yearTagM) {
+        year = yearTagM[1];
+    }
+
+    // Virgülden sonraki ham ismi al
     var titleRaw = meta.replace(/#EXTINF[^,]*,/, '').trim();
-    var yearM = titleRaw.match(/\((\d{4})\)/);
-    var year = yearM ? yearM[1] : '';
+
+    // 2. ÖNCELİK: Eğer tag yoksa parantez içindeki (2024) yılına bak
+    if (!year) {
+        var yearM = titleRaw.match(/\((\d{4})\)/);
+        year = yearM ? yearM[1] : '';
+    }
     
+    // İsmi temizle (Tarih damgaları ve parantezli yılları sil)
     var title = titleRaw.replace(/\[\d{2}\.\d{2}\.\d{4}[^\]]*\]/g, '').replace(/\(\d{4}\)/g, '').trim();
-    title = title.replace(/\s*[-–]{2,}[\s\S]*/, '').trim();
+    
+    // Tirelerden sonrasını temizle (Kategori/Tür ekleri varsa)
+    title = title.split('-')[0].trim();
     
     var logoM = meta.match(/tvg-logo="([^"]+)"/);
     var logo = logoM ? logoM[1] : '';
@@ -97,6 +113,7 @@ function getMatchScore(entry, tmdb) {
     var titleScore = Math.max(checkWords(et, qt), checkWords(et, qe));
     if (titleScore === 0) return 0; 
 
+    // Yıl kontrolü (Hassas: Eğer yıl varsa ve tutmuyorsa elenir)
     if (entry.year && tmdb.year) {
         if (entry.year !== tmdb.year) return 0; 
         titleScore += 30;
@@ -125,7 +142,7 @@ function fetchTmdbInfo(tmdbId, mediaType) {
     });
 }
 
-// ── 4. Ana Fonksiyon (Dinamik İsimlendirme Sabitlendi) ───────
+// ── 4. Ana Fonksiyon ─────────────────────────────────────────
 function getStreams(tmdbId, mediaType) {
     if (mediaType === 'tv') return Promise.resolve([]); 
 
@@ -140,19 +157,16 @@ function getStreams(tmdbId, mediaType) {
 
             matches.sort(function(a, b) { return b.score - a.score; });
             
-            // İlk 3 en iyi eşleşmeyi göster
             var promises = matches.slice(0, 3).map(function(m) {
                 var isVidmody = m.entry.url.includes('vidmody.com');
                 var yearLabel = m.entry.year || tmdb.year;
                 
-                // Burası kritik: Liste ekranında görünen isim "name" alanıdır.
-                // Bulunan film ismini buraya yazıyoruz.
                 var finalName = m.entry.title + ' (' + yearLabel + ')';
 
                 return Promise.resolve([{
                     url: m.entry.url,
-                    name: finalName, // EKRANDA GÖRÜNECEK ANA İSİM
-                    title: isVidmody ? 'Vidmody HD - 1080p' : (m.entry.group || 'M3U'), // Alt bilgi/Detay
+                    name: finalName, 
+                    title: isVidmody ? 'Vidmody HD - 1080p' : (m.entry.group || 'M3U'),
                     quality: '1080p',
                     headers: isVidmody ? { 'Referer': 'https://vidmody.com/' } : {}
                 }]);
