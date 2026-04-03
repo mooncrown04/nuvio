@@ -1,4 +1,4 @@
-var M3U_URL      = 'https://raw.githubusercontent.com/mooncrown04/m3ubirlestir/refs/heads/main/birlesik_sinema.m3u';
+var M3U_URL      = 'https://raw.githubusercontent.com/mooncrown04/m3ubirlestir/refs/heads/main/nuvio_sinema.m3u';
 var TMDB_API_KEY = '500330721680edb6d5f7f12ba7cd9023';
 var VERSION      = "5.7.0-NUCLEAR";
 
