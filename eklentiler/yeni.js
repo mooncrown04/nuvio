@@ -1,17 +1,20 @@
 var M3U_URL      = 'https://raw.githubusercontent.com/mooncrown04/m3ubirlestir/refs/heads/main/birlesik_sinema.m3u';
 var TMDB_API_KEY = '500330721680edb6d5f7f12ba7cd9023';
-var VERSION      = "4.6.0-LIGHTWEIGHT";
+var VERSION      = "4.7.0-PRECISION";
 
 function normalize(s) {
     if (!s) return '';
-    return s.toLowerCase()
+    // Hem Türkçe karakterleri düzelt hem de tüm boşluk/özel karakterleri yok et
+    return s.toString().toLowerCase()
         .replace(/[\u0130\u0131]/g, 'i').replace(/[\u00fc]/g, 'u').replace(/[\u00f6]/g, 'o')
         .replace(/[\u015f]/g, 's').replace(/[\u011f]/g, 'g').replace(/[\u00e7]/g, 'c')
-        .replace(/[^a-z0-9]/g, '').trim();
+        .replace(/\s+/g, '') // Tüm boşlukları sil
+        .replace(/[^a-z0-9]/g, '') // Kalan her şeyi temizle
+        .trim();
 }
 
 async function getStreams(tmdbId, mediaType) {
-    console.error(`[V${VERSION}] ARAMA BASLADI: ${tmdbId}`);
+    console.error(`[V${VERSION}] ARAMA: ${tmdbId}`);
     if (mediaType === 'tv') return [];
 
     try {
@@ -23,13 +26,10 @@ async function getStreams(tmdbId, mediaType) {
         const targetImdb = (d.external_ids && d.external_ids.imdb_id) ? d.external_ids.imdb_id : null;
         const targetYear = (d.release_date || '').slice(0, 4);
 
-        // RAM Tasarrufu: Sadece lazımsa M3U'yu çek
         const m3uRes = await fetch(M3U_URL);
         const text = await m3uRes.text();
         const lines = text.split('\n');
         const results = [];
-
-        console.error(`[V${VERSION}] M3U OKUNDU: ${lines.length} SATIR`);
 
         for (let i = 0; i < lines.length; i++) {
             const line = lines[i];
@@ -37,26 +37,36 @@ async function getStreams(tmdbId, mediaType) {
 
             const lastComma = line.lastIndexOf(',');
             const rawName = lastComma !== -1 ? line.substring(lastComma + 1).trim() : "";
-            const cleanM3U = normalize(rawName);
+            
+            // "Marslı :The Martian" gibi isimleri parçala, her parçayı ayrı kontrol et
+            const nameParts = rawName.split(/[:\-\(\)]/); 
+            let isMatch = false;
+            let score = 0;
 
-            // ÇOK ESNEK ARAMA: Eğer hedef isim M3U'daki ismin içinde geçiyorsa (Hangi dilde olursa olsun)
-            if (cleanM3U.includes(targetTr) || (targetEn && cleanM3U.includes(targetEn))) {
-                
-                // Linki bul (Ya bu satırda ya bir sonrakinde)
+            for (let part of nameParts) {
+                const cleanPart = normalize(part);
+                if (cleanPart !== "" && (cleanPart === targetTr || cleanPart === targetEn || cleanPart.includes(targetTr))) {
+                    isMatch = true;
+                    break;
+                }
+            }
+
+            if (isMatch) {
+                // Linki bul (Aynı satır veya alt satır)
                 let url = "";
                 if (line.includes('http')) {
                     url = "http" + line.split('http')[1].split(/\s+/)[0];
-                } else if (lines[i+1] && lines[i+1].includes('http')) {
+                } else if (lines[i+1] && lines[i+1].trim().startsWith('http')) {
                     url = lines[i+1].trim();
                 }
 
-                if (url && url.startsWith('http')) {
-                    let score = 80;
+                if (url) {
+                    score = 80;
                     if (targetImdb && url.includes(targetImdb)) score = 100;
-                    else if (cleanM3U === targetTr || cleanM3U === targetEn) score = 95;
-                    else if (targetYear && line.includes(targetYear)) score = 90;
+                    else if (targetYear && line.includes(targetYear)) score = 95;
+                    else score = 90;
 
-                    console.error(`[V${VERSION}] EŞLEŞTİ! -> ${rawName} [Skor: ${score}]`);
+                    console.error(`[V${VERSION}] EŞLEŞTİ! -> ${rawName}`);
                     results.push({
                         url: url,
                         name: rawName,
@@ -67,11 +77,8 @@ async function getStreams(tmdbId, mediaType) {
                 }
             }
         }
-
         return results.sort((a, b) => b.score - a.score);
-
     } catch (e) {
-        console.error(`[V${VERSION}] KRITIK HATA: ${e.message}`);
         return [];
     }
 }
