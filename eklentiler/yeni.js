@@ -1,131 +1,90 @@
 // ============================================================
-//  M3U Provider — IMDb ID Öncelikli & Çoklu Kaynak (v5.2)
+//  M3U Provider — Esnek Eşleştirme & Çoklu Link (v5.3)
 // ============================================================
 
 var M3U_URL      = 'https://raw.githubusercontent.com/mooncrown04/m3ubirlestir/refs/heads/main/birlesik_sinema.m3u';
 var TMDB_API_KEY = '500330721680edb6d5f7f12ba7cd9023';
 
-var _m3uCache     = null;
-var _m3uFetchedAt = 0;
-var CACHE_TTL     = 3600 * 1000; 
-
-// ── 1. M3U İndirme ve Parse ──────────────────────────────────
-function fetchM3u() {
-    var now = Date.now();
-    if (_m3uCache && (now - _m3uFetchedAt) < CACHE_TTL) return Promise.resolve(_m3uCache);
-
-    return fetch(M3U_URL, { headers: { 'User-Agent': 'Mozilla/5.0' } })
-    .then(function(r) { return r.text(); })
-    .then(function(text) {
-        var entries = parseM3u(text);
-        _m3uCache = entries;
-        _m3uFetchedAt = Date.now();
-        return entries;
-    });
-}
-
-function parseM3u(text) {
-    var lines = text.split('\n');
-    var entries = [];
-    for (var i = 0; i < lines.length; i++) {
-        var line = lines[i].trim();
-        if (line.indexOf('#EXTINF') === 0) {
-            var url = (lines[i+1] && lines[i+1].indexOf('#') !== 0) ? lines[i+1].trim() : '';
-            if (url) {
-                var entry = parseExtInf(line, url);
-                if (entry) entries.push(entry);
-            }
-        }
-    }
-    return entries;
-}
-
+// ── 1. Parse Fonksiyonu (Daha Akıllı Ayıklama) ────────────────
 function parseExtInf(meta, url) {
-    // 1. Linkten IMDb ID Çekme (tt000000)
-    var imdbM = url.match(/\b(tt\d+)\b/);
-    
-    // 2. year="..." tagına bak
+    // URL içindeki tt1234567 yapısını her türlü (sonunda / olsa bile) yakalar
+    var imdbMatch = url.match(/(tt\d+)/);
+    var imdbId = imdbMatch ? imdbMatch[1] : null;
+
+    // year="2016" etiketini yakala
     var yearTagM = meta.match(/year="(\d{4})"/);
     var year = yearTagM ? yearTagM[1] : '';
 
-    // 3. Virgülden sonraki Saf İsmi Al
+    // Virgülden sonraki ham ismi al
     var titleRaw = meta.replace(/#EXTINF[^,]*,/, '').trim();
-    
-    // Eğer etiket yoksa parantezden yılı dene
+
+    // Eğer etiket yoksa isimdeki 4 haneli yılı bul (Dangal 2016 gibi)
     if (!year) {
-        var yearM = titleRaw.match(/\((\d{4})\)/);
-        year = yearM ? yearM[1] : '';
+        var yearM = titleRaw.match(/\d{4}/);
+        year = yearM ? yearM[0] : '';
     }
-    
-    // İsmi temizle (Yıl ve ekleri at)
-    var title = titleRaw.replace(/\(\d{4}\)/g, '').split('-')[0].trim();
-    
-    // Logo ve Group bilgileri
-    var logoM = meta.match(/tvg-logo="([^"]+)"/);
-    var groupM = meta.match(/group-title="([^"]+)"/);
+
+    // İsmi temizle: Yılları, parantezleri ve tireleri at
+    // "Dangal-Dram-Aile" -> "Dangal"
+    var title = titleRaw.replace(/\d{4}/g, '')
+                        .replace(/\(.*\)/g, '')
+                        .split('-')[0]
+                        .replace(/[:_]/g, ' ')
+                        .trim();
+
     var authorM = meta.match(/group-author="([^"]+)"/);
+    var groupM = meta.match(/group-title="([^"]+)"/);
 
     return {
         title: title,
         year: year,
         url: url,
-        imdbId: imdbM ? imdbM[1] : null,
-        group: (groupM ? groupM[1] : 'Film'),
-        author: (authorM ? authorM[1] : 'M3U')
+        imdbId: imdbId,
+        author: (authorM ? authorM[1] : 'M3U'),
+        group: (groupM ? groupM[1] : 'Film')
     };
 }
 
-// ── 2. Normalize ve Skorlama ───────────────────────────────
+// ── 2. Esnek Skorlama (Dangal'ı Kurtaran Kısım) ───────────────
+function getMatchScore(entry, tmdb) {
+    var score = 0;
+
+    // 1. ÖNCELİK: IMDb ID Eşleşmesi (Tam isabet)
+    if (entry.imdbId && tmdb.imdbId && entry.imdbId === tmdb.imdbId) {
+        return 1000; 
+    }
+
+    // 2. ÖNCELİK: İsim Benzerliği
+    var et = normalize(entry.title);
+    var qt = normalize(tmdb.titleTr);
+    var qe = normalize(tmdb.titleEn);
+
+    // İsim birebir aynı mı veya biri diğerini kapsıyor mu? (Dangal vs Dangal)
+    if (et === qt || et === qe) {
+        score += 70; // Birebir isim eşleşmesi
+    } else if (et.length > 3 && (qt.includes(et) || qe.includes(et))) {
+        score += 40; // Kısmi isim eşleşmesi (Dangal-Dram durumu)
+    }
+
+    // 3. ÖNCELİK: Yıl Kontrolü
+    if (entry.year && tmdb.year) {
+        if (entry.year === tmdb.year) {
+            score += 30; // Yıl da tutuyorsa puan ekle
+        } else {
+            // Yıl var ama yanlışsa (Örn: 2016 yerine 2020), skoru düşür ki yanlış film gelmesin
+            score -= 50;
+        }
+    }
+
+    return score;
+}
+
+// ── 3. Normalize ve Streams ──────────────────────────────────
 function normalize(s) {
     return (s || '').toLowerCase()
         .replace(/[\u0130\u0131]/g, 'i').replace(/[\u00fc]/g, 'u').replace(/[\u00f6]/g, 'o')
         .replace(/[\u015f]/g, 's').replace(/[\u011f]/g, 'g').replace(/[\u00e7]/g, 'c')
         .replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
-}
-
-function getMatchScore(entry, tmdb) {
-    // KRİTİK: İlk Kontrol IMDb ID (Kesin eşleşme)
-    if (entry.imdbId && tmdb.imdbId && entry.imdbId === tmdb.imdbId) return 1000;
-
-    var et = normalize(entry.title);
-    var qt = normalize(tmdb.titleTr);
-    var qe = normalize(tmdb.titleEn);
-
-    // İsim kelime kontrolü
-    var checkWords = function(target, query) {
-        if (!query) return 0;
-        var words = query.split(' ').filter(function(w) { return w.length > 2; });
-        if (words.length === 0) return 0;
-        var foundAll = true;
-        words.forEach(function(w) { if (!target.includes(w)) foundAll = false; });
-        return foundAll ? 50 : 0;
-    };
-
-    var titleScore = Math.max(checkWords(et, qt), checkWords(et, qe));
-    if (titleScore === 0) return 0; 
-
-    // Yıl kontrolü (Tag veya parantezden gelen yıl)
-    if (entry.year && tmdb.year) {
-        if (entry.year !== tmdb.year) return 0; 
-        titleScore += 50;
-    }
-
-    return titleScore;
-}
-
-// ── 3. TMDB & GetStreams ─────────────────────────────────────
-function fetchTmdbInfo(tmdbId, mediaType) {
-    var type = (mediaType === 'tv') ? 'tv' : 'movie';
-    return fetch('https://api.themoviedb.org/3/' + type + '/' + tmdbId + '?api_key=' + TMDB_API_KEY + '&language=tr-TR&append_to_response=external_ids')
-    .then(function(r) { return r.json(); })
-    .then(function(d) {
-        return {
-            titleTr: d.title || d.name || '',
-            titleEn: d.original_title || d.original_name || '',
-            year: (d.release_date || d.first_air_date || '').slice(0, 4),
-            imdbId: d.external_ids ? d.external_ids.imdb_id : null
-        };
-    });
 }
 
 function getStreams(tmdbId, mediaType) {
@@ -137,30 +96,25 @@ function getStreams(tmdbId, mediaType) {
             var matches = [];
             entries.forEach(function(e) {
                 var score = getMatchScore(e, tmdb);
-                // Skoru yüksek olan tüm kaynakları kabul et
+                // Barajı 40 puana çektik: ID olanlar veya ismi uyanlar girebilir
                 if (score >= 40) matches.push({ entry: e, score: score });
             });
 
-            // Skorlara göre sırala (IMDb olanlar en üstte)
+            // Skorlara göre sırala
             matches.sort(function(a, b) { return b.score - a.score; });
             
-            // İlk 5 eşleşmeyi (linki) göster
-            var streams = matches.slice(0, 5).map(function(m) {
+            // Tüm geçerli linkleri (ilk 10'a kadar) göster
+            return matches.slice(0, 10).map(function(m) {
                 var isVidmody = m.entry.url.includes('vidmody.com');
-                
                 return {
                     url: m.entry.url,
                     name: m.entry.title + ' (' + (m.entry.year || tmdb.year) + ')',
-                    title: m.entry.author + ' - ' + m.entry.group, // Hangi kaynaktan geldiği burada yazar
+                    title: m.entry.author + ' [' + m.entry.group + ']',
                     quality: '1080p',
                     headers: isVidmody ? { 'Referer': 'https://vidmody.com/' } : {}
                 };
             });
-
-            return streams;
         });
     })
     .catch(function() { return []; });
 }
-
-if (typeof module !== 'undefined') module.exports = { getStreams };
