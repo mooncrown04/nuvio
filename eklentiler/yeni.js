@@ -1,6 +1,6 @@
 var M3U_URL      = 'https://raw.githubusercontent.com/mooncrown04/m3ubirlestir/refs/heads/main/birlesik_sinema.m3u';
 var TMDB_API_KEY = '500330721680edb6d5f7f12ba7cd9023';
-var VERSION      = "4.7.1-LIGHT";
+var VERSION      = "4.8.0-ULTRA_SPEED";
 
 function normalize(s) {
     if (!s) return '';
@@ -17,7 +17,7 @@ async function getStreams(tmdbId, mediaType) {
     if (mediaType === 'tv') return [];
 
     try {
-        // IMDB_ID isteği kaldırıldı, sadece temel film bilgileri alınıyor
+        // TMDB Verisini Çek
         const tmdbRes = await fetch(`https://api.themoviedb.org/3/movie/${tmdbId}?api_key=${TMDB_API_KEY}&language=tr-TR`);
         const d = await tmdbRes.json();
         
@@ -25,55 +25,59 @@ async function getStreams(tmdbId, mediaType) {
         const targetEn = normalize(d.original_title);
         const targetYear = (d.release_date || '').slice(0, 4);
 
+        // Dev M3U Dosyasını Çek
         const m3uRes = await fetch(M3U_URL);
         const text = await m3uRes.text();
-        const lines = text.split('\n');
+        
         const results = [];
+        
+        /** * REGEX AÇIKLAMASI: 
+         * Büyük dosyalarda split('\n') yerine bu yöntem kullanılır.
+         * #EXTINF satırını ve altındaki linki bir bütün olarak yakalar.
+         */
+        const entryRegex = /#EXTINF:.*?,(.*?)\n(http[^\s]+)/g;
+        let match;
 
-        for (let i = 0; i < lines.length; i++) {
-            const line = lines[i];
-            if (!line || !line.includes('#EXTINF')) continue;
-
-            const lastComma = line.lastIndexOf(',');
-            const rawName = lastComma !== -1 ? line.substring(lastComma + 1).trim() : "";
+        while ((match = entryRegex.exec(text)) !== null) {
+            const rawName = match[1].trim();
+            const url = match[2].trim();
             
-            const nameParts = rawName.split(/[:\-\(\)]/); 
+            // "Dangal" gibi isimleri normalize et
+            const cleanName = normalize(rawName);
+            
+            // Eşleşme Kontrolü
             let isMatch = false;
-
-            for (let part of nameParts) {
-                const cleanPart = normalize(part);
-                if (cleanPart !== "" && (cleanPart === targetTr || cleanPart === targetEn || cleanPart.includes(targetTr))) {
-                    isMatch = true;
-                    break;
-                }
+            // TMDB TR başlığı, EN başlığı veya dosyadaki ismin TMDB başlığını içermesi durumu
+            if (cleanName !== "" && (
+                cleanName === targetTr || 
+                cleanName === targetEn || 
+                cleanName.includes(targetTr) ||
+                (targetEn !== "" && cleanName.includes(targetEn))
+            )) {
+                isMatch = true;
             }
 
             if (isMatch) {
-                let url = "";
-                if (line.includes('http')) {
-                    url = "http" + line.split('http')[1].split(/\s+/)[0];
-                } else if (lines[i+1] && lines[i+1].trim().startsWith('http')) {
-                    url = lines[i+1].trim();
-                }
+                let score = 90;
+                // Yıl kontrolü (Ham satırda veya linkte yıl geçiyorsa puanı artır)
+                if (targetYear && (match[0].includes(targetYear))) score = 95;
 
-                if (url) {
-                    // Puanlama mantığı: Yıl eşleşirse 95, sadece isim eşleşirse 90
-                    let score = 90;
-                    if (targetYear && line.includes(targetYear)) score = 95;
-
-                    console.error(`[V${VERSION}] EŞLEŞTİ! -> ${rawName}`);
-                    results.push({
-                        url: url,
-                        name: rawName,
-                        title: `[M3U] ${rawName}`,
-                        quality: "1080p",
-                        score: score
-                    });
-                }
+                console.error(`[V${VERSION}] EŞLEŞTİ! -> ${rawName}`);
+                results.push({
+                    url: url,
+                    name: rawName,
+                    title: `[M3U] ${rawName}`,
+                    quality: "1080p",
+                    score: score
+                });
             }
         }
+
+        // Skorlara göre sırala ve döndür
         return results.sort((a, b) => b.score - a.score);
+
     } catch (e) {
+        console.error(`[V${VERSION}] HATA:`, e);
         return [];
     }
 }
