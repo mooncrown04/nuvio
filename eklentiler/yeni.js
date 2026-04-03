@@ -6,8 +6,7 @@ function normalize(s) {
     return s.toLowerCase()
         .replace(/[\u0130\u0131]/g, 'i').replace(/[\u00fc]/g, 'u').replace(/[\u00f6]/g, 'o')
         .replace(/[\u015f]/g, 's').replace(/[\u011f]/g, 'g').replace(/[\u00e7]/g, 'c')
-        .replace(/[^a-z0-9\s]/g, '') 
-        .replace(/\s+/g, ' ')
+        .replace(/[^a-z0-9]/g, '') // En agresif temizlik: Sadece harf ve rakam
         .trim();
 }
 
@@ -22,7 +21,7 @@ async function getStreams(tmdbId, mediaType) {
         const qEn = normalize(d.original_title);
         const year = (d.release_date || '').slice(0, 4);
 
-        console.error("DEBUG: ARANAN -> " + d.title + " (" + year + ") ID: " + tmdbId);
+        console.error("DEBUG: ARANAN -> " + d.title + " ID: " + tmdbId);
 
         const m3uRes = await fetch(M3U_URL);
         const text = await m3uRes.text();
@@ -33,39 +32,34 @@ async function getStreams(tmdbId, mediaType) {
             const line = lines[i];
             if (line && line.includes('#EXTINF')) {
                 const url = lines[i+1] ? lines[i+1].trim() : '';
-                if (!url || url.startsWith('#')) continue;
+                if (!url || !url.startsWith('http')) continue;
 
-                const lastCommaIndex = line.lastIndexOf(',');
-                if (lastCommaIndex === -1) continue;
+                // Satır içindeki ID kontrolü (Örn: tmdb-id="360814")
+                const hasIdMatch = line.includes(tmdbId.toString());
                 
-                const m3uFullName = line.substring(lastCommaIndex + 1).trim();
+                const lastCommaIndex = line.lastIndexOf(',');
+                const m3uFullName = lastCommaIndex !== -1 ? line.substring(lastCommaIndex + 1).trim() : "";
                 const m3uNameClean = normalize(m3uFullName);
 
                 let score = 0;
 
-                // 1. KRİTİK KONTROL: ID EŞLEŞMESİ (Eğer M3U içinde tmdb-id varsa direkt 100 puan)
-                if (line.includes(`tmdb-id="${tmdbId}"`) || line.includes(`tmdbid="${tmdbId}"`)) {
-                    score = 100;
-                } 
-                // 2. TAM İSİM EŞLEŞMESİ (Birebir aynıysa 95 puan)
-                else if (m3uNameClean === qTr || m3uNameClean === qEn) {
-                    score = 95;
-                }
-                // 3. KISMİ EŞLEŞME (İsim geçiyorsa)
-                else if (m3uNameClean.includes(qTr) || (qEn && m3uNameClean.includes(qEn))) {
-                    score = 70;
-                    // Yıl varsa puanı yükselt (70 + 20 = 90)
+                if (hasIdMatch) {
+                    score = 100; // ID eşleşmesi varsa rakipsizdir
+                } else if (m3uNameClean === qTr || m3uNameClean === qEn) {
+                    score = 95; // İsim birebir (temizlenmiş haliyle) aynı
+                } else if (m3uNameClean.includes(qTr) || (qEn && m3uNameClean.includes(qEn))) {
+                    score = 70; // İsim bir şekilde içinde geçiyor
                     if (year && m3uFullName.includes(year)) {
-                        score += 20;
+                        score += 20; // Yıl da varsa bonus
                     }
                 }
 
-                // Skor 70 ve üzeriyse listeye ekle (Yani isim geçmesi yeterli)
-                if (score >= 70) {
+                // EĞER SKOR VARSA (ID eşleştiyse veya isim geçiyorsa) EKLE
+                if (score > 0) {
                     results.push({
                         url: url,
                         name: m3uFullName,
-                        title: "M3U Linki [Skor: " + score + "]",
+                        title: "M3U [" + score + "]",
                         quality: "1080p",
                         score: score
                     });
@@ -73,8 +67,8 @@ async function getStreams(tmdbId, mediaType) {
             }
         }
 
-        // Skorları büyükten küçüğe sırala
-        return results.sort((a, b) => b.score - a.score).slice(0, 15);
+        // Skorlara göre diz, en iyileri döndür
+        return results.sort((a, b) => b.score - a.score);
 
     } catch (e) {
         console.error("DEBUG: HATA -> " + e.message);
