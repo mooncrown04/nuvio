@@ -1,58 +1,63 @@
 var TMDB_API_KEY = '500330721680edb6d5f7f12ba7cd9023';
-var VERSION      = "6.1.0-PURE-GEN"; // Sürüm güncellendi
+var VERSION      = "6.2.0-PURE-DEBUG";
 
 async function getStreams(tmdbId, mediaType) {
-    // TV şovlarını (dizileri) engellemek istersen bu satır kalabilir
     if (mediaType === 'tv') return [];
 
+    console.log(`[V${VERSION}] İstek Başlatıldı: TMDB ID -> ${tmdbId}`);
+
     try {
-        // 1. TMDB'den IMDb ID'sini ve film adını alıyoruz
         const tmdbRes = await fetch(`https://api.themoviedb.org/3/movie/${tmdbId}?api_key=${TMDB_API_KEY}&language=tr-TR&append_to_response=external_ids`);
-        const d = await tmdbRes.json();
         
+        if (!tmdbRes.ok) {
+            throw new Error(`TMDB API Hatası: ${tmdbRes.status}`);
+        }
+
+        const d = await tmdbRes.json();
         const imdbId = d.external_ids ? d.external_ids.imdb_id : null;
         const movieTitle = d.title || "Bilinmeyen Film";
         const releaseYear = (d.release_date || '').slice(0, 4);
 
-        const results = [];
-
-        // 2. Eğer IMDb ID mevcutsa, Vidmody gibi çalışan diğer linkleri oluştur
-        if (imdbId && imdbId.startsWith('tt')) {
-            
-            // Alternatif 1: Vidsrc.to
-            results.push({
-                url: `https://vidsrc.to/embed/movie/${imdbId}`,
-                name: movieTitle,
-                title: `[VidSrc] ${movieTitle} (${releaseYear})`,
-                quality: "1080p",
-                score: 100
-            });
-
-            // Alternatif 2: Multiembed.mov
-            results.push({
-                url: `https://multiembed.mov/?video_id=${imdbId}`,
-                name: movieTitle,
-                title: `[MultiEmbed] ${movieTitle} (${releaseYear})`,
-                quality: "1080p",
-                score: 95
-            });
-
-            // İstersen orijinal Vidmody linkini de burada tutabilirsin:
-            /*
-            results.push({
-                url: `https://vidmody.com/vs/${imdbId}`,
-                name: movieTitle,
-                title: `[Vidmody] ${movieTitle} (${releaseYear})`,
-                quality: "1080p",
-                score: 90
-            });
-            */
+        if (!imdbId) {
+            console.error(`[V${VERSION}] HATA: Bu film için IMDb ID bulunamadı!`);
+            return [];
         }
 
+        const results = [];
+
+        // --- SOURCE 1: VidSrc ---
+        // Reklam korumasını bir nebze aşmak için 'referer' bilgisi gerekebilir
+        results.push({
+            url: `https://vidsrc.to/embed/movie/${imdbId}`,
+            name: "VidSrc (Global)",
+            title: `[VidSrc] ${movieTitle}`,
+            quality: "1080p",
+            score: 100,
+            headers: {
+                "Referer": "https://vidsrc.to/",
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36"
+            }
+        });
+
+        // --- SOURCE 2: MultiEmbed ---
+        results.push({
+            url: `https://multiembed.mov/?video_id=${imdbId}`,
+            name: "MultiEmbed",
+            title: `[Multi] ${movieTitle}`,
+            quality: "1080p",
+            score: 90,
+            headers: {
+                "Referer": "https://multiembed.mov/",
+                "Origin": "https://multiembed.mov"
+            }
+        });
+
+        console.log(`[V${VERSION}] Başarılı: ${results.length} kaynak oluşturuldu.`);
         return results;
 
     } catch (e) {
-        console.error(`[V${VERSION}] HATA: ${e.message}`);
+        // Detaylı hata logu: Hangi aşamada patladığını görmeni sağlar
+        console.error(`[V${VERSION}] KRİTİK HATA: ${e.stack || e.message}`);
         return [];
     }
 }
