@@ -1,69 +1,71 @@
-// Global değişkenleri tanımlayalım (bazı ortamlar bunları en üstte bekler)
 var TMDB_API_KEY = '500330721680edb6d5f7f12ba7cd9023';
-var VERSION      = "6.4.0-FINAL-DEBUG";
+var VERSION      = "6.6.0-PURE-ERROR-LOG";
 
 async function getStreams(tmdbId, mediaType) {
-    // Uygulama bu fonksiyona girdiğinde ilk bu logu görmelisin
-    console.log(`[DEBUG] getStreams tetiklendi. ID: ${tmdbId}, Tip: ${mediaType}`);
+    // Log yerine direkt ERROR basarak görünürlüğü artırıyoruz
+    console.error(`[DEBUG-V${VERSION}] getStreams TETİKLENDİ | ID: ${tmdbId} | Tip: ${mediaType}`);
 
     if (mediaType === 'tv') {
-        console.log("[DEBUG] Media tipi TV, desteklenmiyor.");
+        console.error(`[DEBUG-V${VERSION}] İPTAL: TV şovları desteklenmiyor.`);
         return [];
     }
 
     try {
-        const url = `https://api.themoviedb.org/3/movie/${tmdbId}?api_key=${TMDB_API_KEY}&language=tr-TR&append_to_response=external_ids`;
-        console.log(`[DEBUG] TMDB isteği atılıyor: ${url}`);
+        const tmdbUrl = `https://api.themoviedb.org/3/movie/${tmdbId}?api_key=${TMDB_API_KEY}&language=tr-TR&append_to_response=external_ids`;
+        console.error(`[DEBUG-V${VERSION}] TMDB İSTEĞİ: ${tmdbUrl}`);
 
-        const tmdbRes = await fetch(url);
+        const tmdbRes = await fetch(tmdbUrl);
+        
         if (!tmdbRes.ok) {
-            console.error(`[ERROR] TMDB Yanıt Vermedi: ${tmdbRes.status}`);
+            console.error(`[ERROR-V${VERSION}] TMDB HATASI! Statu: ${tmdbRes.status}`);
             return [];
         }
 
         const d = await tmdbRes.json();
         const imdbId = d.external_ids ? d.external_ids.imdb_id : null;
         const movieTitle = d.title || "Film";
+        const releaseYear = (d.release_date || '').slice(0, 4);
 
         if (!imdbId) {
-            console.error("[ERROR] IMDb ID bulunamadı!");
+            console.error(`[ERROR-V${VERSION}] IMDb ID BULUNAMADI! (TMDB ID: ${tmdbId})`);
             return [];
         }
 
-        console.log(`[DEBUG] IMDb ID bulundu: ${imdbId}`);
+        console.error(`[DEBUG-V${VERSION}] IMDb ID BULUNDU: ${imdbId} - Başlık: ${movieTitle}`);
 
-        const results = [
-            {
-                url: `https://vidsrc.to/embed/movie/${imdbId}`,
-                name: "VidSrc",
-                title: `[VidSrc] ${movieTitle}`,
-                quality: "1080p",
-                score: 100
-            },
-            {
-                url: `https://multiembed.mov/?video_id=${imdbId}`,
-                name: "MultiEmbed",
-                title: `[Multi] ${movieTitle}`,
-                quality: "1080p",
-                score: 90
-            }
-        ];
+        const results = [];
 
-        console.log(`[DEBUG] Başarılı! ${results.length} kaynak gönderiliyor.`);
+        // --- SOURCE 1: VidSrc ---
+        results.push({
+            url: `https://vidsrc.to/embed/movie/${imdbId}`,
+            name: "VidSrc",
+            title: `[VidSrc] ${movieTitle} (${releaseYear})`,
+            quality: "1080p",
+            score: 100
+        });
+
+        // --- SOURCE 2: MultiEmbed ---
+        results.push({
+            url: `https://multiembed.mov/?video_id=${imdbId}`,
+            name: "MultiEmbed",
+            title: `[Multi] ${movieTitle} (${releaseYear})`,
+            quality: "1080p",
+            score: 95
+        });
+
+        console.error(`[DEBUG-V${VERSION}] BAŞARILI: ${results.length} kaynak listeye eklendi.`);
         return results;
 
     } catch (e) {
-        // Hata logu burada: e.stack tüm hata yolunu gösterir
-        console.error(`[CRITICAL] getStreams içinde hata oluştu: ${e.message}`);
-        console.error(e.stack);
+        // Kritik hataları stack trace ile birlikte basıyoruz
+        console.error(`[CRITICAL-ERROR-V${VERSION}] HATA MESAJI: ${e.message}`);
+        console.error(`[CRITICAL-ERROR-V${VERSION}] HATA YOLU: ${e.stack}`);
         return [];
     }
 }
 
-// --- KRİTİK KISIM: Fonksiyonu her türlü dışa aktar ---
+// Uygulamanın fonksiyonu bulamaması riskine karşı her iki yöntemi de kullanıyoruz
 if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { getStreams }; 
-} 
-
-// Bazı Android ortamları globalThis veya doğrudan fonksiyon adını bekler
+    module.exports = { getStreams };
+}
 globalThis.getStreams = getStreams;
