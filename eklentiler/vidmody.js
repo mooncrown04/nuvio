@@ -1,5 +1,5 @@
 var TMDB_API_KEY = '500330721680edb6d5f7f12ba7cd9023';
-var VERSION      = "6.0.0-PURE-GEN";
+var VERSION      = "6.1.0-PURE-GEN"; // Sürüm güncellendi
 
 async function getStreams(tmdbId, mediaType) {
     // TV şovlarını (dizileri) engellemek istersen bu satır kalabilir
@@ -16,18 +16,39 @@ async function getStreams(tmdbId, mediaType) {
 
         const results = [];
 
-        // 2. Eğer IMDb ID mevcutsa, senin istediğin linki oluştur
+        // 2. Eğer IMDb ID mevcutsa, Vidmody gibi çalışan diğer linkleri oluştur
         if (imdbId && imdbId.startsWith('tt')) {
+            
+            // Alternatif 1: Vidsrc.to
             results.push({
-                url: `https://vidmody.com/vs/${imdbId}`, // İSTEDİĞİN ÇIKTI FORMATI
+                url: `https://vidsrc.to/embed/movie/${imdbId}`,
                 name: movieTitle,
-                title: `[Vidmody] ${movieTitle} (${releaseYear})`,
+                title: `[VidSrc] ${movieTitle} (${releaseYear})`,
                 quality: "1080p",
                 score: 100
             });
+
+            // Alternatif 2: Multiembed.mov
+            results.push({
+                url: `https://multiembed.mov/?video_id=${imdbId}`,
+                name: movieTitle,
+                title: `[MultiEmbed] ${movieTitle} (${releaseYear})`,
+                quality: "1080p",
+                score: 95
+            });
+
+            // İstersen orijinal Vidmody linkini de burada tutabilirsin:
+            /*
+            results.push({
+                url: `https://vidmody.com/vs/${imdbId}`,
+                name: movieTitle,
+                title: `[Vidmody] ${movieTitle} (${releaseYear})`,
+                quality: "1080p",
+                score: 90
+            });
+            */
         }
 
-        // Sadece oluşturulan bu linki döndürür, M3U ile uğraşmaz
         return results;
 
     } catch (e) {
