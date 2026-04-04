@@ -9,7 +9,7 @@
       "logo": "📺",
       "version": "1.0.1",
       "author": "mooncrown",
-      "supportedTypes": ["movie"],
+      "supportedTypes": ["tv"],
       "filename": "vidmodydizi.js",
       "enabled": true,
       "formats": ["mp4", "mkv", "hls", "m3u8"],
