@@ -1,14 +1,13 @@
 /**
- * Nuvio Sinema Alfabetik Motoru - V11.0.0
- * Özellik: Dinamik klasör yönlendirme ve nokta atışı eşleşme.
+ * Nuvio Sinema Alfabetik Motoru - V11.1.0
+ * Özellik: group-author'dan kaynak ayıklama ve dinamik başlık yapılandırması.
  */
 
-// GitHub kullanıcı adın ve klasör yolun
 const BASE_DIR = 'https://raw.githubusercontent.com/mooncrown04/m3ubirlestir/main/nuvio_parcalari/';
 const TMDB_API_KEY = '500330721680edb6d5f7f12ba7cd9023';
-const VERSION = "11.0.0-FOLDERED";
+const VERSION = "11.1.0-SOURCE_TAG";
 
-let cachedM3U = {}; // Klasördeki her harf dosyası için ayrı cache
+let cachedM3U = {}; 
 let lastFetch = {};
 
 function ultraClean(s) {
@@ -19,9 +18,6 @@ function ultraClean(s) {
         .replace(/[^a-z0-9]/g, '').trim();
 }
 
-/**
- * İsmin ilk harfine göre doğru M3U dosyasının URL'sini oluşturur.
- */
 function getTargetM3U(cleanTitle) {
     if (!cleanTitle) return BASE_DIR + 'nuvio_diger.m3u';
     const firstChar = cleanTitle.charAt(0);
@@ -45,11 +41,10 @@ async function getStreams(tmdbId, mediaType) {
         const targetEn = ultraClean(d.original_title);
         const targetYear = (d.release_date || '').slice(0, 4);
 
-        // 2. Hedef Dosyayı Belirle (Örn: nuvio_d.m3u)
+        // 2. Hedef Dosyayı Belirle
         const selectedURL = getTargetM3U(targetTr);
-        console.error(`[V${VERSION}] ARA: ${d.title} | KAYNAK: ${selectedURL.split('/').pop()}`);
 
-        // 3. Cache Kontrolü (5 dakika)
+        // 3. Cache Kontrolü
         const now = Date.now();
         if (!cachedM3U[selectedURL] || (now - (lastFetch[selectedURL] || 0) > 300000)) {
             const m3uRes = await fetch(selectedURL);
@@ -58,7 +53,6 @@ async function getStreams(tmdbId, mediaType) {
                 cachedM3U[selectedURL] = rawText.replace(/\r/g, '').replace(/^\uFEFF/, '');
                 lastFetch[selectedURL] = now;
             } else {
-                console.error(`[V${VERSION}] Dosya bulunamadı: ${selectedURL}`);
                 return [];
             }
         }
@@ -73,9 +67,14 @@ async function getStreams(tmdbId, mediaType) {
                 let nextLine = lines[i + 1] ? lines[i + 1].trim() : "";
                 if (nextLine.startsWith("http")) {
                     
+                    // --- KAYNAK (AUTHOR) AYIKLAMA ---
+                    // group-author="...[İsim]" formatından İsim kısmını alır
+                    let authorMatch = line.match(/group-author=".*\[(.*)\]"/);
+                    let sourceName = authorMatch ? authorMatch[1] : "M3U";
+
                     let parts = line.split(',');
                     let rawName = parts[parts.length - 1].trim();
-                    let cleanM3U = ultraClean(rawName.split('(')[0].split('-')[0]); // Sadece isim kısmını al
+                    let cleanM3U = ultraClean(rawName.split('(')[0].split('-')[0]); 
                     
                     // Yıl tespiti
                     let yearMatch = line.match(/year="(\d{4})"/);
@@ -84,7 +83,7 @@ async function getStreams(tmdbId, mediaType) {
                     let isMatch = false;
                     let score = 0;
 
-                    // IMDb ID Eşleşmesi (En Kesin)
+                    // IMDb ID Eşleşmesi
                     if (targetImdb && nextLine.includes(targetImdb)) {
                         isMatch = true;
                         score = 120;
@@ -96,7 +95,7 @@ async function getStreams(tmdbId, mediaType) {
                             score = (m3uYear === targetYear) ? 100 : 90;
                         }
                     }
-                    // Kısmi İsim Eşleşmesi (Daha esnek)
+                    // Kısmi İsim Eşleşmesi
                     else if (cleanM3U.includes(targetTr) || (targetEn && cleanM3U.includes(targetEn))) {
                         if (m3uYear === targetYear) {
                             isMatch = true;
@@ -108,8 +107,9 @@ async function getStreams(tmdbId, mediaType) {
                         results.push({
                             url: nextLine,
                             name: rawName,
-                            title: `[NUVIO] ${rawName} ${m3uYear ? '('+m3uYear+')' : ''}`,
-                            quality: "1080p",
+                            // GÖRÜNÜM: [NUVIO] Film Adı | Kaynak (Yıl)
+                            title: `[NUVIO] ${rawName} | ${sourceName} ${m3uYear ? '('+m3uYear+')' : ''}`,
+                            quality: "", // Gerçek olmayan kalite bilgisi temizlendi
                             score: score
                         });
                     }
@@ -117,7 +117,6 @@ async function getStreams(tmdbId, mediaType) {
             }
         }
         
-        // Sonuçları puana göre diz
         return results.sort((a, b) => b.score - a.score);
 
     } catch (e) {
