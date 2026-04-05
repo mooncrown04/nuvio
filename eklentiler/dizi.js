@@ -1,7 +1,7 @@
 /**
- * Nuvio Dizi Motoru - V4.0.0 (High Speed Edition)
- * SORUN: Veri çok olduğu için alt satırlara ulaşamıyor.
- * ÇÖZÜM: Ağır döngü yerine hızlı string tarama ve hafıza yönetimi.
+ * Nuvio Dizi Motoru - V5.0.0
+ * STRATEJİ: Harf + Sezon bazlı nokta atışı dosya çekimi.
+ * AVANTAJ: Maksimum hız, minimum RAM kullanımı.
  */
 
 const DIZI_BASE_URL = 'https://raw.githubusercontent.com/mooncrown04/m3ubirlestir/main/nuvio_dizi_parcalari/';
@@ -19,39 +19,50 @@ async function getStreams(tmdbId, type, season, episode) {
     if (type !== 'tv') return [];
 
     try {
-        // 1. TMDB Bilgilerini Al
+        // 1. TMDB'den dizi adını öğren
         const tmdbRes = await fetch(`https://api.themoviedb.org/3/tv/${tmdbId}?api_key=${TMDB_API_KEY}&language=tr-TR`);
         const d = await tmdbRes.json();
         
         const targetTr = ultraClean(d.name);
         const targetEn = ultraClean(d.original_name);
+        // Aranan Bölüm Kodu (Örn: s01e01)
         const targetSxxExx = `s${season.toString().padStart(2, '0')}e${episode.toString().padStart(2, '0')}`;
         
-        console.error(`!!! [NUVIO] TARANIYOR: ${targetTr} - ${targetSxxExx}`);
+        // 2. Nokta Atışı Dosya Belirleme
+        // Python artık dosyaları dizi_harf_sSezon.m3u formatında kaydediyor.
+        const firstChar = targetTr.charAt(0);
+        let harfGrubu = (/[a-z]/.test(firstChar)) ? firstChar : (/[0-9]/.test(firstChar) ? '0_9_rakam' : 'diger');
+        
+        const fileName = `dizi_${harfGrubu}_s${season}.m3u`;
+        
+        console.error(`!!! [NUVIO] HEDEF DOSYA: ${fileName} | ARANAN: ${targetSxxExx}`);
 
-        // 2. M3U Dosyasını Çek (Cache Kırıcı ile)
-        const fileName = `dizi_${targetTr.charAt(0)}.m3u`;
+        // 3. Dosyayı Çek
         const m3uRes = await fetch(`${DIZI_BASE_URL}${fileName}?v=${Date.now()}`);
-        const content = await m3uRes.text();
+        
+        // Eğer o sezon dosyası GitHub'da yoksa (404), boş dön
+        if (!m3uRes.ok) {
+            console.error(`!!! [NUVIO] DOSYA BULUNAMADI: ${fileName}`);
+            return [];
+        }
 
+        const content = await m3uRes.text();
         const results = [];
-        // Satır satır bölmek yerine blok blok tarayalım (Daha hızlıdır)
         const blocks = content.split('#EXTINF');
 
-        // İlk bloğu (header) atla
         for (let i = 1; i < blocks.length; i++) {
             const block = blocks[i];
-            
-            // Performans için: Önce Sezon/Bölüm var mı diye bak (En hızlı filtre)
             const lowerBlock = block.toLowerCase();
+
+            // Önce bölüm kodu var mı?
             if (!lowerBlock.includes(targetSxxExx)) continue;
 
-            // Sezon/Bölüm varsa, isim kontrolü yap
+            // Sonra isim uyuşuyor mu?
             const cleanBlock = ultraClean(block);
             if (cleanBlock.includes(targetTr) || (targetEn && cleanBlock.includes(targetEn))) {
                 
                 const lines = block.split('\n');
-                const infoLine = lines[0]; // Virgüllü kısım buradadır
+                const infoLine = lines[0]; 
                 const urlLine = lines.find(l => l.trim().startsWith('http'));
 
                 if (urlLine) {
@@ -60,20 +71,21 @@ async function getStreams(tmdbId, type, season, episode) {
                         url: urlLine.trim(),
                         name: infoLine.split(',').pop().trim(),
                         title: `[NUVIO] ${authorMatch ? authorMatch[1] : "KAYNAK"}`,
-                        quality: "HD"
+                        quality: authorMatch ? authorMatch[1] : "HD"
                     });
                 }
             }
         }
 
-        console.error(`!!! [NUVIO] ISLEM BITTI. TOPLAM: ${results.length}`);
+        console.error(`!!! [NUVIO] ISLEM TAMAMLANDI. BULUNAN: ${results.length}`);
         return results;
 
     } catch (err) {
-        console.error(`!!! [NUVIO_ERROR] ${err.message}`);
+        console.error(`!!! [NUVIO_CRITICAL] ${err.message}`);
         return [];
     }
 }
 
+// DIŞA AKTARMA
 if (typeof module !== 'undefined') module.exports = { getStreams };
 if (typeof globalThis !== 'undefined') globalThis.getStreams = getStreams;
