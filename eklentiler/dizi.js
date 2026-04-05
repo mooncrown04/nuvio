@@ -1,6 +1,6 @@
 /**
- * Nuvio Dizi Motoru - V1.0.0
- * Özellik: Harf bazlı klasörleme ve SXXEXX (Sezon/Bölüm) nokta atışı.
+ * Nuvio Dizi Motoru - V1.2.0 (DEBUG MODE)
+ * Özellik: Detaylı hata takibi ve adım adım loglama.
  */
 
 const DIZI_BASE_URL = 'https://raw.githubusercontent.com/mooncrown04/m3ubirlestir/main/nuvio_dizi_parcalari/';
@@ -14,75 +14,77 @@ function ultraClean(s) {
         .replace(/[^a-z0-9]/g, '').trim();
 }
 
-/**
- * İsmin ilk harfine göre doğru Dizi M3U dosyasını seçer.
- */
-function getTargetDiziM3U(cleanTitle) {
-    if (!cleanTitle) return DIZI_BASE_URL + 'dizi_diger.m3u';
-    const firstChar = cleanTitle.charAt(0);
-    
-    if (/[0-9]/.test(firstChar)) return DIZI_BASE_URL + 'dizi_0_9_rakam.m3u';
-    if (/[a-z]/.test(firstChar)) return DIZI_BASE_URL + `dizi_${firstChar}.m3u`;
-    
-    return DIZI_BASE_URL + 'dizi_diger.m3u';
-}
-
 async function getDiziStreams(tmdbId, season, episode) {
+    console.log(`[NUVIO DEBUG] İşlem Başladı: ID:${tmdbId} S:${season} E:${episode}`);
+
     try {
-        // 1. TMDb'den Dizinin Türkçe Adını Al
+        // 1. TMDB Verisi Çekme
         const tmdbRes = await fetch(`https://api.themoviedb.org/3/tv/${tmdbId}?api_key=${TMDB_API_KEY}&language=tr-TR`);
-        const d = await tmdbRes.json();
+        if (!tmdbRes.ok) throw new Error(`TMDB Bağlantı Hatası! Kod: ${tmdbRes.status}`);
         
-        const targetTitle = ultraClean(d.name); 
-        // Sezon ve Bölümü S01E01 formatına getir (Örn: Sezon 1 Bölüm 5 -> s01e05)
+        const d = await tmdbRes.json();
+        const targetTr = ultraClean(d.name);
+        const targetEn = ultraClean(d.original_name);
         const targetSxxExx = `s${season.toString().padStart(2, '0')}e${episode.toString().padStart(2, '0')}`;
 
-        // 2. Doğru Harf Dosyasını Belirle
-        const selectedURL = getTargetDiziM3U(targetTitle);
+        console.log(`[NUVIO DEBUG] TMDB Bilgisi: TR:${targetTr} | EN:${targetEn} | Aranan:${targetSxxExx}`);
 
-        // 3. M3U Dosyasını Oku
+        // 2. Harf Dosyası Belirleme
+        const firstChar = targetTr.charAt(0);
+        let fileName = (/[a-z]/.test(firstChar)) ? `dizi_${firstChar}.m3u` : (/[0-9]/.test(firstChar) ? 'dizi_0_9_rakam.m3u' : 'dizi_diger.m3u');
+        const selectedURL = DIZI_BASE_URL + fileName;
+
+        console.log(`[NUVIO DEBUG] Hedef Dosya: ${selectedURL}`);
+
+        // 3. M3U İndirme
         const m3uRes = await fetch(selectedURL);
-        if (!m3uRes.ok) return [];
-        const rawText = await m3uRes.text();
-        const lines = rawText.replace(/\r/g, '').split('\n');
-        
-        const results = [];
+        if (!m3uRes.ok) {
+            console.warn(`[NUVIO DEBUG] M3U Dosyası Bulunamadı: ${fileName} (404 veya Bağlantı Sorunu)`);
+            return [];
+        }
 
-        // 4. İçerik Eşleştirme
+        const text = await m3uRes.text();
+        const lines = text.split('\n');
+        console.log(`[NUVIO DEBUG] Dosya İndi. Toplam Satır: ${lines.length}`);
+
+        const results = [];
+        let matchCount = 0;
+
+        // 4. Arama Döngüsü
         for (let i = 0; i < lines.length; i++) {
             let line = lines[i].trim();
             if (line.startsWith("#EXTINF")) {
                 let nextLine = lines[i + 1] ? lines[i + 1].trim() : "";
-                if (nextLine.startsWith("http")) {
-                    
-                    // Kaynak Etiketini (Zerk, MoOnCrOwN vb.) çek
+                if (!nextLine.startsWith("http")) continue;
+
+                let rawName = line.split(',').pop().trim();
+                let cleanLine = ultraClean(rawName);
+
+                // Eşleşme Kontrolü
+                const hasEpisode = cleanLine.includes(targetSxxExx);
+                const hasTitle = cleanLine.includes(targetTr) || (targetEn && cleanLine.includes(targetEn));
+
+                if (hasEpisode && hasTitle) {
+                    matchCount++;
                     let authorMatch = line.match(/group-author="([^"]+)"/);
                     let sourceTag = authorMatch ? authorMatch[1] : "MoOnCrOwN";
 
-                    let parts = line.split(',');
-                    let rawName = parts[parts.length - 1].trim();
-                    let cleanLine = ultraClean(rawName);
-
-                    // KRİTİK EŞLEŞME: Satırda hem dizi adı hem de S01E01 geçiyor mu?
-                    if (cleanLine.includes(targetTitle) && cleanLine.includes(targetSxxExx)) {
-                        results.push({
-                            url: nextLine,
-                            name: rawName,
-                            title: `[NUVIO] ${rawName}`,
-                            quality: sourceTag, // Kaynak ismi sağdaki etiket kutusunda
-                            score: 100
-                        });
-                    }
+                    results.push({
+                        url: nextLine,
+                        name: rawName,
+                        title: `[NUVIO] ${rawName}`,
+                        quality: sourceTag,
+                        score: 100
+                    });
                 }
             }
         }
-        
+
+        console.log(`[NUVIO DEBUG] Arama Bitti. Bulunan Eşleşme: ${matchCount}`);
         return results;
 
-    } catch (e) {
-        console.error("Dizi Motoru Hatası:", e);
+    } catch (error) {
+        console.error(`[NUVIO KRİTİK HATA]: ${error.message}`);
         return [];
     }
 }
-
-if (typeof module !== 'undefined') module.exports = { getDiziStreams };
