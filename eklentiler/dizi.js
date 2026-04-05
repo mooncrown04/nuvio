@@ -1,6 +1,6 @@
 /**
- * Nuvio Dizi Motoru - V1.8.0
- * KRİTİK: Sistem logları log görmediği için TÜM çıktılar console.error ile basılır.
+ * Nuvio Dizi Motoru - V1.9.0
+ * SADECE console.error KULLANIR (Sistem loglarında görünmesi için).
  */
 
 const DIZI_BASE_URL = 'https://raw.githubusercontent.com/mooncrown04/m3ubirlestir/main/nuvio_dizi_parcalari/';
@@ -15,15 +15,21 @@ function ultraClean(s) {
 }
 
 async function getStreams(type, tmdbId, season, episode) {
-    if (type !== 'tv') return [];
+    // 1. TETIKLENME KONTROLÜ
+    console.error(`!!! [NUVIO_ERROR_LOG] 1. FONKSIYON CAGRI ALDI: Type=${type}, ID=${tmdbId}`);
     
-    // Her adımı ERROR olarak basıyoruz ki loglarda görünsün
-    console.error(`!!! [NUVIO_LOG] BASLADI -> ID: ${tmdbId} S:${season} E:${episode}`);
+    if (type !== 'tv') {
+        console.error("!!! [NUVIO_ERROR_LOG] 1a. TIP 'TV' DEGIL, IPTAL.");
+        return [];
+    }
 
     try {
+        // 2. TMDB KONTROLÜ
+        console.error("!!! [NUVIO_ERROR_LOG] 2. TMDB'YE ISTEK ATILIYOR...");
         const tmdbRes = await fetch(`https://api.themoviedb.org/3/tv/${tmdbId}?api_key=${TMDB_API_KEY}&language=tr-TR`);
+        
         if (!tmdbRes.ok) {
-            console.error(`!!! [NUVIO_ERROR] TMDB PATLADI: ${tmdbRes.status}`);
+            console.error(`!!! [NUVIO_ERROR_LOG] 2a. TMDB HATASI! Kod: ${tmdbRes.status}`);
             return [];
         }
         
@@ -32,64 +38,59 @@ async function getStreams(type, tmdbId, season, episode) {
         const targetEn = ultraClean(d.original_name);
         const targetSxxExx = `s${season.toString().padStart(2, '0')}e${episode.toString().padStart(2, '0')}`;
         
-        console.error(`!!! [NUVIO_LOG] ARANAN: ${targetTr} | EN: ${targetEn} | KOD: ${targetSxxExx}`);
+        console.error(`!!! [NUVIO_ERROR_LOG] 3. TMDB OK: ${targetTr} | SXXEXX: ${targetSxxExx}`);
 
+        // 3. DOSYA KONTROLÜ
         const firstChar = targetTr.charAt(0);
         let fileName = (/[a-z]/.test(firstChar)) ? `dizi_${firstChar}.m3u` : (/[0-9]/.test(firstChar) ? 'dizi_0_9_rakam.m3u' : 'dizi_diger.m3u');
         const finalUrl = DIZI_BASE_URL + fileName;
-
-        console.error(`!!! [NUVIO_LOG] DOSYA YOLU: ${finalUrl}`);
+        
+        console.error(`!!! [NUVIO_ERROR_LOG] 4. M3U ISTENIYOR: ${finalUrl}`);
 
         const m3uRes = await fetch(finalUrl);
         if (!m3uRes.ok) {
-            console.error(`!!! [NUVIO_ERROR] M3U INDIRILEMEDI: ${fileName}`);
+            console.error(`!!! [NUVIO_ERROR_LOG] 4a. M3U CEKILEMEDI! Url: ${finalUrl}`);
             return [];
         }
 
         const text = await m3uRes.text();
         const lines = text.split('\n');
-        console.error(`!!! [NUVIO_LOG] M3U SATIR SAYISI: ${lines.length}`);
+        console.error(`!!! [NUVIO_ERROR_LOG] 5. M3U INDİ. SATIR SAYISI: ${lines.length}`);
 
         const results = [];
 
+        // 4. EŞLEŞME DÖNGÜSÜ
         for (let i = 0; i < lines.length; i++) {
             let line = lines[i].trim();
             if (line.startsWith("#EXTINF")) {
                 let nextLine = lines[i + 1] ? lines[i + 1].trim() : "";
                 if (!nextLine.startsWith("http")) continue;
 
-                // Virgülden sonrasını al (Senin temiz formatın)
                 let rawName = line.split(',').pop().trim(); 
                 let cleanRawName = ultraClean(rawName);
 
-                const isTitleMatch = cleanRawName.includes(targetTr) || (targetEn && cleanRawName.includes(targetEn));
-                const isEpMatch = cleanRawName.includes(targetSxxExx);
-
-                if (isTitleMatch && isEpMatch) {
+                if ((cleanRawName.includes(targetTr) || cleanRawName.includes(targetEn)) && cleanRawName.includes(targetSxxExx)) {
                     let authorMatch = line.match(/group-author="([^"]+)"/);
-                    let sourceTag = authorMatch ? authorMatch[1] : "MoOnCrOwN";
-
                     results.push({
                         url: nextLine,
                         name: rawName,
                         title: `[NUVIO] ${rawName}`,
-                        quality: sourceTag,
-                        score: 100
+                        quality: authorMatch ? authorMatch[1] : "MoOnCrOwN"
                     });
                 }
             }
         }
         
-        console.error(`!!! [NUVIO_LOG] BITTI. BULUNAN KAYNAK: ${results.length}`);
+        console.error(`!!! [NUVIO_ERROR_LOG] 6. ISLEM BITTI. SONUC: ${results.length}`);
         return results;
 
     } catch (err) {
-        console.error(`!!! [NUVIO_CRITICAL] CÖKME: ${err.message}`);
-        console.error(`!!! [NUVIO_STACK]: ${err.stack}`);
+        console.error(`!!! [NUVIO_CRITICAL_ERROR] COKME: ${err.message}`);
+        console.error(`!!! [NUVIO_STACK] ${err.stack}`);
         return [];
     }
 }
 
-// --- SISTEM DISA AKTARIM ---
+// DIŞA AKTARMA (STREMIO STANDARTI)
 if (typeof module !== 'undefined') module.exports = { getStreams };
 if (typeof globalThis !== 'undefined') globalThis.getStreams = getStreams;
