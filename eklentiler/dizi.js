@@ -1,7 +1,6 @@
 /**
- * Nuvio Dizi Motoru - V1.7.0 (FULL LOGGING)
- * Özellik: Her adım console.log ve console.error ile takip edilir.
- * Format: Virgülden sonraki "Dizi Adı S01E01" yapısını baz alır.
+ * Nuvio Dizi Motoru - V1.8.0
+ * KRİTİK: Sistem logları log görmediği için TÜM çıktılar console.error ile basılır.
  */
 
 const DIZI_BASE_URL = 'https://raw.githubusercontent.com/mooncrown04/m3ubirlestir/main/nuvio_dizi_parcalari/';
@@ -18,13 +17,13 @@ function ultraClean(s) {
 async function getStreams(type, tmdbId, season, episode) {
     if (type !== 'tv') return [];
     
-    console.log(`[NUVIO START] ID: ${tmdbId} | Sezon: ${season} | Bölüm: ${episode}`);
+    // Her adımı ERROR olarak basıyoruz ki loglarda görünsün
+    console.error(`!!! [NUVIO_LOG] BASLADI -> ID: ${tmdbId} S:${season} E:${episode}`);
 
     try {
-        // 1. TMDB Aşaması
         const tmdbRes = await fetch(`https://api.themoviedb.org/3/tv/${tmdbId}?api_key=${TMDB_API_KEY}&language=tr-TR`);
         if (!tmdbRes.ok) {
-            console.error(`[NUVIO ERROR] TMDB Verisi Alınamadı! Durum: ${tmdbRes.status}`);
+            console.error(`!!! [NUVIO_ERROR] TMDB PATLADI: ${tmdbRes.status}`);
             return [];
         }
         
@@ -33,29 +32,26 @@ async function getStreams(type, tmdbId, season, episode) {
         const targetEn = ultraClean(d.original_name);
         const targetSxxExx = `s${season.toString().padStart(2, '0')}e${episode.toString().padStart(2, '0')}`;
         
-        console.log(`[NUVIO INFO] Aranan Dizi: ${targetTr} (${targetEn}) | Kod: ${targetSxxExx}`);
+        console.error(`!!! [NUVIO_LOG] ARANAN: ${targetTr} | EN: ${targetEn} | KOD: ${targetSxxExx}`);
 
-        // 2. Dosya Seçim Aşaması
         const firstChar = targetTr.charAt(0);
         let fileName = (/[a-z]/.test(firstChar)) ? `dizi_${firstChar}.m3u` : (/[0-9]/.test(firstChar) ? 'dizi_0_9_rakam.m3u' : 'dizi_diger.m3u');
         const finalUrl = DIZI_BASE_URL + fileName;
-        
-        console.log(`[NUVIO FETCH] Hedef Dosya: ${fileName} | URL: ${finalUrl}`);
 
-        // 3. M3U İndirme Aşaması
+        console.error(`!!! [NUVIO_LOG] DOSYA YOLU: ${finalUrl}`);
+
         const m3uRes = await fetch(finalUrl);
         if (!m3uRes.ok) {
-            console.error(`[NUVIO ERROR] M3U dosyasına ulaşılamadı: ${fileName}. GitHub linkini kontrol et!`);
+            console.error(`!!! [NUVIO_ERROR] M3U INDIRILEMEDI: ${fileName}`);
             return [];
         }
 
         const text = await m3uRes.text();
         const lines = text.split('\n');
-        console.log(`[NUVIO LOAD] M3U Okundu. Toplam satır sayısı: ${lines.length}`);
+        console.error(`!!! [NUVIO_LOG] M3U SATIR SAYISI: ${lines.length}`);
 
         const results = [];
 
-        // 4. Eşleşme Aşaması
         for (let i = 0; i < lines.length; i++) {
             let line = lines[i].trim();
             if (line.startsWith("#EXTINF")) {
@@ -84,20 +80,16 @@ async function getStreams(type, tmdbId, season, episode) {
             }
         }
         
-        if (results.length === 0) {
-            console.warn(`[NUVIO WARN] Dosya içinde eşleşme bulunamadı. M3U içeriğindeki isimleri ve SXXEXX formatını kontrol et.`);
-        } else {
-            console.log(`[NUVIO SUCCESS] Toplam ${results.length} kaynak başarıyla listelendi.`);
-        }
-        
+        console.error(`!!! [NUVIO_LOG] BITTI. BULUNAN KAYNAK: ${results.length}`);
         return results;
 
     } catch (err) {
-        console.error(`[NUVIO CRITICAL HATA]: ${err.message}`);
+        console.error(`!!! [NUVIO_CRITICAL] CÖKME: ${err.message}`);
+        console.error(`!!! [NUVIO_STACK]: ${err.stack}`);
         return [];
     }
 }
 
-// --- SİSTEM ENTEGRASYONU ---
+// --- SISTEM DISA AKTARIM ---
 if (typeof module !== 'undefined') module.exports = { getStreams };
 if (typeof globalThis !== 'undefined') globalThis.getStreams = getStreams;
