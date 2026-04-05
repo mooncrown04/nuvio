@@ -1,14 +1,24 @@
-var M3U_URL      = 'https://raw.githubusercontent.com/mooncrown04/m3ubirlestir/refs/heads/main/nuvio_sinema.m3u';
-var TMDB_API_KEY = '500330721680edb6d5f7f12ba7cd9023';
-var VERSION      = "7.0.0-PRO";
+// --- M3U KAYNAK YAPILANDIRMASI ---
+// GitHub "main" dalındaki dosyalarınızın tam yolları
+var M3U_SOURCES = [
+    { range: /^[0-9]/i,    url: 'https://raw.githubusercontent.com/mooncrown04/m3ubirlestir/main/nuvio_sinema_0-9_rakam.m3u' },
+    { range: /^[a-d]/i,    url: 'https://raw.githubusercontent.com/mooncrown04/m3ubirlestir/main/nuvio_sinema_a-d_arasi.m3u' },
+    { range: /^[e-j]/i,    url: 'https://raw.githubusercontent.com/mooncrown04/m3ubirlestir/main/nuvio_sinema_e-j_arasi.m3u' },
+    { range: /^[k-p]/i,    url: 'https://raw.githubusercontent.com/mooncrown04/m3ubirlestir/main/nuvio_sinema_k-p_arasi.m3u' },
+    { range: /^[r-z]/i,    url: 'https://raw.githubusercontent.com/mooncrown04/m3ubirlestir/main/nuvio_sinema_r-z_arasi.m3u' }
+];
 
-let cachedM3U = null;
-let lastFetch = 0;
+// Hiçbir harf grubuna girmeyenler için yedek liste
+var DEFAULT_M3U = 'https://raw.githubusercontent.com/mooncrown04/m3ubirlestir/main/nuvio_sinema_diger.m3u';
+
+var TMDB_API_KEY = '500330721680edb6d5f7f12ba7cd9023';
+var VERSION      = "9.5.0-ALPHABETIC-ROUTING";
+
+let cachedM3U = {}; 
+let lastFetch = {};
 
 /**
- * Karakter Normalizasyonu: 
- * Türkçe karakterleri (ı,ğ,ü,ş,ö,ç) İngilizce karşılıklarına çevirir,
- * küçük harf yapar ve harf/rakam dışındaki her şeyi siler.
+ * Karakter temizleme fonksiyonu (Tam Eşleşme İçin)
  */
 function ultraClean(s) {
     if (!s) return '';
@@ -19,11 +29,10 @@ function ultraClean(s) {
 }
 
 async function getStreams(tmdbId, mediaType) {
-    // Sadece film araması yap, dizileri engelle
     if (mediaType === 'tv') return [];
 
     try {
-        // 1. TMDb Bilgilerini Çek
+        // 1. TMDb'den film detaylarını al
         const tmdbRes = await fetch(`https://api.themoviedb.org/3/movie/${tmdbId}?api_key=${TMDB_API_KEY}&language=tr-TR`);
         const d = await tmdbRes.json();
         
@@ -31,83 +40,73 @@ async function getStreams(tmdbId, mediaType) {
         const targetEn = ultraClean(d.original_title);
         const targetYear = (d.release_date || '').slice(0, 4);
 
-        console.error(`[V${VERSION}] ARANIYOR: ${d.title} (${targetYear})`);
+        // 2. Alfabetik Yönlendirme: İlk harfe göre hangi dosyayı indireceğiz?
+        let selectedURL = DEFAULT_M3U;
+        const firstChar = targetTr.charAt(0); // Temizlenmiş ismin ilk karakteri
 
-        // 2. M3U Listesini İndir / Önbellekten Getir
-        const now = Date.now();
-        if (!cachedM3U || (now - lastFetch > 300000)) {
-            const m3uRes = await fetch(M3U_URL);
-            let rawText = await m3uRes.text();
-            // Satır sonu karakterlerini temizle ve standardize et
-            cachedM3U = rawText.replace(/\r\n/g, '\n').replace(/\r/g, '\n').replace(/^\uFEFF/, ''); 
-            lastFetch = now;
+        for (let source of M3U_SOURCES) {
+            if (source.range.test(firstChar)) {
+                selectedURL = source.url;
+                break;
+            }
         }
 
-        // Boş satırları filtrele ve tüm satırları diziye aktar
-        const lines = cachedM3U.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+        console.error(`[V${VERSION}] ARA: ${d.title} | SEÇİLEN LİSTE: ${selectedURL}`);
+
+        // 3. İlgili M3U dosyasını indir (Cache'le)
+        const now = Date.now();
+        if (!cachedM3U[selectedURL] || (now - (lastFetch[selectedURL] || 0) > 300000)) {
+            const m3uRes = await fetch(selectedURL);
+            let rawText = await m3uRes.text();
+            cachedM3U[selectedURL] = rawText.replace(/\r\n/g, '\n').replace(/\r/g, '\n').replace(/^\uFEFF/, ''); 
+            lastFetch[selectedURL] = now;
+        }
+
+        // 4. Tarama ve Eşleştirme
+        const lines = cachedM3U[selectedURL].split('\n').filter(l => l.trim().length > 0);
         const results = [];
 
-        // 3. Arama Motoru
         for (let i = 0; i < lines.length; i++) {
-            let line = lines[i];
+            let line = lines[i].trim();
             
             if (line.startsWith("#EXTINF")) {
-                let nextLine = lines[i + 1] || "";
+                let nextLine = lines[i + 1] ? lines[i + 1].trim() : "";
                 
                 if (nextLine.startsWith("http")) {
-                    // M3U ismini ayıkla (virgülden sonrası)
                     let parts = line.split(',');
                     let rawName = parts[parts.length - 1].trim();
                     
-                    // İsimdeki "-Aksiyon", "(2024)" gibi ekleri temizle
+                    // İsim temizliği (Ekleri at)
                     let cleanNameOnly = rawName.split('-')[0].split('(')[0].trim();
                     let cleanM3U = ultraClean(cleanNameOnly);
                     
-                    // Yıl Tespiti (Etiket, İsim veya URL içinden)
+                    // Yıl tespiti
                     let tagYear = line.match(/year="(\d{4})"/);
                     let nameYear = rawName.match(/(\d{4})/);
-                    let urlYear = nextLine.match(/(\d{4})/);
-                    let m3uYear = tagYear ? tagYear[1] : (nameYear ? nameYear[1] : (urlYear ? urlYear[1] : ""));
+                    let m3uYear = tagYear ? tagYear[1] : (nameYear ? nameYear[1] : "");
 
-                    let isMatch = false;
-                    let score = 0;
-
-                    // --- KESİN EŞLEŞME MANTIĞI ---
-                    // Temizlenmiş M3U ismi, TMDb Türkçe veya Orijinal ismiyle BİREBİR aynı olmalı
+                    // BİREBİR EŞLEŞME KONTROLÜ
                     if (cleanM3U === targetTr || cleanM3U === targetEn) {
-                        
-                        // YIL KONTROLÜ: M3U'da bir yıl varsa ve hedefle uyuşmuyorsa ELE
-                        if (m3uYear && m3uYear !== targetYear) {
-                            isMatch = false;
-                        } else {
-                            isMatch = true;
-                            // Yıl da tam tutuyorsa en yüksek puanı ver
-                            score = (m3uYear === targetYear) ? 100 : 90;
+                        // Yıl yanlışsa eliyoruz, yoksa veya doğruysa kabul ediyoruz
+                        if (!(m3uYear && m3uYear !== targetYear)) {
+                            results.push({
+                                url: nextLine,
+                                name: rawName,
+                                title: `[M3U] ${rawName}`,
+                                quality: "1080p",
+                                score: (m3uYear === targetYear) ? 100 : 90
+                            });
                         }
                     }
-
-                    if (isMatch) {
-                        results.push({
-                            url: nextLine,
-                            name: rawName,
-                            title: `[M3U] ${rawName}`,
-                            quality: "1080p",
-                            score: score
-                        });
-                    }
-                    // URL satırını işlediğimiz için bir sonraki adımı atla
-                    i++; 
+                    i++; // URL satırını atla
                 }
             }
         }
         
-        console.error(`[V${VERSION}] BULUNAN: ${results.length} adet.`);
-        
-        // En yüksek puanlı (en doğru) sonucu en üste getir
         return results.sort((a, b) => b.score - a.score);
         
     } catch (e) {
-        console.error(`[V${VERSION}] SİSTEM HATASI: ${e.message}`);
+        console.error(`[V${VERSION}] HATA: ${e.message}`);
         return [];
     }
 }
