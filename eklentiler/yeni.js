@@ -1,11 +1,11 @@
 /**
- * Nuvio Sinema Alfabetik Motoru - V11.3.0
- * Özellik: group-author tırnak içindeki TÜM metni ham olarak alır.
+ * Nuvio Sinema Alfabetik Motoru - V11.4.0
+ * Özellik: Kaynak bilgisi "Quality" etiketine taşındı.
  */
 
 const BASE_DIR = 'https://raw.githubusercontent.com/mooncrown04/m3ubirlestir/main/nuvio_parcalari/';
 const TMDB_API_KEY = '500330721680edb6d5f7f12ba7cd9023';
-const VERSION = "11.3.0-FULL_AUTHOR";
+const VERSION = "11.4.0-TAG_AS_QUALITY";
 
 let cachedM3U = {}; 
 let lastFetch = {};
@@ -60,8 +60,7 @@ async function getStreams(tmdbId, mediaType) {
                 let nextLine = lines[i + 1] ? lines[i + 1].trim() : "";
                 if (nextLine.startsWith("http")) {
                     
-                    // --- HAM KAYNAK AYIKLAMA ---
-                    // group-author="..." tırnaklarının arasındaki her şeyi (emoji dahil) olduğu gibi alır.
+                    // 1. Kaynak Etiketini Ayıkla (Group-Author)
                     let fullAuthorMatch = line.match(/group-author="([^"]+)"/);
                     let sourceTag = fullAuthorMatch ? fullAuthorMatch[1] : "M3U";
 
@@ -94,9 +93,10 @@ async function getStreams(tmdbId, mediaType) {
                         results.push({
                             url: nextLine,
                             name: rawName,
-                            // GÖRÜNÜM: Film Adı | ✨YENİ [Lunedor] (2016)
-                            title: `${rawName} | ${sourceTag} ${m3uYear ? '('+m3uYear+')' : ''}`,
-                            quality: "", 
+                            // BAŞLIK: Sade tutuldu (Dangal (2016))
+                            title: `[NUVIO] ${rawName} ${m3uYear ? '('+m3uYear+')' : ''}`,
+                            // KALİTE ETİKETİ: Kaynak buraya yazıldı (✨YENİ [Lunedor])
+                            quality: sourceTag, 
                             score: score
                         });
                     }
