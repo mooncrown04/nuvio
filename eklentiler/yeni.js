@@ -121,7 +121,7 @@ function fetchAndParseM3U8(playlistUrl, mediaInfo) {
                     title: mediaInfo.title,
                     url: playlistUrl,
                     quality: 'Auto',
-                    size: 'Unknown',
+                    size: 'ALTYAZILI',    //'Unknown',
                     headers: VIDLINK_HEADERS,
                     provider: 'vidlink'
                 }];
@@ -137,7 +137,7 @@ function fetchAndParseM3U8(playlistUrl, mediaInfo) {
                     title: mediaInfo.title,
                     url: stream.url,
                     quality: quality,
-                    size: 'Unknown',
+                    size: 'ALTYAZILI',    //'Unknown',
                     headers: VIDLINK_HEADERS,
                     provider: 'vidlink'
                 };
@@ -153,7 +153,7 @@ function fetchAndParseM3U8(playlistUrl, mediaInfo) {
                 title: mediaInfo.title,
                 url: playlistUrl,
                 quality: 'Auto',
-                size: 'Unknown',
+                size: 'ALTYAZILI',    //'Unknown',
                 headers: VIDLINK_HEADERS,
                 provider: 'vidlink'
             }];
@@ -276,7 +276,7 @@ function processVidlinkResponse(data, mediaInfo) {
                         title: streamTitle,
                         url: qualityData.url,
                         quality: `${quality} [${lang}]`, // KALİTE + DİL
-                        size: 'Unknown',
+                        size: 'ALTYAZILI',    //'Unknown',
                         headers: VIDLINK_HEADERS,
                         provider: 'vidlink'
                     });
@@ -328,7 +328,7 @@ function processVidlinkResponse(data, mediaInfo) {
                 title: streamTitle,
                 url: data.url,
                 quality: `${quality} [${lang}]`,
-                size: 'Unknown',
+               size: 'ALTYAZILI',    //'Unknown',
                 headers: VIDLINK_HEADERS,
                 provider: 'vidlink'
             });
@@ -350,7 +350,7 @@ function processVidlinkResponse(data, mediaInfo) {
                         title: streamTitle,
                         url: stream.url,
                         quality: `${quality} [${lang}]`,
-                        size: stream.size || 'Unknown',
+                        size: stream.size || 'ALTYAZILI',    //'Unknown',
                         headers: VIDLINK_HEADERS,
                         provider: 'vidlink'
                     });
