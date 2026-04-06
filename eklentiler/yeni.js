@@ -205,24 +205,6 @@ function encryptTmdbId(tmdbId) {
  * Optimized for Language in Quality & Global Export
  */
 
-// 1. YARDIMCI FONKSİYONLAR (EN ÜSTTE)
-function extractLanguage(data, url = "") {
-    try {
-        if (!data && !url) return "EN";
-        const dataString = data ? JSON.stringify(data) : "";
-        const urlString = url || "";
-        const searchString = (dataString + urlString).toLowerCase();
-        
-        if (searchString.includes("turkish") || searchString.includes("dublaj") || 
-            searchString.includes(" tr") || searchString.includes("-tr") || 
-            searchString.includes("/tr/")) return "TR";
-            
-        if (searchString.includes("multi") || searchString.includes("dual")) return "MULTI";
-    } catch (e) {
-        return "EN";
-    }
-    return "EN";
-}
 
 function extractQuality(streamData) {
     if (!streamData) return 'Unknown';
@@ -249,95 +231,196 @@ function extractQuality(streamData) {
     return 'Unknown';
 }
 
-// 2. ANA İŞLEME MANTIĞI
+
+// Yardımcı Fonksiyon: Dil tespiti (Kodun en başında olmalı)
+function extractLanguage(data, url = "") {
+    try {
+        if (!data && !url) return "EN";
+        const dataString = data ? JSON.stringify(data) : "";
+        const searchString = (dataString + (url || "")).toLowerCase();
+        
+        if (searchString.includes("turkish") || searchString.includes("dublaj") || 
+            searchString.includes(" tr") || searchString.includes("-tr") || 
+            searchString.includes("/tr/")) return "TR";
+            
+        if (searchString.includes("multi") || searchString.includes("dual")) return "MULTI";
+    } catch (e) {
+        return "EN";
+    }
+    return "EN";
+}
+
+// Process Vidlink API response
 function processVidlinkResponse(data, mediaInfo) {
     const streams = [];
+    const safeMediaInfo = mediaInfo || { title: 'Unknown' };
+    
     try {
-        if (!data) return [];
-
-        // Format: stream.qualities (Objekt)
+        console.log(`[Vidlink] Processing response data`);
+        
+        // 1. Handle Vidlink's specific response format with stream.qualities
         if (data.stream && data.stream.qualities) {
-            Object.entries(data.stream.qualities).forEach(([key, qData]) => {
-                if (qData.url) {
-                    const baseQ = extractQuality({ quality: key });
-                    const lang = extractLanguage(qData, qData.url);
+            Object.entries(data.stream.qualities).forEach(([qualityKey, qualityData]) => {
+                if (qualityData.url) {
+                    const quality = extractQuality({ quality: qualityKey });
+                    const lang = extractLanguage(qualityData, qualityData.url); // DİL TESPİTİ
+                    
+                    const streamTitle = safeMediaInfo.mediaType === 'tv' && safeMediaInfo.season && safeMediaInfo.episode 
+                        ? `${safeMediaInfo.title} S${String(safeMediaInfo.season).padStart(2, '0')}E${String(safeMediaInfo.episode).padStart(2, '0')}`
+                        : safeMediaInfo.year 
+                            ? `${safeMediaInfo.title} (${safeMediaInfo.year})`
+                            : safeMediaInfo.title;
+                    
                     streams.push({
                         name: `Vidlink`,
-                        title: mediaInfo.title,
-                        url: qData.url,
-                        quality: `${baseQ} [${lang}]`,
-                        headers: typeof VIDLINK_HEADERS !== 'undefined' ? VIDLINK_HEADERS : {},
+                        title: streamTitle,
+                        url: qualityData.url,
+                        quality: `${quality} [${lang}]`, // KALİTE + DİL
+                        size: 'Unknown',
+                        headers: VIDLINK_HEADERS,
                         provider: 'vidlink'
                     });
                 }
             });
-
+            
             if (data.stream.playlist) {
-                const lang = extractLanguage(data.stream, data.stream.playlist);
+                const lang = extractLanguage(data.stream, data.stream.playlist); // PLAYLIST DİL
+                const streamTitle = safeMediaInfo.mediaType === 'tv' && safeMediaInfo.season && safeMediaInfo.episode 
+                    ? `${safeMediaInfo.title} S${String(safeMediaInfo.season).padStart(2, '0')}E${String(safeMediaInfo.episode).padStart(2, '0')}`
+                    : safeMediaInfo.year 
+                        ? `${safeMediaInfo.title} (${safeMediaInfo.year})`
+                        : safeMediaInfo.title;
+                
                 streams.push({
                     _isPlaylist: true,
                     url: data.stream.playlist,
-                    mediaInfo: { ...mediaInfo, lang: lang }
+                    mediaInfo: { ...safeMediaInfo, title: streamTitle, lang: lang } // DİLİ PASLA
                 });
             }
-        } 
-        // Format: data.url (Single)
+        }
+        // 2. Handle playlist-only responses
+        else if (data.stream && data.stream.playlist && !data.stream.qualities) {
+            const lang = extractLanguage(data.stream, data.stream.playlist);
+            const streamTitle = safeMediaInfo.mediaType === 'tv' && safeMediaInfo.season && safeMediaInfo.episode 
+                ? `${safeMediaInfo.title} S${String(safeMediaInfo.season).padStart(2, '0')}E${String(safeMediaInfo.episode).padStart(2, '0')}`
+                : safeMediaInfo.year 
+                    ? `${safeMediaInfo.title} (${safeMediaInfo.year})`
+                    : safeMediaInfo.title;
+            
+            streams.push({
+                _isPlaylist: true,
+                url: data.stream.playlist,
+                mediaInfo: { ...safeMediaInfo, title: streamTitle, lang: lang }
+            });
+        }
+        // 3. Handle single stream URL
         else if (data.url) {
-            const baseQ = extractQuality(data);
+            const quality = extractQuality(data);
             const lang = extractLanguage(data, data.url);
+            const streamTitle = safeMediaInfo.mediaType === 'tv' && safeMediaInfo.season && safeMediaInfo.episode 
+                ? `${safeMediaInfo.title} S${String(safeMediaInfo.season).padStart(2, '0')}E${String(safeMediaInfo.episode).padStart(2, '0')}`
+                : safeMediaInfo.year 
+                    ? `${safeMediaInfo.title} (${safeMediaInfo.year})`
+                    : safeMediaInfo.title;
+            
             streams.push({
                 name: `Vidlink`,
-                title: mediaInfo.title,
+                title: streamTitle,
                 url: data.url,
-                quality: `${baseQ} [${lang}]`,
-                headers: typeof VIDLINK_HEADERS !== 'undefined' ? VIDLINK_HEADERS : {},
+                quality: `${quality} [${lang}]`,
+                size: 'Unknown',
+                headers: VIDLINK_HEADERS,
                 provider: 'vidlink'
             });
         }
-        
-        // Format: data.streams veya data.links (Array)
-        const arrayData = data.streams || data.links;
-        if (Array.isArray(arrayData)) {
-            arrayData.forEach((item, index) => {
-                if (item.url) {
-                    const baseQ = extractQuality(item);
-                    const lang = extractLanguage(item, item.url);
+        // 4. Handle multiple streams array
+        else if (data.streams && Array.isArray(data.streams)) {
+            data.streams.forEach((stream, index) => {
+                if (stream.url) {
+                    const quality = extractQuality(stream);
+                    const lang = extractLanguage(stream, stream.url);
+                    const streamTitle = safeMediaInfo.mediaType === 'tv' && safeMediaInfo.season && safeMediaInfo.episode 
+                        ? `${safeMediaInfo.title} S${String(safeMediaInfo.season).padStart(2, '0')}E${String(safeMediaInfo.episode).padStart(2, '0')}`
+                        : safeMediaInfo.year 
+                            ? `${safeMediaInfo.title} (${safeMediaInfo.year})`
+                            : safeMediaInfo.title;
+                    
                     streams.push({
-                        name: `Vidlink ${index + 1}`,
-                        title: mediaInfo.title,
-                        url: item.url,
-                        quality: `${baseQ} [${lang}]`,
-                        headers: typeof VIDLINK_HEADERS !== 'undefined' ? VIDLINK_HEADERS : {},
+                        name: `Vidlink Stream ${index + 1}`,
+                        title: streamTitle,
+                        url: stream.url,
+                        quality: `${quality} [${lang}]`,
+                        size: stream.size || 'Unknown',
+                        headers: VIDLINK_HEADERS,
                         provider: 'vidlink'
                     });
                 }
             });
         }
+        
     } catch (error) {
-        console.error(`[Vidlink] Process Error: ${error.message}`);
+        console.error(`[Vidlink] Error processing response: ${error.message}`);
     }
+    
     return streams;
 }
 
-// 3. GETSTREAMS FONKSİYONU
+// getStreams fonksiyonu aynen kalıyor, sadece processVidlinkResponse içindeki dil geliştirmelerini kullanıyor.
 function getStreams(tmdbId, mediaType = 'movie', seasonNum = null, episodeNum = null) {
-    // Burada TMDB info çekme ve fetch işlemleri senin mevcut yapına göre devam eder
-    // Örn: return fetch(...).then(res => res.json()).then(data => processVidlinkResponse(data, info));
-    // Örnek akışın (Senin orijinal yapın):
-    console.log(`[Vidlink] getStreams called for ${tmdbId}`);
+    console.log(`[Vidlink] Fetching streams for TMDB ID: ${tmdbId}`);
     
-    // NOT: Bu fonksiyonun içi senin orijinal kodundaki fetch/encrypt mantığıyla aynı kalmalı.
-    // Sadece yukarıdaki processVidlinkResponse'u çağırdığından emin ol.
+    return getTmdbInfo(tmdbId, mediaType)
+    .then(tmdbInfo => {
+        const { title, year } = tmdbInfo;
+        return encryptTmdbId(tmdbId)
+        .then(encryptedId => {
+            let vidlinkUrl;
+            if (mediaType === 'tv' && seasonNum && episodeNum) {
+                vidlinkUrl = `${VIDLINK_API}/tv/${encryptedId}/${seasonNum}/${episodeNum}`;
+            } else {
+                vidlinkUrl = `${VIDLINK_API}/movie/${encryptedId}`;
+            }
+            
+            return makeRequest(vidlinkUrl, { headers: VIDLINK_HEADERS })
+            .then(response => response.json())
+            .then(data => {
+                const mediaInfo = { title, year, mediaType, season: seasonNum, episode: episodeNum };
+                const streams = processVidlinkResponse(data, mediaInfo);
+                
+                if (streams.length === 0) return [];
+                
+                const playlistStreams = streams.filter(s => s._isPlaylist);
+                const directStreams = streams.filter(s => !s._isPlaylist);
+                
+                if (playlistStreams.length > 0) {
+                    const playlistPromises = playlistStreams.map(ps => 
+                        fetchAndParseM3U8(ps.url, ps.mediaInfo)
+                    );
+                    
+                    return Promise.all(playlistPromises)
+                        .then(parsedStreamArrays => {
+                            const allStreams = directStreams.concat(...parsedStreamArrays);
+                            const qualityOrder = { '4K': 5, '1440p': 4, '1080p': 3, '720p': 2, '480p': 1, '360p': 0, '240p': -1, 'Auto': -2, 'Unknown': -3 };
+                            allStreams.sort((a, b) => (qualityOrder[b.quality.split(' ')[0]] || -3) - (qualityOrder[a.quality.split(' ')[0]] || -3));
+                            return allStreams;
+                        });
+                } else {
+                    const qualityOrder = { '4K': 5, '1440p': 4, '1080p': 3, '720p': 2, '480p': 1, '360p': 0, '240p': -1, 'Auto': -2, 'Unknown': -3 };
+                    directStreams.sort((a, b) => (qualityOrder[b.quality.split(' ')[0]] || -3) - (qualityOrder[a.quality.split(' ')[0]] || -3));
+                    return directStreams;
+                }
+            });
+        });
+    })
+    .catch(error => {
+        console.error(`[Vidlink] Error in getStreams: ${error.message}`);
+        return [];
+    });
 }
 
-// 4. KRİTİK EXPORT BLOĞU (LOGDAKİ HATAYI ÇÖZEN KISIM)
+// Export
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = { getStreams };
-}
-
-// Nuvio ve Android ortamları için global kayıt
-if (typeof globalThis !== 'undefined') {
-    globalThis.getStreams = getStreams;
-} else if (typeof global !== 'undefined') {
-    global.getStreams = getStreams;
+} else {
+    global.VidlinkScraperModule = { getStreams };
 }
