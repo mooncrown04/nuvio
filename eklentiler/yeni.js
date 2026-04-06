@@ -199,6 +199,14 @@ function encryptTmdbId(tmdbId) {
     });
 }
 
+function extractLanguage(data) {
+    if (!data) return "EN";
+    const searchString = JSON.stringify(data).toLowerCase();
+    if (searchString.includes("turkish") || searchString.includes("dublaj") || searchString.includes(" tr") || searchString.includes("-tr")) return "TR";
+    if (searchString.includes("multi") || searchString.includes("dual")) return "MULTI";
+    return "EN";
+}
+
 // Extract quality from stream data
 function extractQuality(streamData) {
     if (!streamData) return 'Unknown';
@@ -252,6 +260,7 @@ function processVidlinkResponse(data, mediaInfo) {
             Object.entries(data.stream.qualities).forEach(([qualityKey, qualityData]) => {
                 if (qualityData.url) {
                     const quality = extractQuality({ quality: qualityKey });
+                    const lang = extractLanguage(qualityData);
                     const streamTitle = mediaInfo.mediaType === 'tv' && mediaInfo.season && mediaInfo.episode 
                         ? `${mediaInfo.title} S${String(mediaInfo.season).padStart(2, '0')}E${String(mediaInfo.episode).padStart(2, '0')}`
                         : mediaInfo.year 
@@ -259,7 +268,7 @@ function processVidlinkResponse(data, mediaInfo) {
                             : mediaInfo.title;
                     
                     streams.push({
-                        name: `Vidlink - ${quality}`,
+                        name: `Vidlink [${lang}] - ${quality}`,
                         title: streamTitle,
                         url: qualityData.url,
                         quality: quality,
@@ -272,6 +281,7 @@ function processVidlinkResponse(data, mediaInfo) {
             
             // Handle playlist URL (HLS streams) - will be processed later
             if (data.stream.playlist) {
+                const lang = extractLanguage(data.stream);
                 const streamTitle = mediaInfo.mediaType === 'tv' && mediaInfo.season && mediaInfo.episode 
                     ? `${mediaInfo.title} S${String(mediaInfo.season).padStart(2, '0')}E${String(mediaInfo.episode).padStart(2, '0')}`
                     : mediaInfo.year 
@@ -282,7 +292,7 @@ function processVidlinkResponse(data, mediaInfo) {
                 streams.push({
                     _isPlaylist: true,
                     url: data.stream.playlist,
-                    mediaInfo: { ...mediaInfo, title: streamTitle }
+                    mediaInfo: { ...mediaInfo, title: streamTitle, lang: lang }
                 });
             }
         }
@@ -290,6 +300,7 @@ function processVidlinkResponse(data, mediaInfo) {
         else if (data.stream && data.stream.playlist && !data.stream.qualities) {
             console.log(`[Vidlink] Processing playlist-only response`);
             
+            const lang = extractLanguage(data.stream);
             const streamTitle = mediaInfo.mediaType === 'tv' && mediaInfo.season && mediaInfo.episode 
                 ? `${mediaInfo.title} S${String(mediaInfo.season).padStart(2, '0')}E${String(mediaInfo.episode).padStart(2, '0')}`
                 : mediaInfo.year 
@@ -300,12 +311,13 @@ function processVidlinkResponse(data, mediaInfo) {
             streams.push({
                 _isPlaylist: true,
                 url: data.stream.playlist,
-                mediaInfo: { ...mediaInfo, title: streamTitle }
+                mediaInfo: { ...mediaInfo, title: streamTitle, lang: lang }
             });
         }
         // Handle single stream URL
         else if (data.url) {
             const quality = extractQuality(data);
+            const lang = extractLanguage(data);
             const streamTitle = mediaInfo.mediaType === 'tv' && mediaInfo.season && mediaInfo.episode 
                 ? `${mediaInfo.title} S${String(mediaInfo.season).padStart(2, '0')}E${String(mediaInfo.episode).padStart(2, '0')}`
                 : mediaInfo.year 
@@ -313,7 +325,7 @@ function processVidlinkResponse(data, mediaInfo) {
                     : mediaInfo.title;
             
             streams.push({
-                name: `Vidlink - ${quality}`,
+                name: `Vidlink [${lang}] - ${quality}`,
                 title: streamTitle,
                 url: data.url,
                 quality: quality,
@@ -327,6 +339,7 @@ function processVidlinkResponse(data, mediaInfo) {
             data.streams.forEach((stream, index) => {
                 if (stream.url) {
                     const quality = extractQuality(stream);
+                    const lang = extractLanguage(stream);
                     const streamTitle = mediaInfo.mediaType === 'tv' && mediaInfo.season && mediaInfo.episode 
                         ? `${mediaInfo.title} S${String(mediaInfo.season).padStart(2, '0')}E${String(mediaInfo.episode).padStart(2, '0')}`
                         : mediaInfo.year 
@@ -334,7 +347,7 @@ function processVidlinkResponse(data, mediaInfo) {
                             : mediaInfo.title;
                     
                     streams.push({
-                        name: `Vidlink Stream ${index + 1} - ${quality}`,
+                        name: `Vidlink [${lang}] Stream ${index + 1} - ${quality}`,
                         title: streamTitle,
                         url: stream.url,
                         quality: quality,
@@ -350,6 +363,7 @@ function processVidlinkResponse(data, mediaInfo) {
             data.links.forEach((link, index) => {
                 if (link.url) {
                     const quality = extractQuality(link);
+                    const lang = extractLanguage(link);
                     const streamTitle = mediaInfo.mediaType === 'tv' && mediaInfo.season && mediaInfo.episode 
                         ? `${mediaInfo.title} S${String(mediaInfo.season).padStart(2, '0')}E${String(mediaInfo.episode).padStart(2, '0')}`
                         : mediaInfo.year 
@@ -357,7 +371,7 @@ function processVidlinkResponse(data, mediaInfo) {
                             : mediaInfo.title;
                     
                     streams.push({
-                        name: `Vidlink Link ${index + 1} - ${quality}`,
+                        name: `Vidlink [${lang}] Link ${index + 1} - ${quality}`,
                         title: streamTitle,
                         url: link.url,
                         quality: quality,
@@ -381,6 +395,7 @@ function processVidlinkResponse(data, mediaInfo) {
                         }
                         
                         const quality = extractQuality({ [key]: value });
+                        const lang = extractLanguage({ [key]: value });
                         const streamTitle = mediaInfo.mediaType === 'tv' && mediaInfo.season && mediaInfo.episode 
                             ? `${mediaInfo.title} S${String(mediaInfo.season).padStart(2, '0')}E${String(mediaInfo.episode).padStart(2, '0')}`
                             : mediaInfo.year 
@@ -388,7 +403,7 @@ function processVidlinkResponse(data, mediaInfo) {
                                 : mediaInfo.title;
                         
                         streams.push({
-                            name: `Vidlink ${key} - ${quality}`,
+                            name: `Vidlink [${lang}] ${key} - ${quality}`,
                             title: streamTitle,
                             url: value,
                             quality: quality,
