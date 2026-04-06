@@ -5,13 +5,13 @@
   
     {
       "id": "dizi",
-      "name": "MoOnCrOwN ddizi",
+      "name": "MoOnCrOwN yeniii",
       "description": "Statik Katalog Uyumlu M3U Scraper",
       "logo": "📺",
       "version": "1.0.1",
       "author": "mooncrown",
       "supportedTypes": ["tv"],
-      "filename": "ddizi.js",
+      "filename": "yeni.js",
       "enabled": true,
       "formats": ["mp4", "mkv", "hls", "m3u8"],
       "contentLanguage": ["tr"]
