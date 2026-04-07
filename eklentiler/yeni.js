@@ -1,6 +1,6 @@
 /**
  * cinemacity - Built from src/cinemacity/
- * Fixed: Quality & Multi-Audio display logic
+ * Final Version: Multi-Quality, Multi-Audio Detection & Turkish Labels
  */
 
 var __defProp = Object.defineProperty;
@@ -124,14 +124,12 @@ function getStreams(tmdbId, mediaType, season, episode) {
             if (fileMatch) {
               let rawFile = fileMatch[2] || fileMatch[1];
               if (rawFile && rawFile.length > 5) {
-                if (rawFile.startsWith("[") || rawFile.startsWith("{")) {
-                  try {
-                    const unescaped = rawFile.replace(/\\(.)/g, "$1");
-                    fileData = JSON.parse(unescaped);
-                  } catch (e) {
-                    try { fileData = JSON.parse(rawFile); } catch (e2) { fileData = rawFile; }
-                  }
-                } else { fileData = rawFile; }
+                try {
+                  const unescaped = rawFile.replace(/\\(.)/g, "$1");
+                  fileData = JSON.parse(unescaped);
+                } catch (e) {
+                  try { fileData = JSON.parse(rawFile); } catch (e2) { fileData = rawFile; }
+                }
                 if (fileData) break;
               }
             }
@@ -148,62 +146,57 @@ function getStreams(tmdbId, mediaType, season, episode) {
         
         let finalTitle = title;
         let finalQuality = quality;
+        let langCode = "";
 
         // 1. Dil Analizi
         const isMulti = url.includes(".urlset/master.m3u8") || url.toLowerCase().includes("multi") || url.toLowerCase().includes("dual");
         if (isMulti) {
-          finalTitle += " [Multi-Audio / TR+EN]";
-        } else if (url.toLowerCase().includes("_tr") || url.toLowerCase().includes("dublaj")) {
-          finalTitle += " [Türkçe]";
+          langCode = "Multi";
+        } else if (url.toLowerCase().includes("_tr") || url.toLowerCase().includes("dublaj") || url.toLowerCase().includes("/tr/")) {
+          langCode = "TR";
+        } else {
+          langCode = "ENG";
         }
 
-        // 2. Kalite Analizi (Neden hep AUTO çıkıyor sorusunun çözümü)
-        // Eğer kalite "Auto" gelmişse ama URL içinde gerçek bir kalite (1080p gibi) yazıyorsa onu kullan
+        // 2. Kalite Analizi Fix
         if (!finalQuality || finalQuality === "Auto") {
             const detectedQuality = extractQuality(url);
-            // Eğer URL'den HD'den daha spesifik bir şey (1080p vb.) gelirse onu ata
-            if (detectedQuality !== "HD") {
-                finalQuality = detectedQuality;
-            } else if (url.includes(".urlset/master.m3u8")) {
-                finalQuality = "Auto"; // Sadece gerçek playlistlerde Auto kalsın
-            } else {
-                finalQuality = "HD";
-            }
+            finalQuality = (detectedQuality !== "HD") ? detectedQuality : (url.includes("m3u8") ? "Auto" : "HD");
         }
 
+        // 3. Çıktı formatı: "CinemaCity [TR]" ve "Film Adı - 1080p"
         streams.push({
-          name: "CinemaCity",
-          title: finalTitle,
+          name: `CinemaCity [${langCode}]`,
+          title: `${finalTitle} - ${finalQuality}`,
           url: url,
           quality: finalQuality, 
-          headers: __spreadProps(__spreadValues({}, HEADERS), {
-            Referer: "https://cinemacity.cc/"
-          })
+          headers: __spreadProps(__spreadValues({}, HEADERS), { Referer: "https://cinemacity.cc/" })
         });
       };
 
       const processStr = (str, title) => {
-        if (str.includes(".urlset/master.m3u8")) {
-          // Playlist olsa bile addStream içinde tekrar kalite kontrolü yapacak
-          addStream(str, title, "Auto");
+        if (!str) return;
+        // Eğer tek bir string içinde virgülle ayrılmış birden fazla kalite varsa
+        if (str.includes("[") && str.includes(",")) {
+            const parts = str.split(",");
+            parts.forEach(p => {
+                const m = p.match(/\[(.*?)\](.*)/);
+                if (m) addStream(m[2], title, m[1]);
+                else addStream(p, title, extractQuality(p));
+            });
+        } else if (str.includes(".urlset/master.m3u8")) {
+            addStream(str, title, "Auto");
         } else {
-          const urls = str.includes("[") ? str.split(",") : [str];
-          urls.forEach((u) => {
-            const m = u.match(/\[(.*?)\](.*)/);
-            if (m) {
-                addStream(m[2], title, m[1]); // [1080p] gibi etiketi alır
-            } else {
-                addStream(u, title, extractQuality(u)); // URL'den okur
-            }
-          });
+            addStream(str, title, extractQuality(str));
         }
       };
 
-      // Film/Dizi ayrımı (Aynı kalıyor)
       if (mediaType === "movie") {
         if (Array.isArray(fileData)) {
-          const obj = fileData.find((f) => !f.folder && f.file) || fileData[0];
-          if (obj && obj.file) processStr(obj.file, animeTitle);
+          // Tüm kaliteleri çekmek için forEach kullanıldı
+          fileData.forEach(item => {
+            if (item.file) processStr(item.file, animeTitle);
+          });
         } else if (typeof fileData === "string") {
           processStr(fileData, animeTitle);
         }
@@ -214,8 +207,7 @@ function getStreams(tmdbId, mediaType, season, episode) {
           if (sObj && sObj.folder) {
             const eLabel = `Episode ${episode}`;
             const eObj = sObj.folder.find((e) => (e.title || "").includes(eLabel) || (e.title || "").includes(`E${episode}`));
-            if (eObj && eObj.file)
-              processStr(eObj.file, `${animeTitle} S${season}E${episode}`);
+            if (eObj && eObj.file) processStr(eObj.file, `${animeTitle} S${season}E${episode}`);
           }
         }
       }
