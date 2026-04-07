@@ -1,6 +1,6 @@
 /**
  * cinemacity - Built from src/cinemacity/
- * Final Stable Version: Precise Multi-Audio Detection & Nuvio Logs
+ * Final & Corrected Version: Precise Multi-Audio vs Original Detection
  */
 
 var __defProp = Object.defineProperty;
@@ -35,7 +35,7 @@ var __async = (__this, __arguments, generator) => {
   });
 };
 
-// --- Sabitler ---
+// --- Ayarlar ---
 var MAIN_URL = "https://cinemacity.cc";
 var HEADERS = {
   "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36",
@@ -44,7 +44,7 @@ var HEADERS = {
 };
 var TMDB_API_KEY = "1865f43a0549ca50d341dd9ab8b29f49";
 
-// --- Yardımcı Fonksiyonlar ---
+// --- Yardımcı Araçlar ---
 var atobPolyfill = (str) => {
   try {
     const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=";
@@ -83,7 +83,7 @@ function extractQuality(url) {
 function getStreams(tmdbId, mediaType, season, episode) {
   return __async(this, null, function* () {
     try {
-      console.error("[CC-DEBUG] İslem basladi. TMDB_ID:", tmdbId);
+      console.error("[CC-DEBUG] İstek başladı. TMDB:", tmdbId);
       
       const tmdbUrl = `https://api.themoviedb.org/3/${mediaType === "tv" ? "tv" : "movie"}/${tmdbId}?api_key=${TMDB_API_KEY}`;
       const tmdbRes = yield fetch(tmdbUrl, { skipSizeCheck: true, timeout: 15000 });
@@ -103,7 +103,7 @@ function getStreams(tmdbId, mediaType, season, episode) {
         if (!anchor.length) return;
         const foundTitle = anchor.text().split("(")[0].trim();
         const href = anchor.attr("href");
-        if (foundTitle.toLowerCase() === animeTitle.toLowerCase() || foundTitle.toLowerCase().includes(animeTitle.toLowerCase()) || animeTitle.toLowerCase().includes(foundTitle.toLowerCase())) {
+        if (foundTitle.toLowerCase().includes(animeTitle.toLowerCase()) || animeTitle.toLowerCase().includes(foundTitle.toLowerCase())) {
           mediaUrl = href;
         }
       });
@@ -144,27 +144,22 @@ function getStreams(tmdbId, mediaType, season, episode) {
       const addStream = (url, title, quality) => {
         if (!url || !url.startsWith("http") || url.length < 15) return;
         
-        let langCode = "ENG"; 
+        let langCode = "ENG"; // Varsayılan (David gibi m3u8 olup multi kelimesi geçmeyenler için)
         const urlLower = url.toLowerCase();
 
-        // --- GÜNCELLENEN HASSAS DİL TETİKLEYİCİ ---
-        // Sadece isminde açıkça geçiyorsa Multi de (David hatasını önlemek için)
-        const isExplicitMulti = urlLower.includes("multi") || urlLower.includes("dual");
-        const isTurkish = urlLower.includes("_tr") || urlLower.includes("dublaj") || urlLower.includes("/tr/");
-        const isPlaylist = url.includes(".m3u8");
+        // --- KESİN DİL AYIRIMI ---
+        const hasMultiKeyword = urlLower.includes("multi") || urlLower.includes("dual");
+        const hasTrKeyword = urlLower.includes("_tr") || urlLower.includes("dublaj") || urlLower.includes("/tr/");
 
-        if (isExplicitMulti) {
-          langCode = "Multi";
-        } else if (isTurkish) {
-          langCode = "TR";
-        } else if (isPlaylist) {
-          // Eğer m3u8 ise ama 'multi' yazmıyorsa, yine de Multi kabul et (Singers örneği gibi)
-          langCode = "Multi";
+        if (hasMultiKeyword) {
+          langCode = "Multi"; // The Singers gibi içinde multi yazıyorsa
+        } else if (hasTrKeyword) {
+          langCode = "TR";    // Açıkça TR/Dublaj yazıyorsa
         }
 
         const finalQuality = quality || extractQuality(url);
 
-        console.error(`[CC-DEBUG] Karar -> Dil: ${langCode}, Kalite: ${finalQuality}, Link: ${url.substring(0, 45)}...`);
+        console.error(`[CC-DEBUG] Karar -> Dil: ${langCode}, Kalite: ${finalQuality}`);
 
         streams.push({
           name: `CinemaCity [${langCode}]`,
@@ -209,10 +204,10 @@ function getStreams(tmdbId, mediaType, season, episode) {
         }
       }
       
-      console.error("[CC-DEBUG] Toplam stream bulundu:", streams.length);
+      console.error("[CC-DEBUG] Toplam bulunan stream:", streams.length);
       return streams;
     } catch (error) {
-      console.error("[CC-DEBUG] KRİTİK HATA:", error.message);
+      console.error("[CC-DEBUG] KRİTİK HATA:", error);
       return [];
     }
   });
