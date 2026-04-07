@@ -1,6 +1,6 @@
 /**
  * ╔══════════════════════════════════════════════════════════════════════════════╗
- * ║                     StreamFlix — Nuvio Stream Plugin                        ║
+ * ║                     StreamFlix — Nuvio Stream Plugin -                       ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
  * ║  Source     › https://api.streamflix.app                                    ║
  * ║  Author     › Sanchit  |  TG: @S4NCHITT                                     ║
@@ -75,12 +75,14 @@ function sfFetch(url, opts) {
     opts.headers || {}
   );
   var fetchOpts = Object.assign({}, opts, { headers: headers });
-  // AbortSignal graceful — not all runtimes support it
-  if (!fetchOpts.signal) {
-    try { fetchOpts.signal = AbortSignal.timeout(25000); } catch (e) {}
-  }
+  
   return fetch(url, fetchOpts).then(function (r) {
     if (!r.ok) throw new Error('HTTP ' + r.status + ' ' + url.split('?')[0]);
+    // Yanıtın boş olup olmadığını kontrol et
+    var contentType = r.headers.get("content-type");
+    if (!contentType || !contentType.includes("application/json")) {
+       console.log(TAG + " Uyarı: Beklenen JSON gelmedi, tip: " + contentType);
+    }
     return r;
   });
 }
@@ -158,32 +160,60 @@ function getData() {
   if (st.items && Date.now() - st.itemsTs < TTL) return Promise.resolve(st.items);
   if (st._dataP) return st._dataP;
 
-  console.log(TAG + ' Fetching data.json...');
+  console.log(TAG + ' Fetching data.json (Safe Mode)...');
+  
   st._dataP = sfGet(DATA_URL)
-    .then(function (r) { return r.json(); })
-    .then(function (raw) {
+    .then(function (r) { 
+      // r.json() yerine r.text() kullanarak ham veriyi alıyoruz
+      return r.text(); 
+    })
+    .then(function (text) {
+      // 1. Veri boş mu veya çok mu kısa kontrolü
+      if (!text || text.trim().length < 10) {
+        throw new Error('data.json bos veya gecersiz dondu. Boyut: ' + (text ? text.length : 0));
+      }
+
+      // 2. JSON Parse işlemini güvenli bir blokta yap
+      var raw;
+      try {
+        raw = JSON.parse(text);
+      } catch (parseErr) {
+        console.log(TAG + ' JSON Parse Hatasi (Dosya yarim inmis olabilir): ' + parseErr.message);
+        console.log(TAG + ' Gelen verinin son 100 karakteri: ' + text.substring(text.length - 100));
+        throw new Error('Cevap tam bir JSON degil (Unexpected end of input).');
+      }
+
       var items = extractItems(raw);
       st.itemsTs = Date.now();
+
       if (!items.length) {
         console.log(TAG + ' data.json empty. Root keys: ' + Object.keys(raw || {}).join(', '));
         st.items = [];
         return [];
       }
+
       var first = items[0];
       st.tf = pick(first, TF);
       st.lf = pick(first, LF);
       st.kf = pick(first, KF);
+
       console.log(TAG + ' ' + items.length + ' items. First keys: ' + Object.keys(first).join(', '));
       console.log(TAG + ' Fields: title="' + st.tf + '" link="' + st.lf + '" key="' + st.kf + '"');
       console.log(TAG + ' First item: ' + JSON.stringify(first).substring(0, 300));
+      
       st.items = items;
       return items;
     })
-    .finally(function () { st._dataP = null; });
+    .catch(function (err) {
+      console.error(TAG + ' getData Kritik Hata: ' + err.message);
+      return []; // Hata durumunda uygulamayı cokertme, bos liste don
+    })
+    .finally(function () { 
+      st._dataP = null; 
+    });
 
   return st._dataP;
 }
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Item accessors — identical to v3.1
 // ─────────────────────────────────────────────────────────────────────────────
