@@ -1,6 +1,6 @@
 /**
  * cinemacity - Built from src/cinemacity/
- * Optimized for Multi-Audio Detection & Stability
+ * Fixed: Quality & Multi-Audio display logic
  */
 
 var __defProp = Object.defineProperty;
@@ -36,7 +36,6 @@ var __async = (__this, __arguments, generator) => {
 };
 
 // --- Sabitler ---
-var TAG = "[CinemaCity]";
 var MAIN_URL = "https://cinemacity.cc";
 var HEADERS = {
   "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36",
@@ -61,7 +60,6 @@ var atobPolyfill = (str) => {
 
 function fetchText(_0) {
   return __async(this, arguments, function* (url, options = {}) {
-    // Android-x86 stabilitesi için 30 saniye timeout eklendi
     const response = yield fetch(url, __spreadValues({
       headers: options.headers || HEADERS,
       skipSizeCheck: true,
@@ -85,7 +83,6 @@ function extractQuality(url) {
 function getStreams(tmdbId, mediaType, season, episode) {
   return __async(this, null, function* () {
     try {
-      console.log(TAG + " Searching for TMDB ID: " + tmdbId);
       const tmdbUrl = `https://api.themoviedb.org/3/${mediaType === "tv" ? "tv" : "movie"}/${tmdbId}?api_key=${TMDB_API_KEY}`;
       const tmdbRes = yield fetch(tmdbUrl, { skipSizeCheck: true, timeout: 15000 });
       const mediaInfo = yield tmdbRes.json();
@@ -134,9 +131,7 @@ function getStreams(tmdbId, mediaType, season, episode) {
                   } catch (e) {
                     try { fileData = JSON.parse(rawFile); } catch (e2) { fileData = rawFile; }
                   }
-                } else {
-                  fileData = rawFile;
-                }
+                } else { fileData = rawFile; }
                 if (fileData) break;
               }
             }
@@ -147,24 +142,40 @@ function getStreams(tmdbId, mediaType, season, episode) {
       if (!fileData) return [];
 
       const streams = [];
+
       const addStream = (url, title, quality) => {
         if (!url || !url.startsWith("http") || url.length < 15) return;
         
-        // Multi-Audio tespiti: URL master.m3u8 içeriyorsa veya multi/dual kelimeleri geçiyorsa başlığa ekle
         let finalTitle = title;
+        let finalQuality = quality;
+
+        // 1. Dil Analizi
         const isMulti = url.includes(".urlset/master.m3u8") || url.toLowerCase().includes("multi") || url.toLowerCase().includes("dual");
-        
         if (isMulti) {
           finalTitle += " [Multi-Audio / TR+EN]";
         } else if (url.toLowerCase().includes("_tr") || url.toLowerCase().includes("dublaj")) {
           finalTitle += " [Türkçe]";
         }
 
+        // 2. Kalite Analizi (Neden hep AUTO çıkıyor sorusunun çözümü)
+        // Eğer kalite "Auto" gelmişse ama URL içinde gerçek bir kalite (1080p gibi) yazıyorsa onu kullan
+        if (!finalQuality || finalQuality === "Auto") {
+            const detectedQuality = extractQuality(url);
+            // Eğer URL'den HD'den daha spesifik bir şey (1080p vb.) gelirse onu ata
+            if (detectedQuality !== "HD") {
+                finalQuality = detectedQuality;
+            } else if (url.includes(".urlset/master.m3u8")) {
+                finalQuality = "Auto"; // Sadece gerçek playlistlerde Auto kalsın
+            } else {
+                finalQuality = "HD";
+            }
+        }
+
         streams.push({
           name: "CinemaCity",
           title: finalTitle,
-          url,
-          quality: quality || extractQuality(url),
+          url: url,
+          quality: finalQuality, 
           headers: __spreadProps(__spreadValues({}, HEADERS), {
             Referer: "https://cinemacity.cc/"
           })
@@ -173,17 +184,22 @@ function getStreams(tmdbId, mediaType, season, episode) {
 
       const processStr = (str, title) => {
         if (str.includes(".urlset/master.m3u8")) {
+          // Playlist olsa bile addStream içinde tekrar kalite kontrolü yapacak
           addStream(str, title, "Auto");
         } else {
           const urls = str.includes("[") ? str.split(",") : [str];
           urls.forEach((u) => {
             const m = u.match(/\[(.*?)\](.*)/);
-            if (m) addStream(m[2], title, m[1]);
-            else addStream(u, title, extractQuality(u));
+            if (m) {
+                addStream(m[2], title, m[1]); // [1080p] gibi etiketi alır
+            } else {
+                addStream(u, title, extractQuality(u)); // URL'den okur
+            }
           });
         }
       };
 
+      // Film/Dizi ayrımı (Aynı kalıyor)
       if (mediaType === "movie") {
         if (Array.isArray(fileData)) {
           const obj = fileData.find((f) => !f.folder && f.file) || fileData[0];
@@ -203,11 +219,8 @@ function getStreams(tmdbId, mediaType, season, episode) {
           }
         }
       }
-
-      console.log(TAG + " Found " + streams.length + " streams.");
       return streams;
     } catch (error) {
-      console.error(TAG + " Error: " + error.message);
       return [];
     }
   });
