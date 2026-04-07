@@ -1,4 +1,4 @@
-// NOT: RecTV_v9_Calisan_Temel_Uzerine_Kesin_Dil_Kurali
+// NOT: RecTV_v10_Dizi_Coklu_Link_ve_Kesin_Dil_Kurali
 var cheerio = require("cheerio-without-node-native");
 
 var BASE_URL = "https://a.prectv67.lol";
@@ -20,16 +20,11 @@ async function getAuthToken() {
         try {
             const json = JSON.parse(text);
             cachedToken = json.accessToken || text.trim();
-        } catch (e) {
-            cachedToken = text.trim();
-        }
+        } catch (e) { cachedToken = text.trim(); }
         return cachedToken;
-    } catch (e) {
-        return null;
-    }
+    } catch (e) { return null; }
 }
 
-// Senin istediğin o kesin dil algılama mantığı
 function analyzeStream(url, index, itemLabel) {
     const lowUrl = url.toLowerCase();
     const lowLabel = (itemLabel || "").toLowerCase();
@@ -39,9 +34,9 @@ function analyzeStream(url, index, itemLabel) {
         text: "Orijinal / Altyazı"
     };
 
-    // Temel Kural: Sadece "Dublaj" geçiyorsa Türkçedir
+    // KESİN KURAL: Dublaj kelimesi geçiyorsa Türkçedir.
+    // Eğer "Dublaj & Altyazı" ise; 1. link (0) Dublaj, 2. link (1) Altyazıdır.
     if (lowLabel.includes("dublaj") || lowUrl.includes("dublaj")) {
-        // Eğer etiket "Dublaj & Altyazı" ise ve biz 2. linkteysek (index 1), o orijinaldir
         if (lowLabel.includes("altyazı") && index === 1) {
             info.icon = "🌐";
             info.text = "Orijinal / Altyazı";
@@ -50,7 +45,6 @@ function analyzeStream(url, index, itemLabel) {
             info.text = "Türkçe Dublaj";
         }
     }
-
     return info;
 }
 
@@ -58,29 +52,24 @@ async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
     try {
         const isMovie = (mediaType === 'movie');
         const tmdbUrl = `https://api.themoviedb.org/3/${isMovie ? 'movie' : 'tv'}/${tmdbId}?language=tr-TR&api_key=4ef0d7355d9ffb5151e987764708ce96`;
-
         const tmdbRes = await fetch(tmdbUrl);
         const data = await tmdbRes.json();
         const query = data.title || data.name;
         if (!query) return [];
 
         const token = await getAuthToken();
-        if (!token) return [];
-
         const searchHeaders = Object.assign({}, HEADERS, { 'Authorization': 'Bearer ' + token });
         const searchUrl = `${BASE_URL}/api/search/${encodeURIComponent(query)}/${SW_KEY}/`;
         
         const sRes = await fetch(searchUrl, { headers: searchHeaders });
         const sData = await sRes.json();
-        
-        const items = (sData.posters || []).concat(sData.series || []);
+        const items = (sData.series || []).concat(sData.posters || []);
         if (items.length === 0) return [];
 
         const target = items[0];
-        let sources = [];
+        let rawSources = [];
         let itemLabel = target.label || "";
 
-        // Dizi Mantığı
         if (target.type === "serie" || (!isMovie && target.label && target.label.toLowerCase().includes("dizi"))) {
             const seasonRes = await fetch(`${BASE_URL}/api/season/by/serie/${target.id}/${SW_KEY}/`, { headers: searchHeaders });
             const seasons = await seasonRes.json();
@@ -91,25 +80,25 @@ async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                     for (let ep of s.episodes) {
                         let epNumber = parseInt(ep.title.match(/\d+/) || 0);
                         if (epNumber == episodeNum) {
-                            sources = ep.sources || [];
-                            if (ep.label) itemLabel = ep.label; // Bölüm özel etiketini al
+                            // Kotlin kodundaki .first() hatasını yapmıyoruz, TÜM kaynakları alıyoruz
+                            rawSources = ep.sources || [];
+                            if (ep.label) itemLabel = ep.label;
                             break;
                         }
                     }
                 }
             }
         } else {
-            // Film Mantığı (Eğer filmde sources boşsa detayına git)
-            sources = target.sources || [];
-            if (sources.length === 0) {
+            rawSources = target.sources || [];
+            if (rawSources.length === 0) {
                 const detRes = await fetch(`${BASE_URL}/api/movie/${target.id}/${SW_KEY}/`, { headers: searchHeaders });
                 const detData = await detRes.json();
-                sources = detData.sources || [];
+                rawSources = detData.sources || [];
                 itemLabel = detData.label || itemLabel;
             }
         }
 
-        return sources.map((src, index) => {
+        return rawSources.map((src, index) => {
             const res = analyzeStream(src.url, index, itemLabel);
             return {
                 name: `RecTV [${res.icon} ${res.text}]`,
@@ -123,9 +112,7 @@ async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
             };
         });
 
-    } catch (err) {
-        return [];
-    }
+    } catch (err) { return []; }
 }
 
 module.exports = { getStreams };
