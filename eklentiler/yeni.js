@@ -1,6 +1,6 @@
 /**
- * cinemacity - DATA ANALYZER & DEBUG VERSION
- * Hedef: Gelen veriyi ham haliyle loglamak ve analiz etmek.
+ * cinemacity - Flag & Multi-Counter Version
+ * Analiz edilen diller: TR, EN, DE, FR, IT, AR, HI, KO, JA, ZH
  */
 
 var __defProp = Object.defineProperty;
@@ -69,12 +69,19 @@ function fetchText(_0) {
   });
 }
 
+function extractQuality(url) {
+  const low = (url || "").toLowerCase();
+  if (low.includes("2160p") || low.includes("4k")) return "4K";
+  if (low.includes("1080p")) return "1080p";
+  if (low.includes("720p")) return "720p";
+  if (low.includes("480p")) return "480p";
+  return "HD";
+}
+
 // --- Ana Fonksiyon ---
 function getStreams(tmdbId, mediaType, season, episode) {
   return __async(this, null, function* () {
     try {
-      console.error(`[CC-DEBUG] İŞLEM BAŞLADI -> TMDB: ${tmdbId}`);
-      
       const tmdbUrl = `https://api.themoviedb.org/3/${mediaType === "tv" ? "tv" : "movie"}/${tmdbId}?api_key=${TMDB_API_KEY}`;
       const tmdbRes = yield fetch(tmdbUrl, { skipSizeCheck: true, timeout: 15000 });
       const mediaInfo = yield tmdbRes.json();
@@ -127,24 +134,56 @@ function getStreams(tmdbId, mediaType, season, episode) {
 
       const streams = [];
 
-      // --- ANALİZ KATMANI ---
       const addStream = (url, title, quality) => {
         if (!url || !url.startsWith("http")) return;
         
-        // KRİTİK LOG: Sitenin gönderdiği veriyi hiçbir işlem yapmadan basıyoruz
-        console.error(`[HAM-VERI] Başlık: ${title} | Kalite: ${quality || 'Belirsiz'} | URL: ${url}`);
+        const urlLower = url.toLowerCase();
+        let flags = [];
+        
+        // 1. Dil Eşleşmeleri
+        const langMap = [
+          { key: "turkish", flag: "🇹🇷" },
+          { key: "_tr", flag: "🇹🇷" },
+          { key: "english", flag: "🇺🇸" },
+          { key: "_en", flag: "🇺🇸" },
+          { key: "german", flag: "🇩🇪" },
+          { key: "_de", flag: "🇩🇪" },
+          { key: "french", flag: "🇫🇷" },
+          { key: "_fr", flag: "🇫🇷" },
+          { key: "italian", flag: "🇮🇹" },
+          { key: "_it", flag: "🇮🇹" },
+          { key: "arabic", flag: "🇸🇦" },
+          { key: "hindi", flag: "🇮🇳" },
+          { key: "korean", flag: "🇰🇷" },
+          { key: "japanese", flag: "🇯🇵" },
+          { key: "chinese", flag: "🇨🇳" }
+        ];
 
-        // Geçici bir etiketleme (Sadece ekranda ayırt etmen için)
-        let tempTag = "ANALİZ EDİLİYOR";
-        const lowUrl = url.toLowerCase();
-        if (lowUrl.includes("multi")) tempTag = "MULTİ VAR";
-        if (lowUrl.includes("tr") || lowUrl.includes("dublaj")) tempTag = "TR VAR";
+        langMap.forEach(item => {
+          if (urlLower.includes(item.key) && !flags.includes(item.flag)) {
+            flags.push(item.flag);
+          }
+        });
+
+        // 2. Multi Sayacı (Kaç farklı .m4a var?)
+        const audioTrackCount = (url.match(/\.m4a/g) || []).length;
+        
+        let finalLabel = "";
+        if (audioTrackCount > 1) {
+          finalLabel = `Multi: ${audioTrackCount} ${flags.join("")}`;
+        } else if (flags.length > 0) {
+          finalLabel = flags.join("");
+        } else {
+          finalLabel = "Orijinal 📄";
+        }
+
+        const finalQuality = quality || extractQuality(url);
 
         streams.push({
-          name: `CinemaCity [${tempTag}]`,
-          title: `${title} - ${quality || 'HD'}`,
+          name: `CinemaCity [${finalLabel}]`,
+          title: `${title} - ${finalQuality}`,
           url: url,
-          quality: quality || 'HD', 
+          quality: finalQuality, 
           headers: __spreadProps(__spreadValues({}, HEADERS), { Referer: "https://cinemacity.cc/" })
         });
       };
@@ -177,7 +216,6 @@ function getStreams(tmdbId, mediaType, season, episode) {
       
       return streams;
     } catch (error) {
-      console.error(`[CC-DEBUG] HATA: ${error.message}`);
       return [];
     }
   });
