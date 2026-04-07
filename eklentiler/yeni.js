@@ -10,18 +10,21 @@ var HEADERS = {
 };
 
 async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
-    let debugLogs = []; // Logları burada toplayıp hata olursa ekrana basacağız.
-
     try {
-        // 1. TMDB Bilgisi
+        console.error("[RecTV-Sorgu] Başladı -> ID: " + tmdbId + " | Tip: " + mediaType);
+
+        // 1. TMDB Bilgisi Çek
         const tmdbUrl = `https://api.themoviedb.org/3/${mediaType === 'movie' ? 'movie' : 'tv'}/${tmdbId}?language=tr-TR&api_key=4ef0d7355d9ffb5151e987764708ce96`;
         const tmdbRes = await fetch(tmdbUrl);
         const tmdbData = await tmdbRes.json();
         const query = tmdbData.title || tmdbData.name;
 
-        if (!query) throw new Error("TMDB isim bulunamadı");
+        if (!query) {
+            console.error("[RecTV-Hata] TMDB'den isim gelmedi!");
+            return [];
+        }
 
-        // 2. Token Al (Nonce)
+        // 2. Token Al ve Logla
         const authRes = await fetch(BASE_URL + "/api/attest/nonce", { headers: HEADERS });
         const authText = await authRes.text();
         let token = "";
@@ -31,8 +34,8 @@ async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
         } catch (e) {
             token = authText.trim();
         }
-
-        if (!token || token.length < 10) throw new Error("Geçersiz Token alındı");
+        
+        console.error("[RecTV-Token] Gelen Token: " + token.substring(0, 15) + "...");
 
         // 3. Arama Yap
         const searchHeaders = Object.assign({}, HEADERS, { 'Authorization': 'Bearer ' + token });
@@ -40,14 +43,20 @@ async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
         const sRes = await fetch(searchUrl, { headers: searchHeaders });
         const sData = await sRes.json();
 
+        console.error("[RecTV-Arama] Ham Arama Verisi: " + JSON.stringify(sData).substring(0, 300));
+
         const items = (sData.posters || []).concat(sData.channels || []).concat(sData.series || []);
-        if (items.length === 0) throw new Error("Aramada sonuç çıkmadı");
+        if (items.length === 0) {
+            console.error("[RecTV-Hata] Arama sonucu boş döndü!");
+            return [];
+        }
 
         const target = items[0];
         let rawSources = [];
 
-        // 4. Dizi/Film Ayrımı
+        // 4. İçerik Kaynaklarını Topla
         if (mediaType === 'tv' || target.type === "serie") {
+            console.error("[RecTV-Dizi] Sezon/Bölüm aranıyor: S" + seasonNum + " E" + episodeNum);
             const seasonRes = await fetch(`${BASE_URL}/api/season/by/serie/${target.id}/${SW_KEY}/`, { headers: searchHeaders });
             const seasons = await seasonRes.json();
             
@@ -65,7 +74,6 @@ async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
             }
         } else {
             rawSources = target.sources || [];
-            // Eğer arama sonucunda sources boşsa detay sayfasına git
             if (rawSources.length === 0) {
                 const detRes = await fetch(`${BASE_URL}/api/movie/${target.id}/${SW_KEY}/`, { headers: searchHeaders });
                 const detData = await detRes.json();
@@ -73,15 +81,23 @@ async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
             }
         }
 
-        if (rawSources.length === 0) throw new Error("Kaynak (link) listesi boş");
+        // 5. LİNK ANALİZİ VE CONSOLE.ERROR ÇIKTILARI
+        if (rawSources.length === 0) {
+            console.error("[RecTV-Hata] LİNK LİSTESİ BOŞ!");
+            return [];
+        }
 
-        // 5. Linkleri Analiz Et ve Döndür
-        return rawSources.map(src => {
+        return rawSources.map((src, index) => {
+            // BURASI KRİTİK: Her linki tek tek analiz ediyoruz
+            console.error("--- LİNK #" + (index + 1) + " ANALİZİ ---");
+            console.error("TİP: " + src.type);
+            console.error("HAM LİNK: " + src.url);
+            
             const isTR = src.url.toLowerCase().includes("tr") || src.url.toLowerCase().includes("dublaj");
             const quality = src.url.includes("1080") ? "1080p" : (src.url.includes("720") ? "720p" : "HD");
 
             return {
-                name: `RecTV [${isTR ? 'TR 🇹🇷' : 'Orijinal'}]`,
+                name: `RecTV [${isTR ? 'TR' : 'EN'}]`,
                 title: `${quality} - ${src.type.toUpperCase()}`,
                 url: src.url,
                 quality: quality,
@@ -93,14 +109,9 @@ async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
         });
 
     } catch (err) {
-        // HATA VARSA: Ekranda link yerine hatayı gösteren sahte bir sonuç döndürür.
-        // Bu sayede konsola bakmadan hatayı telefonda görebilirsin.
-        return [{
-            name: "⚠️ RecTV Hatası",
-            title: err.message,
-            url: "http://hata.com", // Geçersiz link
-            quality: "N/A"
-        }];
+        console.error("[RecTV-Fatal] KRİTİK HATA: " + err.message);
+        console.error("[RecTV-Stack] " + err.stack);
+        return [{ name: "⚠️ Hata Oluştu", title: err.message, url: "", quality: "" }];
     }
 }
 
