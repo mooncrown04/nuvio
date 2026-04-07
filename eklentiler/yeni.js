@@ -1,6 +1,6 @@
 /**
  * ╔══════════════════════════════════════════════════════════════════════════════╗
- * ║                     StreamFlix — Nuvio Stream Plugin -                       ║
+ * ║                     StreamFlix — Nuvio Stream Plugin                        ║
  * ╠══════════════════════════════════════════════════════════════════════════════╣
  * ║  Source     › https://api.streamflix.app                                    ║
  * ║  Author     › Sanchit  |  TG: @S4NCHITT                                     ║
@@ -75,14 +75,12 @@ function sfFetch(url, opts) {
     opts.headers || {}
   );
   var fetchOpts = Object.assign({}, opts, { headers: headers });
-  
+  // AbortSignal graceful — not all runtimes support it
+  if (!fetchOpts.signal) {
+    try { fetchOpts.signal = AbortSignal.timeout(25000); } catch (e) {}
+  }
   return fetch(url, fetchOpts).then(function (r) {
     if (!r.ok) throw new Error('HTTP ' + r.status + ' ' + url.split('?')[0]);
-    // Yanıtın boş olup olmadığını kontrol et
-    var contentType = r.headers.get("content-type");
-    if (!contentType || !contentType.includes("application/json")) {
-       console.log(TAG + " Uyarı: Beklenen JSON gelmedi, tip: " + contentType);
-    }
     return r;
   });
 }
@@ -160,60 +158,32 @@ function getData() {
   if (st.items && Date.now() - st.itemsTs < TTL) return Promise.resolve(st.items);
   if (st._dataP) return st._dataP;
 
-  console.log(TAG + ' Fetching data.json (Safe Mode)...');
-  
+  console.log(TAG + ' Fetching data.json...');
   st._dataP = sfGet(DATA_URL)
-    .then(function (r) { 
-      // r.json() yerine r.text() kullanarak ham veriyi alıyoruz
-      return r.text(); 
-    })
-    .then(function (text) {
-      // 1. Veri boş mu veya çok mu kısa kontrolü
-      if (!text || text.trim().length < 10) {
-        throw new Error('data.json bos veya gecersiz dondu. Boyut: ' + (text ? text.length : 0));
-      }
-
-      // 2. JSON Parse işlemini güvenli bir blokta yap
-      var raw;
-      try {
-        raw = JSON.parse(text);
-      } catch (parseErr) {
-        console.log(TAG + ' JSON Parse Hatasi (Dosya yarim inmis olabilir): ' + parseErr.message);
-        console.log(TAG + ' Gelen verinin son 100 karakteri: ' + text.substring(text.length - 100));
-        throw new Error('Cevap tam bir JSON degil (Unexpected end of input).');
-      }
-
+    .then(function (r) { return r.json(); })
+    .then(function (raw) {
       var items = extractItems(raw);
       st.itemsTs = Date.now();
-
       if (!items.length) {
         console.log(TAG + ' data.json empty. Root keys: ' + Object.keys(raw || {}).join(', '));
         st.items = [];
         return [];
       }
-
       var first = items[0];
       st.tf = pick(first, TF);
       st.lf = pick(first, LF);
       st.kf = pick(first, KF);
-
       console.log(TAG + ' ' + items.length + ' items. First keys: ' + Object.keys(first).join(', '));
       console.log(TAG + ' Fields: title="' + st.tf + '" link="' + st.lf + '" key="' + st.kf + '"');
       console.log(TAG + ' First item: ' + JSON.stringify(first).substring(0, 300));
-      
       st.items = items;
       return items;
     })
-    .catch(function (err) {
-      console.error(TAG + ' getData Kritik Hata: ' + err.message);
-      return []; // Hata durumunda uygulamayı cokertme, bos liste don
-    })
-    .finally(function () { 
-      st._dataP = null; 
-    });
+    .finally(function () { st._dataP = null; });
 
   return st._dataP;
 }
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Item accessors — identical to v3.1
 // ─────────────────────────────────────────────────────────────────────────────
@@ -396,15 +366,14 @@ function getAllLangsFromItem(item) {
   var corpus = tagCorpus + ' ' + fieldCorpus;
 
   var LANG_PATTERNS = [
-    ['Turkish',   /turkish/],
-	['English',   /english/],
-	['Hindi',     /hindi/],
+    ['Hindi',     /hindi/],
     ['Tamil',     /tamil/],
     ['Telugu',    /telugu/],
     ['Kannada',   /kannada/],
     ['Malayalam', /malayalam/],
     ['Bengali',   /bengali/],
     ['Punjabi',   /punjabi/],
+    ['English',   /english/],
     ['Korean',    /korean/],
     ['Japanese',  /japanese/],
     ['Chinese',   /chinese|mandarin/],
@@ -412,7 +381,7 @@ function getAllLangsFromItem(item) {
     ['French',    /french/],
     ['Arabic',    /arabic/],
     ['Russian',   /russian/],
-    
+    ['Turkish',   /turkish/],
   ];
 
   var found = [];
@@ -429,7 +398,7 @@ function getAllLangsFromItem(item) {
   // e.g. "Pushpa 2 Hindi" (no brackets) — only match if it's the last word
   if (!found.length) {
     var lastWord = titleStr.trim().split(/\s+/).pop().toLowerCase().replace(/[^a-z]/g, '');
-    var SINGLE_WORDS = ['hindi','tamil','telugu','kannada','malayalam','bengali','punjabi','english','turkish','turkce'];
+    var SINGLE_WORDS = ['hindi','tamil','telugu','kannada','malayalam','bengali','punjabi','english'];
     for (var j = 0; j < SINGLE_WORDS.length; j++) {
       if (lastWord === SINGLE_WORDS[j]) {
         found.push(SINGLE_WORDS[j].charAt(0).toUpperCase() + SINGLE_WORDS[j].slice(1));
@@ -438,14 +407,14 @@ function getAllLangsFromItem(item) {
     }
   }
 
-  return found.length ? found : ['Original'];
+  return found.length ? found : ['Hindi'];
 }
 
 /**
  * Single-language string for legacy callers (first detected language).
  */
 function getLangFromItemTitle(t) {
-  return getAllLangsFromItem({ title: t })[0] || 'Original';
+  return getAllLangsFromItem({ title: t })[0] || 'Hindi';
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -624,7 +593,7 @@ function makeStream(url, quality, titleLine, langs, info) {
   info = info || {};
 
   // langs can be string (legacy) or array — normalise to array
-  if (!Array.isArray(langs)) langs = langs ? [langs] : ['Orijinal'];
+  if (!Array.isArray(langs)) langs = langs ? [langs] : ['Hindi'];
 
   // Display: show "Multi" when 2+ languages, single name when only one
   var isMulti   = langs.length > 1;
@@ -913,7 +882,7 @@ function getStreams(tmdbId, mediaType, sNum, eNum) {
           }
 
           // Sort: multi-audio (≥2 langs) first, then by primary lang, then quality desc
-          var LANG_ORDER = { Turkish:0, English:1, Hindi:2, Tamil:3, Telugu:4, Kannada:5, Malayalam:6, Bengali:7, Punjabi:8};
+          var LANG_ORDER = { Hindi:0, Tamil:1, Telugu:2, Kannada:3, Malayalam:4, Bengali:5, Punjabi:6, English:7 };
           streams.sort(function (a, b) {
             // Extract lang string from name e.g. "🎬 StreamFlix | 1080p | Hindi + Tamil"
             // The lang part is after the last " | "
