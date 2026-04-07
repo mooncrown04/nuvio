@@ -1,3 +1,4 @@
+// NOT: RecTV_v3_Ham_Veri_Oncelikli_Analiz_Sistemi
 var cheerio = require("cheerio-without-node-native");
 
 var BASE_URL = "https://a.prectv67.lol";
@@ -9,30 +10,35 @@ var HEADERS = {
     'Accept': 'application/json'
 };
 
-function analyzeStream(url, index) {
+function analyzeStream(url, index, label) {
     const lowUrl = url.toLowerCase();
+    const lowLabel = (label || "").toLowerCase();
+    
     let info = {
-        icon: "🇹🇷", 
-        text: "Türkçe Dublaj",
+        icon: "🌐", // Varsayılanı 'Orijinal' yaptık ki hata payı azalsın
+        text: "Orijinal / Altyazı",
         quality: "HD", 
         extra: index > 0 ? " [Yedek]" : ""
     };
 
-    // ÖNCE ALTYAZI KONTROLÜ (Senin dediğin "Türkçe Altyazılı" durumunu yakalamak için)
-    // Eğer içinde altyazı veya orijinal ibaresi varsa, ne olursa olsun Orijinal Dil sayılır
-    if (lowUrl.includes("altyazi") || lowUrl.includes("sub") || lowUrl.includes("original") || lowUrl.includes("altyazili")) {
-        info.icon = "🌐"; 
-        info.text = "Orijinal / Altyazı";
-    } 
-    // EĞER DİREKT DUBLAJ YAZIYORSA (Garanti Türkçe)
-    else if (lowUrl.includes("dublaj")) {
+    // 1. ÖNCE ETİKETE (LABEL) BAK: "Dublaj & Altyazı" veya "Türkçe Dublaj" yazıyor mu?
+    if (lowLabel.includes("dublaj") || lowLabel.includes("tr")) {
         info.icon = "🇹🇷";
         info.text = "Türkçe Dublaj";
     }
 
-    // Kalite Ayıklama
-    if (lowUrl.includes("1080")) info.quality = "1080p";
-    else if (lowUrl.includes("720")) info.quality = "720p";
+    // 2. URL İÇİNDEKİ GİZLİ İPUÇLARINI KONTROL ET
+    if (lowUrl.includes("dublaj") || lowUrl.includes("/tr/")) {
+        info.icon = "🇹🇷";
+        info.text = "Türkçe Dublaj";
+    } else if (lowUrl.includes("altyazi") || lowUrl.includes("sub") || lowUrl.includes("alt/")) {
+        info.icon = "🌐"; 
+        info.text = "Orijinal / Altyazı";
+    }
+
+    // 3. KALİTE ANALİZİ (Loglardaki cdn1611 gibi yüksek sayılar genelde kaliteyi temsil eder)
+    if (lowUrl.includes("1080") || lowUrl.includes("cdn1080")) info.quality = "1080p";
+    else if (lowUrl.includes("720") || lowUrl.includes("cdn720")) info.quality = "720p";
 
     return info;
 }
@@ -50,9 +56,7 @@ async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
         try {
             const authJson = JSON.parse(authText);
             token = authJson.accessToken || authText.trim();
-        } catch (e) {
-            token = authText.trim();
-        }
+        } catch (e) { token = authText.trim(); }
 
         const searchHeaders = Object.assign({}, HEADERS, { 'Authorization': 'Bearer ' + token });
         const searchUrl = `${BASE_URL}/api/search/${encodeURIComponent(query)}/${SW_KEY}/`;
@@ -64,6 +68,7 @@ async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
 
         const target = items[0];
         let rawSources = [];
+        let sourceLabel = target.label || ""; // API'den gelen ana etiket
 
         if (mediaType === 'tv' || target.type === "serie") {
             const seasonRes = await fetch(`${BASE_URL}/api/season/by/serie/${target.id}/${SW_KEY}/`, { headers: searchHeaders });
@@ -84,11 +89,12 @@ async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                 const detRes = await fetch(`${BASE_URL}/api/movie/${target.id}/${SW_KEY}/`, { headers: searchHeaders });
                 const detData = await detRes.json();
                 rawSources = detData.sources || [];
+                sourceLabel = detData.label || sourceLabel;
             }
         }
 
         return rawSources.map((src, index) => {
-            const res = analyzeStream(src.url, index);
+            const res = analyzeStream(src.url, index, sourceLabel);
             return {
                 name: `RecTV [${res.icon} ${res.text}]${res.extra}`,
                 title: `${res.quality} - ${src.type.toUpperCase()}`,
@@ -100,9 +106,7 @@ async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
             };
         });
 
-    } catch (err) {
-        return [];
-    }
+    } catch (err) { return []; }
 }
 
 module.exports = { getStreams };
