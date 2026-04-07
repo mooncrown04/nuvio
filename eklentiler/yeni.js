@@ -1,4 +1,4 @@
-// NOT: RecTV_v7_Dizi_Film_Stabil_Dil_Algilama_Fix
+// NOT: RecTV_v8_Kesin_Dil_Kurali_Guncellemesi
 var cheerio = require("cheerio-without-node-native");
 
 var BASE_URL = "https://a.prectv67.lol";
@@ -14,43 +14,25 @@ function analyzeStream(url, index, itemLabel) {
     const lowUrl = url.toLowerCase();
     const lowLabel = (itemLabel || "").toLowerCase();
     
-    // Varsayılan: Bilinmeyen
+    // Temel kural: Dublaj geçmiyorsa Orijinaldir
     let info = {
-        icon: "🎬", 
-        text: "Video Kaynağı",
+        icon: "🌐", 
+        text: "Orijinal / Altyazı",
         quality: "HD"
     };
 
-    // 1. ÖNCELİK: LABEL (Sunucudan gelen Dublaj/Altyazı yazısı)
-    if (lowLabel.includes("dublaj") && !lowLabel.includes("altyazı")) {
-        info.icon = "🇹🇷";
-        info.text = "Türkçe Dublaj";
-    } else if (lowLabel.includes("altyazı") && !lowLabel.includes("dublaj")) {
-        info.icon = "🌐";
-        info.text = "Orijinal / Altyazı";
-    } else if (lowLabel.includes("dublaj") && lowLabel.includes("altyazı")) {
-        // Hem dublaj hem altyazı varsa: 1. link TR, 2. link Altyazı varsayılır
-        if (index === 0) {
-            info.icon = "🇹🇷";
-            info.text = "Türkçe Dublaj";
-        } else {
+    // EĞER "Dublaj" kelimesi etiketlerde veya URL'de varsa TÜRKÇE yap
+    if (lowLabel.includes("dublaj") || lowUrl.includes("dublaj")) {
+        // Ama aynı anda "Altyazı" da geçiyorsa ve bu 2. linkse (index 1), o Altyazılıdır
+        if (lowLabel.includes("altyazı") && index === 1) {
             info.icon = "🌐";
             info.text = "Orijinal / Altyazı";
-        }
-    }
-
-    // 2. URL KONTROLÜ (Eğer label boşsa veya yetersizse)
-    if (info.text === "Video Kaynağı") {
-        if (lowUrl.includes("altyazi") || lowUrl.includes("sub") || lowUrl.includes("alt/")) {
-            info.icon = "🌐"; 
-            info.text = "Orijinal / Altyazı";
-        } else if (lowUrl.includes("dublaj") || lowUrl.includes("/tr/")) {
+        } else {
             info.icon = "🇹🇷";
             info.text = "Türkçe Dublaj";
         }
     }
 
-    // Kalite
     if (lowUrl.includes("1080")) info.quality = "1080p";
     else if (lowUrl.includes("720")) info.quality = "720p";
 
@@ -77,12 +59,11 @@ async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
 
         const target = items[0];
         let rawSources = [];
-        let itemLabel = target.label || ""; // Ana arama sonucundaki etiket (örn: "Dublaj & Altyazı")
+        let itemLabel = target.label || ""; 
 
         if (mediaType === 'tv') {
             const seasonRes = await fetch(`${BASE_URL}/api/season/by/serie/${target.id}/${SW_KEY}/`, { headers: searchHeaders });
             const seasons = await seasonRes.json();
-            
             for (let s of seasons) {
                 const sMatch = s.title.match(/\d+/);
                 if (sMatch && parseInt(sMatch[0]) == seasonNum) {
@@ -90,7 +71,6 @@ async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                         const eMatch = ep.title.match(/\d+/);
                         if (eMatch && parseInt(eMatch[0]) == episodeNum) {
                             rawSources = ep.sources || [];
-                            // Dizilerde bölüm içinde özel etiket varsa onu al
                             if (ep.label) itemLabel = ep.label;
                             break;
                         }
