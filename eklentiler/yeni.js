@@ -1,130 +1,179 @@
-// src/lamovie/unified.js
-var TMDB_API_KEY = "439c478a771f35c05022f9feabcca01c";
-var BASE_URL = "https://la.movie";
-var API_URL = "https://la.movie/wp-api/v1";
-var DEFAULT_HEADERS = {
-  "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-};
+"use strict";
 
-// YARDIMCI FONKSIYONLAR
-function get(url, extraHeaders) {
-  var headers = Object.assign({}, DEFAULT_HEADERS, extraHeaders || {});
-  return fetch(url, { headers, redirect: "follow" }).then(function(res) {
-    if (!res.ok) throw new Error("HTTP " + res.status + " for " + url);
-    return res.headers.get("content-type")?.indexOf("json") !== -1 ? res.json() : res.text();
-  });
+// src/uhdmovies/index.js
+var DOMAIN = "https://uhdmovies.rip";
+var TMDB_API = "https://api.themoviedb.org/3";
+var TMDB_API_KEY = "1865f43a0549ca50d341dd9ab8b29f49";
+var USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+
+// --- YARDIMCI ARAÇLAR ---
+function getBaseUrl(url) {
+    if (!url) return DOMAIN;
+    var match = url.match(/^(https?:\/\/[^\/]+)/);
+    return match ? match[1] : DOMAIN;
 }
 
-function normalizeTitle(t) {
-  return t.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
+function fixUrl(url, domain) {
+    if (!url) return "";
+    if (url.indexOf("http") === 0) return url;
+    if (url.indexOf("//") === 0) return "https:" + url;
+    if (url.indexOf("/") === 0) return domain + url;
+    return domain + "/" + url;
 }
 
-function b64decode(str) {
-  try { return atob(str); } catch (e) { return null; }
+function stripTags(html) {
+    return (html || "").replace(/<[^>]+>/g, "").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&nbsp;/g, " ").trim();
 }
 
-function unpackEval(p, a, c, k, e, d) {
-    while (c--) if (k[c]) p = p.replace(new RegExp('\\b' + c.toString(a) + '\\b', 'g'), k[c]);
-    return p;
+// --- İSİM TEMİZLEME VE ANALİZ ---
+function cleanTitle(title) {
+    if (!title) return "";
+    return title
+        .replace(/Download|Full|Movie|Dual Audio|Hindi|English|ESub|x264|x265|HEVC|10bit/gi, "")
+        .replace(/\[.*?\]/g, "") // [G-Drive] vb. temizle
+        .replace(/\(.*?\)/g, "") // (2024) vb. temizle
+        .replace(/[._-]/g, " ")  // Noktalama işaretlerini boşluk yap
+        .replace(/\s+/g, " ")    // Çift boşlukları temizle
+        .trim();
 }
 
-// ÇÖZÜCÜLER (RESOLVERS)
-function resolveVimeos(embedUrl) {
-  var playHeaders = { "User-Agent": DEFAULT_HEADERS["User-Agent"], "Referer": "https://vimeos.net/", "Origin": "https://vimeos.net" };
-  function attempt(n) {
-    if (n > 5) return null; // 5 denemeden sonra bırak
-    return get(embedUrl, { "Referer": BASE_URL + "/" }).then(function(data) {
-      var packMatch = data.match(/eval\(function\(p,a,c,k,e,[a-z]\)\{[\s\S]+?\}\('([\s\S]+?)',(\d+),(\d+),'([\s\S]+?)'\.split\('\|'\)/);
-      if (!packMatch) return null;
-      var unpacked = unpackEval(packMatch[1], parseInt(packMatch[2]), parseInt(packMatch[3]), packMatch[4].split("|"), 0, {});
-      var m = unpacked.match(/["'](https?:\/\/[^"']+\.m3u8[^"']*)['"]/);
-      var masterUrl = m ? m[1] : null;
-      
-      if (masterUrl && masterUrl.indexOf("i=0.0") !== -1) {
-        return { url: masterUrl, quality: "1080p", headers: playHeaders };
-      }
-      return attempt(n + 1);
-    });
-  }
-  return attempt(1);
-}
-
-function getResolver(url) {
-  if (url.indexOf("vimeos.net") !== -1) return resolveVimeos;
-  // Diğer resolverlar (VOE, StreamWish) buraya eklenebilir
-  return null;
-}
-
-// ANA MANTIK
-function getTmdbInfo(tmdbId, mediaType) {
-  var type = (mediaType === "movie") ? "movie" : "tv";
-  // Dil tr-TR olarak güncellendi
-  var url = "https://api.themoviedb.org/3/" + type + "/" + tmdbId + "?api_key=" + TMDB_API_KEY + "&language=tr-TR";
-  return get(url).then(function(data) {
-    return {
-      title: type === "movie" ? data.title : data.name,
-      originalTitle: type === "movie" ? data.original_title : data.original_name,
-      year: (type === "movie" ? data.release_date : data.first_air_date || "").slice(0, 4)
-    };
-  });
-}
-
-async function getStreams(tmdbId, mediaType, season, episode) {
-  var resolvedType = (mediaType === "tv" || mediaType === "series") ? "tv" : "movie";
-  
-  try {
-    const info = await getTmdbInfo(tmdbId, resolvedType);
-    if (!info.title) return [];
-
-    // Arama (Slug mantığı veya Search API kullanılabilir)
-    // Bu kısım LaMovie API'sine göre basitleştirilmiştir
-    var searchQuery = info.originalTitle || info.title;
-    var searchUrl = API_URL + "/search?q=" + encodeURIComponent(searchQuery) + "&postType=any";
-    var searchData = await get(searchUrl);
-    var posts = searchData?.data?.posts || [];
-
-    if (posts.length === 0) return [];
-    var targetPost = posts[0]; // En yakın sonucu al
-
-    var finalId = targetPost._id;
-
-    // Eğer diziyse bölüm ID'sini bul
-    if (resolvedType === "tv" && season && episode) {
-        var epUrl = API_URL + "/single/episodes/list?_id=" + finalId + "&season=" + season;
-        var epData = await get(epUrl);
-        var episodes = epData?.data?.posts || [];
-        var match = episodes.find(e => String(e.episode_number) === String(episode));
-        if (match) finalId = match._id;
-        else return [];
-    }
-
-    // Embedleri Çek
-    var playerUrl = API_URL + "/player?postId=" + finalId;
-    var playerData = await get(playerUrl);
-    var embeds = playerData?.data?.embeds || [];
-
+function parseSearchResults(html) {
     var results = [];
-    for (var embed of embeds) {
-      var resolver = getResolver(embed.url);
-      if (resolver) {
-        var res = await resolver(embed.url);
-        if (res) {
-          results.push({
-            name: "LaMovie",
-            title: "Vimeos \xB7 " + (mediaType === "movie" ? "Film" : "S" + season + "E" + episode),
-            url: res.url,
-            quality: "Auto",
-            headers: res.headers
-          });
+    var chunks = html.split(/<article/i);
+    for (var i = 1; i < chunks.length; i++) {
+        var chunk = chunks[i];
+        
+        // Başlığı H1 veya H2 etiketlerinden çek
+        var titleM = chunk.match(/<h[12][^>]*>([\s\S]*?)<\/h[12]>/i);
+        if (!titleM) continue;
+
+        var titleRaw = stripTags(titleM[1]);
+        
+        // Başlığı sadeleştir: "Download" kısmını ve kalite bilgilerinden sonrasını at
+        var cleanName = titleRaw
+            .replace(/^Download\s+/i, "")
+            .split(/ (?:480p|720p|1080p|2160p|4k)/i)[0]
+            .trim();
+
+        var hrefM = chunk.match(/href="([^"]+)"/i);
+        var href = hrefM ? hrefM[1] : null;
+
+        if (href && cleanName) {
+            results.push({ title: cleanName, url: href, raw: titleRaw });
         }
-      }
     }
     return results;
-
-  } catch (err) {
-    console.error("LaMovie Hata:", err);
-    return [];
-  }
 }
 
-if (typeof module !== "undefined") module.exports = { getStreams };
+// --- TMDB VE ARAMA ---
+function getTmdbDetails(tmdbId, mediaType) {
+    var isSeries = mediaType === "series" || mediaType === "tv";
+    var endpoint = isSeries ? "tv" : "movie";
+    var url = `${TMDB_API}/${endpoint}/${tmdbId}?api_key=${TMDB_API_KEY}&language=en-US`;
+    
+    return fetch(url).then(res => res.json()).then(data => {
+        return {
+            title: isSeries ? data.name : data.title,
+            year: (isSeries ? data.first_air_date : data.release_date || "").slice(0, 4)
+        };
+    }).catch(() => null);
+}
+
+function searchByTitle(title, year) {
+    var query = encodeURIComponent(title.trim());
+    var url = DOMAIN + "/?s=" + query;
+    
+    return fetch(url, { headers: { "User-Agent": USER_AGENT } }).then(res => res.text()).then(html => {
+        var results = parseSearchResults(html);
+        // Filtreleme: Aranan isim sonucun içinde geçiyor mu?
+        return results.filter(r => {
+            var rTitle = r.title.toLowerCase();
+            var tTitle = title.toLowerCase();
+            return rTitle.indexOf(tTitle) !== -1 || tTitle.indexOf(rTitle) !== -1;
+        });
+    });
+}
+
+// --- BYPASS VE STREAM ÇEKME ---
+async function bypassHrefli(url) {
+    // Bu kısım Landing/Bypass mantığını içerir (Daha önceki mantığın aynısı)
+    try {
+        var host = getBaseUrl(url);
+        var res = await fetch(url, { headers: { "User-Agent": USER_AGENT } });
+        var html = await res.text();
+        
+        var formM = html.match(/<form[^>]*id="landing"[^>]*action="([^"]+)"/i);
+        if (!formM) return null;
+        
+        // Basitleştirilmiş bypass (Driveseed yönlendirmesi için)
+        var driveM = html.match(/replace\("([^"]+)"\)/);
+        return driveM ? fixUrl(driveM[1], host) : null;
+    } catch (e) { return null; }
+}
+
+async function extractDriveseedPage(url) {
+    try {
+        var res = await fetch(url, { headers: { "User-Agent": USER_AGENT } });
+        var html = await res.text();
+        var streams = [];
+        
+        // Instant Download veya Direct Link yakalama
+        var linkM = html.match(/href="([^"]+)"[^>]*>Instant Download/i) || html.match(/href="([^"]+)"[^>]*>Direct Link/i);
+        
+        if (linkM) {
+            streams.push({
+                name: "UHDMovies",
+                title: "Driveseed Direct",
+                url: linkM[1],
+                quality: "HD"
+            });
+        }
+        return streams;
+    } catch (e) { return []; }
+}
+
+// --- ANA GİRİŞ ---
+async function getStreams(tmdbId, mediaType, season, episode) {
+    console.log("[UHDMovies] İstek başladı...");
+    
+    const tmdb = await getTmdbDetails(tmdbId, mediaType);
+    if (!tmdb) return [];
+
+    const results = await searchByTitle(tmdb.title, tmdb.year);
+    if (results.length === 0) return [];
+
+    let allStreams = [];
+    
+    // Sadece en alakalı ilk 2 sonucu işle (Hız ve doğruluk için)
+    for (let i = 0; i < Math.min(results.length, 2); i++) {
+        let pageUrl = results[i].url;
+        let res = await fetch(pageUrl, { headers: { "User-Agent": USER_AGENT } });
+        let html = await res.text();
+
+        // Sayfa içindeki "maxbutton-1" (Download butonları) linklerini bul
+        let downloadLinks = [];
+        let re = /class="maxbutton-1"[^>]*href="([^"]+)"/gi;
+        let match;
+        while ((match = re.exec(html)) !== null) {
+            downloadLinks.push(match[1]);
+        }
+
+        for (let link of downloadLinks) {
+            if (link.indexOf("unblockedgames") !== -1 || link.indexOf("r?key=") !== -1) {
+                let finalLink = await bypassHrefli(link);
+                if (finalLink && (finalLink.indexOf("driveseed") !== -1 || finalLink.indexOf("driveleech") !== -1)) {
+                    let streams = await extractDriveseedPage(finalLink);
+                    allStreams = allStreams.concat(streams);
+                }
+            }
+        }
+    }
+
+    return allStreams;
+}
+
+if (typeof module !== "undefined") {
+    module.exports = { getStreams };
+} else {
+    global.getStreams = getStreams;
+}
