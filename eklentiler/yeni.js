@@ -1,4 +1,4 @@
-// NOT: RecTV_v3_Ham_Veri_Oncelikli_Analiz_Sistemi
+// NOT: RecTV_v5_Smart_Link_Type_Detection_Fix
 var cheerio = require("cheerio-without-node-native");
 
 var BASE_URL = "https://a.prectv67.lol";
@@ -10,35 +10,46 @@ var HEADERS = {
     'Accept': 'application/json'
 };
 
-function analyzeStream(url, index, label) {
+function analyzeStream(url, index, itemLabel) {
     const lowUrl = url.toLowerCase();
-    const lowLabel = (label || "").toLowerCase();
+    const lowLabel = (itemLabel || "").toLowerCase();
     
+    // Varsayılan değerler
     let info = {
-        icon: "🌐", // Varsayılanı 'Orijinal' yaptık ki hata payı azalsın
-        text: "Orijinal / Altyazı",
-        quality: "HD", 
-        extra: index > 0 ? " [Yedek]" : ""
+        icon: "🇹🇷", 
+        text: "Türkçe Dublaj",
+        quality: "HD"
     };
 
-    // 1. ÖNCE ETİKETE (LABEL) BAK: "Dublaj & Altyazı" veya "Türkçe Dublaj" yazıyor mu?
-    if (lowLabel.includes("dublaj") || lowLabel.includes("tr")) {
+    // 1. ÖNCE URL VE LABEL İÇİNDEKİ NET İPUÇLARI
+    if (lowUrl.includes("altyazi") || lowUrl.includes("sub") || lowUrl.includes("alt/") || lowUrl.includes("original")) {
+        info.icon = "🌐"; 
+        info.text = "Orijinal / Altyazı";
+    } 
+    else if (lowUrl.includes("dublaj") || lowUrl.includes("/tr/")) {
         info.icon = "🇹🇷";
         info.text = "Türkçe Dublaj";
     }
-
-    // 2. URL İÇİNDEKİ GİZLİ İPUÇLARINI KONTROL ET
-    if (lowUrl.includes("dublaj") || lowUrl.includes("/tr/")) {
-        info.icon = "🇹🇷";
-        info.text = "Türkçe Dublaj";
-    } else if (lowUrl.includes("altyazi") || lowUrl.includes("sub") || lowUrl.includes("alt/")) {
-        info.icon = "🌐"; 
+    // 2. EĞER HİÇBİR İPUCU YOKSA VE LABEL "DUBLAJ & ALTYAZI" İSE SIRALAMAYA BAK
+    else if (lowLabel.includes("altyazı") && lowLabel.includes("dublaj")) {
+        // Genelde: 0. index Dublaj, 1. index Altyazılıdır
+        if (index === 1) {
+            info.icon = "🌐";
+            info.text = "Orijinal / Altyazı";
+        } else {
+            info.icon = "🇹🇷";
+            info.text = "Türkçe Dublaj";
+        }
+    }
+    // 3. ÇOK ÖZEL DURUM: Eğer 2 link var ve hiçbir ibare yoksa, 2. linki altyazı varsayalım
+    else if (index === 1 && !lowUrl.includes("dublaj")) {
+        info.icon = "🌐";
         info.text = "Orijinal / Altyazı";
     }
 
-    // 3. KALİTE ANALİZİ (Loglardaki cdn1611 gibi yüksek sayılar genelde kaliteyi temsil eder)
-    if (lowUrl.includes("1080") || lowUrl.includes("cdn1080")) info.quality = "1080p";
-    else if (lowUrl.includes("720") || lowUrl.includes("cdn720")) info.quality = "720p";
+    // Kalite Kontrolü
+    if (lowUrl.includes("1080")) info.quality = "1080p";
+    else if (lowUrl.includes("720")) info.quality = "720p";
 
     return info;
 }
@@ -68,7 +79,7 @@ async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
 
         const target = items[0];
         let rawSources = [];
-        let sourceLabel = target.label || ""; // API'den gelen ana etiket
+        let itemLabel = target.label || ""; 
 
         if (mediaType === 'tv' || target.type === "serie") {
             const seasonRes = await fetch(`${BASE_URL}/api/season/by/serie/${target.id}/${SW_KEY}/`, { headers: searchHeaders });
@@ -89,19 +100,20 @@ async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                 const detRes = await fetch(`${BASE_URL}/api/movie/${target.id}/${SW_KEY}/`, { headers: searchHeaders });
                 const detData = await detRes.json();
                 rawSources = detData.sources || [];
-                sourceLabel = detData.label || sourceLabel;
+                itemLabel = detData.label || itemLabel;
             }
         }
 
         return rawSources.map((src, index) => {
-            const res = analyzeStream(src.url, index, sourceLabel);
+            const res = analyzeStream(src.url, index, itemLabel);
             return {
-                name: `RecTV [${res.icon} ${res.text}]${res.extra}`,
+                name: `RecTV [${res.icon} ${res.text}]`,
                 title: `${res.quality} - ${src.type.toUpperCase()}`,
                 url: src.url,
                 headers: {
                     'User-Agent': 'googleusercontent',
-                    'Referer': 'https://twitter.com/'
+                    'Referer': 'https://twitter.com/',
+                    'Accept-Encoding': 'identity'
                 }
             };
         });
