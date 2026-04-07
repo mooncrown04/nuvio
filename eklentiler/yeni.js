@@ -1,6 +1,6 @@
 /**
- * cinemacity - Built from src/cinemacity/
- * Strategy: Data-Driven Language Detection & Full Debug Logging
+ * cinemacity - DATA ANALYZER & DEBUG VERSION
+ * Hedef: Gelen veriyi ham haliyle loglamak ve analiz etmek.
  */
 
 var __defProp = Object.defineProperty;
@@ -44,7 +44,7 @@ var HEADERS = {
 };
 var TMDB_API_KEY = "1865f43a0549ca50d341dd9ab8b29f49";
 
-// --- Yardımcı Araçlar ---
+// --- Yardımcılar ---
 var atobPolyfill = (str) => {
   try {
     const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=";
@@ -69,32 +69,18 @@ function fetchText(_0) {
   });
 }
 
-function extractQuality(url) {
-  const low = (url || "").toLowerCase();
-  if (low.includes("2160p") || low.includes("4k")) return "4K";
-  if (low.includes("1080p")) return "1080p";
-  if (low.includes("720p")) return "720p";
-  if (low.includes("480p")) return "480p";
-  return "HD";
-}
-
 // --- Ana Fonksiyon ---
 function getStreams(tmdbId, mediaType, season, episode) {
   return __async(this, null, function* () {
     try {
-      console.error(`[CC-DEBUG] İŞLEM BAŞLADI -> TMDB: ${tmdbId} | Tip: ${mediaType}`);
+      console.error(`[CC-DEBUG] İŞLEM BAŞLADI -> TMDB: ${tmdbId}`);
       
       const tmdbUrl = `https://api.themoviedb.org/3/${mediaType === "tv" ? "tv" : "movie"}/${tmdbId}?api_key=${TMDB_API_KEY}`;
       const tmdbRes = yield fetch(tmdbUrl, { skipSizeCheck: true, timeout: 15000 });
       const mediaInfo = yield tmdbRes.json();
       const animeTitle = mediaInfo.title || mediaInfo.name;
       
-      if (!animeTitle) {
-        console.error("[CC-DEBUG] HATA: TMDB'den isim çekilemedi!");
-        return [];
-      }
-
-      console.error(`[CC-DEBUG] Aranacak Başlık: ${animeTitle}`);
+      if (!animeTitle) return [];
 
       const searchUrl = `${MAIN_URL}/index.php?do=search&subaction=search&story=${encodeURIComponent(animeTitle)}`;
       const searchHtml = yield fetchText(searchUrl);
@@ -111,10 +97,7 @@ function getStreams(tmdbId, mediaType, season, episode) {
         }
       });
 
-      if (!mediaUrl) {
-        console.error(`[CC-DEBUG] HATA: Sitede '${animeTitle}' için sonuç bulunamadı.`);
-        return [];
-      }
+      if (!mediaUrl) return [];
 
       const pageHtml = yield fetchText(mediaUrl);
       const $page = cheerio.load(pageHtml);
@@ -140,53 +123,28 @@ function getStreams(tmdbId, mediaType, season, episode) {
         }
       });
 
-      if (!fileData) {
-        console.error("[CC-DEBUG] HATA: Video dosyası (fileData) bulunamadı.");
-        return [];
-      }
+      if (!fileData) return [];
 
       const streams = [];
 
+      // --- ANALİZ KATMANI ---
       const addStream = (url, title, quality) => {
-        if (!url || !url.startsWith("http") || url.length < 15) {
-          console.error(`[CC-DEBUG] GEÇERSİZ LİNK ATLANDI: ${url}`);
-          return;
-        }
+        if (!url || !url.startsWith("http")) return;
         
-        const urlLower = url.toLowerCase();
-        
-        // --- BAYRAK VE DİL PLANLAMASI ---
-        let label = "";
-        let flag = "";
-        
-        const isMulti = urlLower.includes("multi") || urlLower.includes("dual") || url.includes(".m3u8");
-        const isTR = urlLower.includes("_tr") || urlLower.includes("dublaj") || urlLower.includes("turkce") || urlLower.includes("/tr/");
-        const isEN = urlLower.includes("_en") || urlLower.includes("english") || urlLower.includes("original");
+        // KRİTİK LOG: Sitenin gönderdiği veriyi hiçbir işlem yapmadan basıyoruz
+        console.error(`[HAM-VERI] Başlık: ${title} | Kalite: ${quality || 'Belirsiz'} | URL: ${url}`);
 
-        if (isMulti) {
-          label = "Multi";
-          flag = "🌍";
-        } else if (isTR) {
-          label = "TR";
-          flag = "🇹🇷";
-        } else if (isEN) {
-          label = "ENG";
-          flag = "🇺🇸";
-        } else {
-          label = "Orjinal";
-          flag = "📄";
-        }
-
-        const finalQuality = quality || extractQuality(url);
-
-        // LOGLAMA: Karar sürecini izle
-        console.error(`[CC-DEBUG] ANALİZ -> Link: ${url.substring(0, 30)}... | Tespit: ${label} | Kalite: ${finalQuality}`);
+        // Geçici bir etiketleme (Sadece ekranda ayırt etmen için)
+        let tempTag = "ANALİZ EDİLİYOR";
+        const lowUrl = url.toLowerCase();
+        if (lowUrl.includes("multi")) tempTag = "MULTİ VAR";
+        if (lowUrl.includes("tr") || lowUrl.includes("dublaj")) tempTag = "TR VAR";
 
         streams.push({
-          name: `CinemaCity [${label} ${flag}]`,
-          title: `${title} - ${finalQuality}`,
+          name: `CinemaCity [${tempTag}]`,
+          title: `${title} - ${quality || 'HD'}`,
           url: url,
-          quality: finalQuality, 
+          quality: quality || 'HD', 
           headers: __spreadProps(__spreadValues({}, HEADERS), { Referer: "https://cinemacity.cc/" })
         });
       };
@@ -197,14 +155,13 @@ function getStreams(tmdbId, mediaType, season, episode) {
             str.split(",").forEach(p => {
                 const m = p.match(/\[(.*?)\](.*)/);
                 if (m) addStream(m[2], title, m[1]);
-                else addStream(p, title, extractQuality(p));
+                else addStream(p, title, "HD");
             });
         } else {
-            addStream(str, title, extractQuality(str));
+            addStream(str, title, "HD");
         }
       };
 
-      // Film/Dizi İşleme Mantığı
       if (mediaType === "movie") {
         if (Array.isArray(fileData)) fileData.forEach(item => item.file && processStr(item.file, animeTitle));
         else if (typeof fileData === "string") processStr(fileData, animeTitle);
@@ -214,16 +171,13 @@ function getStreams(tmdbId, mediaType, season, episode) {
           if (sObj && sObj.folder) {
             const eObj = sObj.folder.find((e) => (e.title || "").includes(`Episode ${episode}`) || (e.title || "").includes(`E${episode}`));
             if (eObj && eObj.file) processStr(eObj.file, `${animeTitle} S${season}E${episode}`);
-          } else {
-              console.error(`[CC-DEBUG] HATA: Sezon ${season} bulunamadı.`);
           }
         }
       }
       
-      console.error(`[CC-DEBUG] BİTTİ. Toplam Stream: ${streams.length}`);
       return streams;
     } catch (error) {
-      console.error(`[CC-DEBUG] KRİTİK SİSTEM HATASI: ${error.message}`);
+      console.error(`[CC-DEBUG] HATA: ${error.message}`);
       return [];
     }
   });
