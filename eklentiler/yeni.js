@@ -1,6 +1,6 @@
 /**
  * cinemacity - Built from src/cinemacity/
- * Final & Nuvio-Friendly Debug Version: Tüm loglar console.error yapıldı.
+ * Final Stable Version: Precise Multi-Audio Detection & Nuvio Logs
  */
 
 var __defProp = Object.defineProperty;
@@ -90,12 +90,7 @@ function getStreams(tmdbId, mediaType, season, episode) {
       const mediaInfo = yield tmdbRes.json();
       const animeTitle = mediaInfo.title || mediaInfo.name;
       
-      if (!animeTitle) {
-          console.error("[CC-DEBUG] Film ismi bulunamadi!");
-          return [];
-      }
-
-      console.error("[CC-DEBUG] Aranan Baslik:", animeTitle);
+      if (!animeTitle) return [];
 
       const searchUrl = `${MAIN_URL}/index.php?do=search&subaction=search&story=${encodeURIComponent(animeTitle)}`;
       const searchHtml = yield fetchText(searchUrl);
@@ -108,18 +103,12 @@ function getStreams(tmdbId, mediaType, season, episode) {
         if (!anchor.length) return;
         const foundTitle = anchor.text().split("(")[0].trim();
         const href = anchor.attr("href");
-        
-        console.error("[CC-DEBUG] Arama sonucu bulundu:", foundTitle);
-
-        if (foundTitle.toLowerCase().includes(animeTitle.toLowerCase()) || animeTitle.toLowerCase().includes(foundTitle.toLowerCase())) {
+        if (foundTitle.toLowerCase() === animeTitle.toLowerCase() || foundTitle.toLowerCase().includes(animeTitle.toLowerCase()) || animeTitle.toLowerCase().includes(foundTitle.toLowerCase())) {
           mediaUrl = href;
         }
       });
 
-      if (!mediaUrl) {
-          console.error("[CC-DEBUG] Sitede uygun sayfa bulunamadi.");
-          return [];
-      }
+      if (!mediaUrl) return [];
 
       const pageHtml = yield fetchText(mediaUrl);
       const $page = cheerio.load(pageHtml);
@@ -139,15 +128,8 @@ function getStreams(tmdbId, mediaType, season, episode) {
               try {
                 const unescaped = rawFile.replace(/\\(.)/g, "$1");
                 fileData = JSON.parse(unescaped);
-                console.error("[CC-DEBUG] Veri JSON olarak ayristirildi.");
               } catch (e) {
-                try { 
-                    fileData = JSON.parse(rawFile); 
-                    console.error("[CC-DEBUG] Veri JSON olarak ayristirildi (yedek).");
-                } catch (e2) { 
-                    fileData = rawFile; 
-                    console.error("[CC-DEBUG] Veri ham metin olarak alindi.");
-                }
+                try { fileData = JSON.parse(rawFile); } catch (e2) { fileData = rawFile; }
               }
               if (fileData) break;
             }
@@ -155,39 +137,38 @@ function getStreams(tmdbId, mediaType, season, episode) {
         }
       });
 
-      if (!fileData) {
-          console.error("[CC-DEBUG] Video verisi (fileData) bulunamadi.");
-          return [];
-      }
+      if (!fileData) return [];
 
       const streams = [];
 
       const addStream = (url, title, quality) => {
         if (!url || !url.startsWith("http") || url.length < 15) return;
         
-        let finalTitle = title;
-        let finalQuality = quality;
-        let langCode = "";
+        let langCode = "ENG"; 
+        const urlLower = url.toLowerCase();
 
-        const isMulti = url.includes(".urlset/master.m3u8") || url.toLowerCase().includes("multi") || url.toLowerCase().includes("dual");
-        if (isMulti) {
+        // --- GÜNCELLENEN HASSAS DİL TETİKLEYİCİ ---
+        // Sadece isminde açıkça geçiyorsa Multi de (David hatasını önlemek için)
+        const isExplicitMulti = urlLower.includes("multi") || urlLower.includes("dual");
+        const isTurkish = urlLower.includes("_tr") || urlLower.includes("dublaj") || urlLower.includes("/tr/");
+        const isPlaylist = url.includes(".m3u8");
+
+        if (isExplicitMulti) {
           langCode = "Multi";
-        } else if (url.toLowerCase().includes("_tr") || url.toLowerCase().includes("dublaj") || url.toLowerCase().includes("/tr/")) {
+        } else if (isTurkish) {
           langCode = "TR";
-        } else {
-          langCode = "ENG";
+        } else if (isPlaylist) {
+          // Eğer m3u8 ise ama 'multi' yazmıyorsa, yine de Multi kabul et (Singers örneği gibi)
+          langCode = "Multi";
         }
 
-        if (!finalQuality || finalQuality === "Auto") {
-            const detectedQuality = extractQuality(url);
-            finalQuality = (detectedQuality !== "HD") ? detectedQuality : (url.includes("m3u8") ? "Auto" : "HD");
-        }
+        const finalQuality = quality || extractQuality(url);
 
-        console.error(`[CC-DEBUG] Link Ekleniyor -> Dil: ${langCode}, Kalite: ${finalQuality}, URL: ${url.substring(0, 50)}...`);
+        console.error(`[CC-DEBUG] Karar -> Dil: ${langCode}, Kalite: ${finalQuality}, Link: ${url.substring(0, 45)}...`);
 
         streams.push({
           name: `CinemaCity [${langCode}]`,
-          title: `${finalTitle} - ${finalQuality}`,
+          title: `${title} - ${finalQuality}`,
           url: url,
           quality: finalQuality, 
           headers: __spreadProps(__spreadValues({}, HEADERS), { Referer: "https://cinemacity.cc/" })
@@ -203,8 +184,6 @@ function getStreams(tmdbId, mediaType, season, episode) {
                 if (m) addStream(m[2], title, m[1]);
                 else addStream(p, title, extractQuality(p));
             });
-        } else if (str.includes(".urlset/master.m3u8")) {
-            addStream(str, title, "Auto");
         } else {
             addStream(str, title, extractQuality(str));
         }
@@ -230,10 +209,10 @@ function getStreams(tmdbId, mediaType, season, episode) {
         }
       }
       
-      console.error("[CC-DEBUG] Toplam bulunan stream:", streams.length);
+      console.error("[CC-DEBUG] Toplam stream bulundu:", streams.length);
       return streams;
     } catch (error) {
-      console.error("[CC-DEBUG] KRITIK HATA:", error.message);
+      console.error("[CC-DEBUG] KRİTİK HATA:", error.message);
       return [];
     }
   });
