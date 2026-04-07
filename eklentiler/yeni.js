@@ -1,6 +1,6 @@
 /**
  * cinemacity - Built from src/cinemacity/
- * Final & Debug Version: Çoklu Kalite, Dil Tespiti ve Detaylı Loglar
+ * Final & Nuvio-Friendly Debug Version: Tüm loglar console.error yapıldı.
  */
 
 var __defProp = Object.defineProperty;
@@ -83,14 +83,19 @@ function extractQuality(url) {
 function getStreams(tmdbId, mediaType, season, episode) {
   return __async(this, null, function* () {
     try {
-      console.log("[CinemaCity] İşlem başladı. ID:", tmdbId);
+      console.error("[CC-DEBUG] İslem basladi. TMDB_ID:", tmdbId);
       
       const tmdbUrl = `https://api.themoviedb.org/3/${mediaType === "tv" ? "tv" : "movie"}/${tmdbId}?api_key=${TMDB_API_KEY}`;
       const tmdbRes = yield fetch(tmdbUrl, { skipSizeCheck: true, timeout: 15000 });
       const mediaInfo = yield tmdbRes.json();
       const animeTitle = mediaInfo.title || mediaInfo.name;
       
-      if (!animeTitle) return [];
+      if (!animeTitle) {
+          console.error("[CC-DEBUG] Film ismi bulunamadi!");
+          return [];
+      }
+
+      console.error("[CC-DEBUG] Aranan Baslik:", animeTitle);
 
       const searchUrl = `${MAIN_URL}/index.php?do=search&subaction=search&story=${encodeURIComponent(animeTitle)}`;
       const searchHtml = yield fetchText(searchUrl);
@@ -103,12 +108,18 @@ function getStreams(tmdbId, mediaType, season, episode) {
         if (!anchor.length) return;
         const foundTitle = anchor.text().split("(")[0].trim();
         const href = anchor.attr("href");
-        if (foundTitle.toLowerCase() === animeTitle.toLowerCase() || foundTitle.toLowerCase().includes(animeTitle.toLowerCase()) || animeTitle.toLowerCase().includes(foundTitle.toLowerCase())) {
+        
+        console.error("[CC-DEBUG] Arama sonucu bulundu:", foundTitle);
+
+        if (foundTitle.toLowerCase().includes(animeTitle.toLowerCase()) || animeTitle.toLowerCase().includes(foundTitle.toLowerCase())) {
           mediaUrl = href;
         }
       });
 
-      if (!mediaUrl) return [];
+      if (!mediaUrl) {
+          console.error("[CC-DEBUG] Sitede uygun sayfa bulunamadi.");
+          return [];
+      }
 
       const pageHtml = yield fetchText(mediaUrl);
       const $page = cheerio.load(pageHtml);
@@ -128,8 +139,15 @@ function getStreams(tmdbId, mediaType, season, episode) {
               try {
                 const unescaped = rawFile.replace(/\\(.)/g, "$1");
                 fileData = JSON.parse(unescaped);
+                console.error("[CC-DEBUG] Veri JSON olarak ayristirildi.");
               } catch (e) {
-                try { fileData = JSON.parse(rawFile); } catch (e2) { fileData = rawFile; }
+                try { 
+                    fileData = JSON.parse(rawFile); 
+                    console.error("[CC-DEBUG] Veri JSON olarak ayristirildi (yedek).");
+                } catch (e2) { 
+                    fileData = rawFile; 
+                    console.error("[CC-DEBUG] Veri ham metin olarak alindi.");
+                }
               }
               if (fileData) break;
             }
@@ -137,7 +155,10 @@ function getStreams(tmdbId, mediaType, season, episode) {
         }
       });
 
-      if (!fileData) return [];
+      if (!fileData) {
+          console.error("[CC-DEBUG] Video verisi (fileData) bulunamadi.");
+          return [];
+      }
 
       const streams = [];
 
@@ -148,7 +169,6 @@ function getStreams(tmdbId, mediaType, season, episode) {
         let finalQuality = quality;
         let langCode = "";
 
-        // 1. Dil Tespiti (URL içeriğine bakarak)
         const isMulti = url.includes(".urlset/master.m3u8") || url.toLowerCase().includes("multi") || url.toLowerCase().includes("dual");
         if (isMulti) {
           langCode = "Multi";
@@ -158,14 +178,12 @@ function getStreams(tmdbId, mediaType, season, episode) {
           langCode = "ENG";
         }
 
-        // 2. Kalite Tespiti Fix
         if (!finalQuality || finalQuality === "Auto") {
             const detectedQuality = extractQuality(url);
             finalQuality = (detectedQuality !== "HD") ? detectedQuality : (url.includes("m3u8") ? "Auto" : "HD");
         }
 
-        // Konsola ne eklediğimizi yazalım (Debug için)
-        console.log(`[CinemaCity] Link Eklendi -> Dil: ${langCode}, Kalite: ${finalQuality}`);
+        console.error(`[CC-DEBUG] Link Ekleniyor -> Dil: ${langCode}, Kalite: ${finalQuality}, URL: ${url.substring(0, 50)}...`);
 
         streams.push({
           name: `CinemaCity [${langCode}]`,
@@ -192,7 +210,6 @@ function getStreams(tmdbId, mediaType, season, episode) {
         }
       };
 
-      // --- DÜZELTİLEN DÖNGÜ KISMI ---
       if (mediaType === "movie") {
         if (Array.isArray(fileData)) {
           fileData.forEach(item => {
@@ -213,10 +230,10 @@ function getStreams(tmdbId, mediaType, season, episode) {
         }
       }
       
-      console.log("[CinemaCity] Toplam stream bulundu:", streams.length);
+      console.error("[CC-DEBUG] Toplam bulunan stream:", streams.length);
       return streams;
     } catch (error) {
-      console.error("[CinemaCity] HATA:", error);
+      console.error("[CC-DEBUG] KRITIK HATA:", error.message);
       return [];
     }
   });
