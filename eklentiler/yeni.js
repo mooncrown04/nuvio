@@ -1,6 +1,5 @@
 /**
- * cinemacity - Flag & Multi-Counter Version
- * Analiz edilen diller: TR, EN, DE, FR, IT, AR, HI, KO, JA, ZH
+ * cinemacity - Advanced Flag, Quality & Multi-Language Version
  */
 
 var __defProp = Object.defineProperty;
@@ -75,6 +74,7 @@ function extractQuality(url) {
   if (low.includes("1080p")) return "1080p";
   if (low.includes("720p")) return "720p";
   if (low.includes("480p")) return "480p";
+  if (low.includes("360p")) return "360p";
   return "HD";
 }
 
@@ -140,23 +140,26 @@ function getStreams(tmdbId, mediaType, season, episode) {
         const urlLower = url.toLowerCase();
         let flags = [];
         
-        // 1. Dil Eşleşmeleri
+        // Genişletilmiş Dil Haritası
         const langMap = [
-          { key: "turkish", flag: "🇹🇷" },
-          { key: "_tr", flag: "🇹🇷" },
-          { key: "english", flag: "🇺🇸" },
-          { key: "_en", flag: "🇺🇸" },
-          { key: "german", flag: "🇩🇪" },
-          { key: "_de", flag: "🇩🇪" },
-          { key: "french", flag: "🇫🇷" },
-          { key: "_fr", flag: "🇫🇷" },
-          { key: "italian", flag: "🇮🇹" },
-          { key: "_it", flag: "🇮🇹" },
+          { key: "turkish", flag: "🇹🇷" }, { key: "_tr", flag: "🇹🇷" },
+          { key: "english", flag: "🇺🇸" }, { key: "_en", flag: "🇺🇸" },
+          { key: "german", flag: "🇩🇪" }, { key: "_de", flag: "🇩🇪" },
+          { key: "french", flag: "🇫🇷" }, { key: "_fr", flag: "🇫🇷" },
+          { key: "italian", flag: "🇮🇹" }, { key: "_it", flag: "🇮🇹" },
+          { key: "spanish", flag: "🇪🇸" }, { key: "_es", flag: "🇪🇸" },
+          { key: "portuguese", flag: "🇵🇹" }, { key: "_pt", flag: "🇵🇹" },
+          { key: "brazil", flag: "🇧🇷" },
+          { key: "polish", flag: "🇵🇱" }, { key: "_pl", flag: "🇵🇱" },
+          { key: "russian", flag: "🇷🇺" }, { key: "_ru", flag: "🇷🇺" },
           { key: "arabic", flag: "🇸🇦" },
           { key: "hindi", flag: "🇮🇳" },
           { key: "korean", flag: "🇰🇷" },
           { key: "japanese", flag: "🇯🇵" },
-          { key: "chinese", flag: "🇨🇳" }
+          { key: "chinese", flag: "🇨🇳" },
+          { key: "thai", flag: "🇹🇭" },
+          { key: "dutch", flag: "🇳🇱" },
+          { key: "czech", flag: "🇨🇿" }, { key: "_cz", flag: "🇨🇿" }
         ];
 
         langMap.forEach(item => {
@@ -165,22 +168,21 @@ function getStreams(tmdbId, mediaType, season, episode) {
           }
         });
 
-        // 2. Multi Sayacı (Kaç farklı .m4a var?)
-        const audioTrackCount = (url.match(/\.m4a/g) || []).length;
-        
-        let finalLabel = "";
-        if (audioTrackCount > 1) {
-          finalLabel = `Multi: ${audioTrackCount} ${flags.join("")}`;
-        } else if (flags.length > 0) {
-          finalLabel = flags.join("");
-        } else {
-          finalLabel = "Orijinal 📄";
-        }
-
+        // Ses kanalı sayısını bul (.m4a dosyaları)
+        const audioCount = (url.match(/\.m4a/g) || []).length;
         const finalQuality = quality || extractQuality(url);
 
+        let infoLabel = "";
+        if (audioCount > 1) {
+          infoLabel = `Multi: ${audioCount} ${flags.join("")}`;
+        } else if (flags.length > 0) {
+          infoLabel = flags.join("");
+        } else {
+          infoLabel = "Orijinal 📄";
+        }
+
         streams.push({
-          name: `CinemaCity [${finalLabel}]`,
+          name: `CinemaCity [${infoLabel}]`,
           title: `${title} - ${finalQuality}`,
           url: url,
           quality: finalQuality, 
@@ -194,10 +196,10 @@ function getStreams(tmdbId, mediaType, season, episode) {
             str.split(",").forEach(p => {
                 const m = p.match(/\[(.*?)\](.*)/);
                 if (m) addStream(m[2], title, m[1]);
-                else addStream(p, title, "HD");
+                else addStream(p, title, extractQuality(p));
             });
         } else {
-            addStream(str, title, "HD");
+            addStream(str, title, extractQuality(str));
         }
       };
 
