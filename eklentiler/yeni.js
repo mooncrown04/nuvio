@@ -1,6 +1,6 @@
 /**
  * cinemacity - Built from src/cinemacity/
- * Final & Corrected Version: Precise Multi-Audio vs Original Detection
+ * Strategy: Data-Driven Language Detection & Full Debug Logging
  */
 
 var __defProp = Object.defineProperty;
@@ -75,7 +75,6 @@ function extractQuality(url) {
   if (low.includes("1080p")) return "1080p";
   if (low.includes("720p")) return "720p";
   if (low.includes("480p")) return "480p";
-  if (low.includes("360p")) return "360p";
   return "HD";
 }
 
@@ -83,14 +82,19 @@ function extractQuality(url) {
 function getStreams(tmdbId, mediaType, season, episode) {
   return __async(this, null, function* () {
     try {
-      console.error("[CC-DEBUG] İstek başladı. TMDB:", tmdbId);
+      console.error(`[CC-DEBUG] İŞLEM BAŞLADI -> TMDB: ${tmdbId} | Tip: ${mediaType}`);
       
       const tmdbUrl = `https://api.themoviedb.org/3/${mediaType === "tv" ? "tv" : "movie"}/${tmdbId}?api_key=${TMDB_API_KEY}`;
       const tmdbRes = yield fetch(tmdbUrl, { skipSizeCheck: true, timeout: 15000 });
       const mediaInfo = yield tmdbRes.json();
       const animeTitle = mediaInfo.title || mediaInfo.name;
       
-      if (!animeTitle) return [];
+      if (!animeTitle) {
+        console.error("[CC-DEBUG] HATA: TMDB'den isim çekilemedi!");
+        return [];
+      }
+
+      console.error(`[CC-DEBUG] Aranacak Başlık: ${animeTitle}`);
 
       const searchUrl = `${MAIN_URL}/index.php?do=search&subaction=search&story=${encodeURIComponent(animeTitle)}`;
       const searchHtml = yield fetchText(searchUrl);
@@ -102,13 +106,15 @@ function getStreams(tmdbId, mediaType, season, episode) {
         const anchor = $search(el).find("a").filter((idx, a) => ($search(a).attr("href") || "").includes(".html")).first();
         if (!anchor.length) return;
         const foundTitle = anchor.text().split("(")[0].trim();
-        const href = anchor.attr("href");
         if (foundTitle.toLowerCase().includes(animeTitle.toLowerCase()) || animeTitle.toLowerCase().includes(foundTitle.toLowerCase())) {
-          mediaUrl = href;
+          mediaUrl = anchor.attr("href");
         }
       });
 
-      if (!mediaUrl) return [];
+      if (!mediaUrl) {
+        console.error(`[CC-DEBUG] HATA: Sitede '${animeTitle}' için sonuç bulunamadı.`);
+        return [];
+      }
 
       const pageHtml = yield fetchText(mediaUrl);
       const $page = cheerio.load(pageHtml);
@@ -125,10 +131,7 @@ function getStreams(tmdbId, mediaType, season, episode) {
             const fileMatch = decoded.match(new RegExp(`file\\s*:\\s*(['"])(.*?)\\1`, "s")) || decoded.match(new RegExp("file\\s*:\\s*(\\[.*?\\])", "s"));
             if (fileMatch) {
               let rawFile = fileMatch[2] || fileMatch[1];
-              try {
-                const unescaped = rawFile.replace(/\\(.)/g, "$1");
-                fileData = JSON.parse(unescaped);
-              } catch (e) {
+              try { fileData = JSON.parse(rawFile.replace(/\\(.)/g, "$1")); } catch (e) { 
                 try { fileData = JSON.parse(rawFile); } catch (e2) { fileData = rawFile; }
               }
               if (fileData) break;
@@ -137,32 +140,50 @@ function getStreams(tmdbId, mediaType, season, episode) {
         }
       });
 
-      if (!fileData) return [];
+      if (!fileData) {
+        console.error("[CC-DEBUG] HATA: Video dosyası (fileData) bulunamadı.");
+        return [];
+      }
 
       const streams = [];
 
       const addStream = (url, title, quality) => {
-        if (!url || !url.startsWith("http") || url.length < 15) return;
+        if (!url || !url.startsWith("http") || url.length < 15) {
+          console.error(`[CC-DEBUG] GEÇERSİZ LİNK ATLANDI: ${url}`);
+          return;
+        }
         
-        let langCode = "ENG"; // Varsayılan (David gibi m3u8 olup multi kelimesi geçmeyenler için)
         const urlLower = url.toLowerCase();
+        
+        // --- BAYRAK VE DİL PLANLAMASI ---
+        let label = "";
+        let flag = "";
+        
+        const isMulti = urlLower.includes("multi") || urlLower.includes("dual") || url.includes(".m3u8");
+        const isTR = urlLower.includes("_tr") || urlLower.includes("dublaj") || urlLower.includes("turkce") || urlLower.includes("/tr/");
+        const isEN = urlLower.includes("_en") || urlLower.includes("english") || urlLower.includes("original");
 
-        // --- KESİN DİL AYIRIMI ---
-        const hasMultiKeyword = urlLower.includes("multi") || urlLower.includes("dual");
-        const hasTrKeyword = urlLower.includes("_tr") || urlLower.includes("dublaj") || urlLower.includes("/tr/");
-
-        if (hasMultiKeyword) {
-          langCode = "Multi"; // The Singers gibi içinde multi yazıyorsa
-        } else if (hasTrKeyword) {
-          langCode = "TR";    // Açıkça TR/Dublaj yazıyorsa
+        if (isMulti) {
+          label = "Multi";
+          flag = "🌍";
+        } else if (isTR) {
+          label = "TR";
+          flag = "🇹🇷";
+        } else if (isEN) {
+          label = "ENG";
+          flag = "🇺🇸";
+        } else {
+          label = "Orjinal";
+          flag = "📄";
         }
 
         const finalQuality = quality || extractQuality(url);
 
-        console.error(`[CC-DEBUG] Karar -> Dil: ${langCode}, Kalite: ${finalQuality}`);
+        // LOGLAMA: Karar sürecini izle
+        console.error(`[CC-DEBUG] ANALİZ -> Link: ${url.substring(0, 30)}... | Tespit: ${label} | Kalite: ${finalQuality}`);
 
         streams.push({
-          name: `CinemaCity [${langCode}]`,
+          name: `CinemaCity [${label} ${flag}]`,
           title: `${title} - ${finalQuality}`,
           url: url,
           quality: finalQuality, 
@@ -173,8 +194,7 @@ function getStreams(tmdbId, mediaType, season, episode) {
       const processStr = (str, title) => {
         if (!str) return;
         if (str.includes("[") && str.includes(",")) {
-            const parts = str.split(",");
-            parts.forEach(p => {
+            str.split(",").forEach(p => {
                 const m = p.match(/\[(.*?)\](.*)/);
                 if (m) addStream(m[2], title, m[1]);
                 else addStream(p, title, extractQuality(p));
@@ -184,30 +204,26 @@ function getStreams(tmdbId, mediaType, season, episode) {
         }
       };
 
+      // Film/Dizi İşleme Mantığı
       if (mediaType === "movie") {
-        if (Array.isArray(fileData)) {
-          fileData.forEach(item => {
-            if (item.file) processStr(item.file, animeTitle);
-          });
-        } else if (typeof fileData === "string") {
-          processStr(fileData, animeTitle);
-        }
+        if (Array.isArray(fileData)) fileData.forEach(item => item.file && processStr(item.file, animeTitle));
+        else if (typeof fileData === "string") processStr(fileData, animeTitle);
       } else {
         if (Array.isArray(fileData)) {
-          const sLabel = `Season ${season}`;
-          const sObj = fileData.find((s) => (s.title || "").includes(sLabel) || (s.title || "").includes(`S${season}`));
+          const sObj = fileData.find((s) => (s.title || "").includes(`Season ${season}`) || (s.title || "").includes(`S${season}`));
           if (sObj && sObj.folder) {
-            const eLabel = `Episode ${episode}`;
-            const eObj = sObj.folder.find((e) => (e.title || "").includes(eLabel) || (e.title || "").includes(`E${episode}`));
+            const eObj = sObj.folder.find((e) => (e.title || "").includes(`Episode ${episode}`) || (e.title || "").includes(`E${episode}`));
             if (eObj && eObj.file) processStr(eObj.file, `${animeTitle} S${season}E${episode}`);
+          } else {
+              console.error(`[CC-DEBUG] HATA: Sezon ${season} bulunamadı.`);
           }
         }
       }
       
-      console.error("[CC-DEBUG] Toplam bulunan stream:", streams.length);
+      console.error(`[CC-DEBUG] BİTTİ. Toplam Stream: ${streams.length}`);
       return streams;
     } catch (error) {
-      console.error("[CC-DEBUG] KRİTİK HATA:", error);
+      console.error(`[CC-DEBUG] KRİTİK SİSTEM HATASI: ${error.message}`);
       return [];
     }
   });
