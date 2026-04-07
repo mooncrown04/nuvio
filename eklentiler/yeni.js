@@ -1,6 +1,6 @@
 /**
  * cinemacity - Built from src/cinemacity/
- * Final Version: Multi-Quality, Multi-Audio Detection & Turkish Labels
+ * Final & Debug Version: Çoklu Kalite, Dil Tespiti ve Detaylı Loglar
  */
 
 var __defProp = Object.defineProperty;
@@ -83,6 +83,8 @@ function extractQuality(url) {
 function getStreams(tmdbId, mediaType, season, episode) {
   return __async(this, null, function* () {
     try {
+      console.log("[CinemaCity] İşlem başladı. ID:", tmdbId);
+      
       const tmdbUrl = `https://api.themoviedb.org/3/${mediaType === "tv" ? "tv" : "movie"}/${tmdbId}?api_key=${TMDB_API_KEY}`;
       const tmdbRes = yield fetch(tmdbUrl, { skipSizeCheck: true, timeout: 15000 });
       const mediaInfo = yield tmdbRes.json();
@@ -123,15 +125,13 @@ function getStreams(tmdbId, mediaType, season, episode) {
             const fileMatch = decoded.match(new RegExp(`file\\s*:\\s*(['"])(.*?)\\1`, "s")) || decoded.match(new RegExp("file\\s*:\\s*(\\[.*?\\])", "s"));
             if (fileMatch) {
               let rawFile = fileMatch[2] || fileMatch[1];
-              if (rawFile && rawFile.length > 5) {
-                try {
-                  const unescaped = rawFile.replace(/\\(.)/g, "$1");
-                  fileData = JSON.parse(unescaped);
-                } catch (e) {
-                  try { fileData = JSON.parse(rawFile); } catch (e2) { fileData = rawFile; }
-                }
-                if (fileData) break;
+              try {
+                const unescaped = rawFile.replace(/\\(.)/g, "$1");
+                fileData = JSON.parse(unescaped);
+              } catch (e) {
+                try { fileData = JSON.parse(rawFile); } catch (e2) { fileData = rawFile; }
               }
+              if (fileData) break;
             }
           }
         }
@@ -148,7 +148,7 @@ function getStreams(tmdbId, mediaType, season, episode) {
         let finalQuality = quality;
         let langCode = "";
 
-        // 1. Dil Analizi
+        // 1. Dil Tespiti (URL içeriğine bakarak)
         const isMulti = url.includes(".urlset/master.m3u8") || url.toLowerCase().includes("multi") || url.toLowerCase().includes("dual");
         if (isMulti) {
           langCode = "Multi";
@@ -158,13 +158,15 @@ function getStreams(tmdbId, mediaType, season, episode) {
           langCode = "ENG";
         }
 
-        // 2. Kalite Analizi Fix
+        // 2. Kalite Tespiti Fix
         if (!finalQuality || finalQuality === "Auto") {
             const detectedQuality = extractQuality(url);
             finalQuality = (detectedQuality !== "HD") ? detectedQuality : (url.includes("m3u8") ? "Auto" : "HD");
         }
 
-        // 3. Çıktı formatı: "CinemaCity [TR]" ve "Film Adı - 1080p"
+        // Konsola ne eklediğimizi yazalım (Debug için)
+        console.log(`[CinemaCity] Link Eklendi -> Dil: ${langCode}, Kalite: ${finalQuality}`);
+
         streams.push({
           name: `CinemaCity [${langCode}]`,
           title: `${finalTitle} - ${finalQuality}`,
@@ -176,7 +178,6 @@ function getStreams(tmdbId, mediaType, season, episode) {
 
       const processStr = (str, title) => {
         if (!str) return;
-        // Eğer tek bir string içinde virgülle ayrılmış birden fazla kalite varsa
         if (str.includes("[") && str.includes(",")) {
             const parts = str.split(",");
             parts.forEach(p => {
@@ -191,9 +192,9 @@ function getStreams(tmdbId, mediaType, season, episode) {
         }
       };
 
+      // --- DÜZELTİLEN DÖNGÜ KISMI ---
       if (mediaType === "movie") {
         if (Array.isArray(fileData)) {
-          // Tüm kaliteleri çekmek için forEach kullanıldı
           fileData.forEach(item => {
             if (item.file) processStr(item.file, animeTitle);
           });
@@ -211,8 +212,11 @@ function getStreams(tmdbId, mediaType, season, episode) {
           }
         }
       }
+      
+      console.log("[CinemaCity] Toplam stream bulundu:", streams.length);
       return streams;
     } catch (error) {
+      console.error("[CinemaCity] HATA:", error);
       return [];
     }
   });
