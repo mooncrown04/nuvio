@@ -1,6 +1,5 @@
 /**
  * Nuvio Local Scraper - HDFilmCehennemi Adaptasyonu
- * Kısıtlamalar: async/await KESİNLİKLE YASAK.
  * NOT: Tüm loglar console.error olmalıdır.
  */
 
