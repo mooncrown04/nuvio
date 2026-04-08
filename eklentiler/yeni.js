@@ -6,21 +6,10 @@ var TMDB_API = "https://api.themoviedb.org/3";
 var TMDB_API_KEY = "1865f43a0549ca50d341dd9ab8b29f49";
 var USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
-// --- HELPERS ---
-function getBaseUrl(url) {
-    if (!url) return DOMAIN;
-    var match = url.match(/^(https?:\/\/[^\/]+)/);
-    return match ? match[1] : DOMAIN;
-}
-
-function stripTags(html) {
-    return (html || "").replace(/<[^>]+>/g, "").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&nbsp;/g, " ").trim();
-}
-
-// --- CORE LOGIC ---
 async function getTmdbDetails(tmdbId, mediaType) {
     var isSeries = mediaType === "series" || mediaType === "tv";
     var endpoint = isSeries ? "tv" : "movie";
+    // Orijinal isimleri almak için dili global (en-US) tutuyoruz
     var url = `${TMDB_API}/${endpoint}/${tmdbId}?api_key=${TMDB_API_KEY}&language=en-US`;
     
     try {
@@ -28,103 +17,80 @@ async function getTmdbDetails(tmdbId, mediaType) {
         let data = await res.json();
         return {
             title: isSeries ? data.name : data.title,
+            original_title: isSeries ? data.original_name : data.original_title,
             year: (isSeries ? data.first_air_date : data.release_date || "").slice(0, 4)
         };
     } catch (e) { return null; }
 }
 
-async function searchGlobal(title) {
-    var query = encodeURIComponent(title.trim());
-    var url = DOMAIN + "/?s=" + query;
+async function getStreams(tmdbId, mediaType, season, episode) {
+    const tmdb = await getTmdbDetails(tmdbId, mediaType);
+    if (!tmdb) return [];
+
+    // Orijinal başlık ile arama yapıyoruz (En garanti sonuç)
+    const searchQuery = tmdb.original_title || tmdb.title;
+    const url = DOMAIN + "/?s=" + encodeURIComponent(searchQuery);
     
     try {
         let res = await fetch(url, { headers: { "User-Agent": USER_AGENT } });
         let html = await res.text();
-        let results = [];
-        let chunks = html.split(/<article/i);
-
-        for (let i = 1; i < chunks.length; i++) {
-            let chunk = chunks[i];
-            let titleM = chunk.match(/<h[12][^>]*>([\s\S]*?)<\/h[12]>/i);
-            if (!titleM) continue;
-
-            let titleRaw = stripTags(titleM[1]);
-            let hrefM = chunk.match(/href="([^"]+)"/i);
-            
-            if (hrefM && titleRaw) {
-                results.push({ title: titleRaw, url: hrefM[1] });
-            }
-        }
-        return results;
-    } catch (e) { return []; }
-}
-
-// --- Dizi Bölüm Ayıklama (TV Episode Extraction) ---
-function extractTvLinks(html, season, episode) {
-    let links = [];
-    // Sayfadaki tüm linkleri ve metinleri tara
-    let re = /<a[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi;
-    let m;
-    while ((m = re.exec(html)) !== null) {
-        let text = stripTags(m[2]).toLowerCase();
-        let href = m[1];
         
-        // S01E05 veya Episode 05 gibi kalıpları ara
-        let epPattern = new RegExp(`(ep|episode|e)0?${episode}\\b`, "i");
-        let seaPattern = new RegExp(`(s|season)0?${season}\\b`, "i");
+        // Arama sonuçlarından en uygun olanı bul (Yıl ve isim kontrolü)
+        let results = html.split(/<article/i).slice(1).map(chunk => {
+            let titleM = chunk.match(/<h[12][^>]*>([\s\S]*?)<\/h[12]>/i);
+            let hrefM = chunk.match(/href="([^"]+)"/i);
+            return {
+                title: titleM ? titleM[1].replace(/<[^>]+>/g, "").trim() : "",
+                url: hrefM ? hrefM[1] : ""
+            };
+        });
 
-        if (epPattern.test(text)) {
-            links.push({ url: href, info: text });
-        }
-    }
-    return links;
-}
+        // İsim benzerliğine göre filtrele
+        let target = results.find(r => 
+            r.title.toLowerCase().includes(searchQuery.toLowerCase())
+        ) || results[0];
 
-// --- MAIN FUNCTION ---
-async function getStreams(tmdbId, mediaType, season, episode) {
-    const isSeries = mediaType === "tv" || mediaType === "series";
-    const tmdb = await getTmdbDetails(tmdbId, mediaType);
-    if (!tmdb) return [];
+        if (!target) return [];
 
-    const searchResults = await searchGlobal(tmdb.title);
-    if (searchResults.length === 0) return [];
+        // Hedef sayfaya girip linkleri tara
+        let pageRes = await fetch(target.url, { headers: { "User-Agent": USER_AGENT } });
+        let pageHtml = await pageRes.text();
 
-    let finalStreams = [];
-
-    // En alakalı ilk sonucu işle
-    let targetPage = searchResults[0].url;
-    let res = await fetch(targetPage, { headers: { "User-Agent": USER_AGENT } });
-    let html = await res.text();
-
-    let candidateLinks = [];
-
-    if (isSeries) {
-        // Dizi ise bölüme özel linkleri bul
-        candidateLinks = extractTvLinks(html, season, episode);
-    } else {
-        // Film ise "Download" veya "G-Drive" butonlarını bul
-        let re = /class="maxbutton-1"[^>]*href="([^"]+)"/gi;
+        let finalStreams = [];
+        let linkRe = /<a[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi;
         let m;
-        while ((m = re.exec(html)) !== null) {
-            candidateLinks.push({ url: m[1], info: "Movie Download" });
-        }
-    }
 
-    // Linkleri Nuvio formatına çevir
-    for (let linkObj of candidateLinks) {
-        if (linkObj.url.includes("unblocked") || linkObj.url.includes("r?key=")) {
-            // Not: Gerçek bir bypasser servisi burada final linki çözer.
-            // Şimdilik direkt yönlendirme linkini veriyoruz.
+        while ((m = linkRe.exec(pageHtml)) !== null) {
+            let href = m[1];
+            let text = m[2].replace(/<[^>]+>/g, "").trim().toLowerCase();
+
+            // SADECE GÜVENLİ LİNKLERİ AL (Download butonları veya Direct linkler)
+            if (!href.includes("unblocked") && !href.includes("r?key=")) continue;
+
+            // Dizi kontrolü
+            if (mediaType === "tv" || mediaType === "series") {
+                let epPattern = new RegExp(`(ep|episode|e)0?${episode}\\b`, "i");
+                if (!epPattern.test(text) && !text.includes("zip") && !text.includes("pack")) continue;
+            }
+
+            // TÜRKÇE VEYA MULTİ DİL KONTROLÜ
+            let isTurkish = text.includes("turkish") || text.includes(" tr ") || text.includes("multi");
+            let languageLabel = isTurkish ? " [TR/MULTI]" : " [ENG]";
+
             finalStreams.push({
-                name: "UHD (Global)",
-                title: (isSeries ? `S${season}E${episode}` : "Movie") + " - " + linkObj.info,
-                url: linkObj.url,
-                quality: "720p/1080p"
+                name: "UHDMovies",
+                title: (isTurkish ? "⭐ " : "") + target.title.split("|")[0].trim() + languageLabel,
+                url: href,
+                quality: text.includes("2160p") ? "4K" : text.includes("1080p") ? "1080p" : "720p"
             });
         }
-    }
 
-    return finalStreams;
+        // Türkçe olanları listenin en başına taşı
+        return finalStreams.sort((a, b) => b.title.includes("⭐") - a.title.includes("⭐"));
+
+    } catch (e) {
+        return [];
+    }
 }
 
 if (typeof module !== "undefined") module.exports = { getStreams };
