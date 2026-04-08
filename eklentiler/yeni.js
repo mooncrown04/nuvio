@@ -1,96 +1,162 @@
-"use strict";
+/**
+ * Nuvio Local Scraper - HDFilmCehennemi Adaptasyonu
+ * Kısıtlamalar: async/await KESİNLİKLE YASAK.
+ * NOT: Tüm loglar console.error olmalıdır.
+ */
 
-// src/uhdmovies/index.js
-var DOMAIN = "https://uhdmovies.rip";
-var TMDB_API = "https://api.themoviedb.org/3";
-var TMDB_API_KEY = "1865f43a0549ca50d341dd9ab8b29f49";
-var USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+var cheerio = require("cheerio-without-node-native");
+var axios = require("axios");
 
-async function getTmdbDetails(tmdbId, mediaType) {
-    var isSeries = mediaType === "series" || mediaType === "tv";
-    var endpoint = isSeries ? "tv" : "movie";
-    // Orijinal isimleri almak için dili global (en-US) tutuyoruz
-    var url = `${TMDB_API}/${endpoint}/${tmdbId}?api_key=${TMDB_API_KEY}&language=en-US`;
-    
+const PROVIDER_NAME = "HDFilmCehennemi";
+const BASE_URL = "https://www.hdfilmcehennemi.nl";
+const EMPTY_RESULT = [];
+
+const DEFAULT_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:137.0) Gecko/20100101 Firefox/137.0",
+    "X-Requested-With": "fetch"
+};
+
+/**
+ * Kotlin'deki dcHello fonksiyonunun JavaScript karşılığı
+ */
+function decodeSource(parts) {
     try {
-        let res = await fetch(url);
-        let data = await res.json();
-        return {
-            title: isSeries ? data.name : data.title,
-            original_title: isSeries ? data.original_name : data.original_title,
-            year: (isSeries ? data.first_air_date : data.release_date || "").slice(0, 4)
-        };
-    } catch (e) { return null; }
-}
+        // 1. Birleştir ve Tersine Çevir
+        let joined = parts.join("").split("").reverse().join("");
 
-async function getStreams(tmdbId, mediaType, season, episode) {
-    const tmdb = await getTmdbDetails(tmdbId, mediaType);
-    if (!tmdb) return [];
-
-    // Orijinal başlık ile arama yapıyoruz (En garanti sonuç)
-    const searchQuery = tmdb.original_title || tmdb.title;
-    const url = DOMAIN + "/?s=" + encodeURIComponent(searchQuery);
-    
-    try {
-        let res = await fetch(url, { headers: { "User-Agent": USER_AGENT } });
-        let html = await res.text();
-        
-        // Arama sonuçlarından en uygun olanı bul (Yıl ve isim kontrolü)
-        let results = html.split(/<article/i).slice(1).map(chunk => {
-            let titleM = chunk.match(/<h[12][^>]*>([\s\S]*?)<\/h[12]>/i);
-            let hrefM = chunk.match(/href="([^"]+)"/i);
-            return {
-                title: titleM ? titleM[1].replace(/<[^>]+>/g, "").trim() : "",
-                url: hrefM ? hrefM[1] : ""
-            };
+        // 2. ROT13 Uygula
+        let rot13 = joined.replace(/[a-zA-Z]/g, function(c) {
+            return String.fromCharCode((c <= "Z" ? 90 : 122) >= (c = c.charCodeAt(0) + 13) ? c : c - 26);
         });
 
-        // İsim benzerliğine göre filtrele
-        let target = results.find(r => 
-            r.title.toLowerCase().includes(searchQuery.toLowerCase())
-        ) || results[0];
+        // 3. Base64 Decode (Buffer kullanıyoruz)
+        let decodedBytes = Buffer.from(rot13, 'base64');
 
-        if (!target) return [];
-
-        // Hedef sayfaya girip linkleri tara
-        let pageRes = await fetch(target.url, { headers: { "User-Agent": USER_AGENT } });
-        let pageHtml = await pageRes.text();
-
-        let finalStreams = [];
-        let linkRe = /<a[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi;
-        let m;
-
-        while ((m = linkRe.exec(pageHtml)) !== null) {
-            let href = m[1];
-            let text = m[2].replace(/<[^>]+>/g, "").trim().toLowerCase();
-
-            // SADECE GÜVENLİ LİNKLERİ AL (Download butonları veya Direct linkler)
-            if (!href.includes("unblocked") && !href.includes("r?key=")) continue;
-
-            // Dizi kontrolü
-            if (mediaType === "tv" || mediaType === "series") {
-                let epPattern = new RegExp(`(ep|episode|e)0?${episode}\\b`, "i");
-                if (!epPattern.test(text) && !text.includes("zip") && !text.includes("pack")) continue;
-            }
-
-            // TÜRKÇE VEYA MULTİ DİL KONTROLÜ
-            let isTurkish = text.includes("turkish") || text.includes(" tr ") || text.includes("multi");
-            let languageLabel = isTurkish ? " [TR/MULTI]" : " [ENG]";
-
-            finalStreams.push({
-                name: "UHDMovies",
-                title: (isTurkish ? "⭐ " : "") + target.title.split("|")[0].trim() + languageLabel,
-                url: href,
-                quality: text.includes("2160p") ? "4K" : text.includes("1080p") ? "1080p" : "720p"
-            });
+        // 4. Unmix (Matematiksel Döngü)
+        let unmixed = "";
+        for (let i = 0; i < decodedBytes.length; i++) {
+            let charCode = decodedBytes[i] & 0xFF;
+            let newChar = (charCode - (399756995 % (i + 5)) + 256) % 256;
+            unmixed += String.fromCharCode(newChar);
         }
 
-        // Türkçe olanları listenin en başına taşı
-        return finalStreams.sort((a, b) => b.title.includes("⭐") - a.title.includes("⭐"));
-
+        return unmixed.includes("https") ? "https" + unmixed.split("https")[1] : unmixed;
     } catch (e) {
-        return [];
+        console.error(`[${PROVIDER_NAME}] Çözücü Hatası: ${e.message}`);
+        return null;
     }
 }
 
-if (typeof module !== "undefined") module.exports = { getStreams };
+function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
+    console.error(`[${PROVIDER_NAME}] Başlatıldı -> ID: ${tmdbId}`);
+
+    return new Promise(function(resolve) {
+        var isMovie = mediaType === 'movie';
+        var tmdbUrl = 'https://api.themoviedb.org/3/' + (isMovie ? 'movie' : 'tv') + '/' + tmdbId + '?language=tr-TR&api_key=4ef0d7355d9ffb5151e987764708ce96';
+
+        axios.get(tmdbUrl, { headers: DEFAULT_HEADERS })
+            .then(function(response) {
+                var query = response.data.title || response.data.name;
+                console.error(`[${PROVIDER_NAME}] Aranan: ${query}`);
+
+                // Arama İsteği (Kotlin'deki /search?q= mantığı)
+                return axios.get(`${BASE_URL}/search?q=` + encodeURIComponent(query), { headers: DEFAULT_HEADERS });
+            })
+            .then(function(res) {
+                // Kotlin'deki JSON sonuç yapısını simüle ediyoruz (Results data class)
+                var searchData = res.data; 
+                var firstResultHtml = (searchData.results && searchData.results.length > 0) ? searchData.results[0] : null;
+
+                if (!firstResultHtml) {
+                    console.error(`[${PROVIDER_NAME}] HATA: Site içi arama sonucu boş.`);
+                    return resolve(EMPTY_RESULT);
+                }
+
+                var $search = cheerio.load(firstResultHtml);
+                var targetUrl = $search("a").first().attr("href");
+
+                if (!targetUrl) return resolve(EMPTY_RESULT);
+
+                // TV ise sezon/bölüm URL yapısını ayarla (Kotlin mantığına uygun)
+                if (!isMovie) {
+                    // Not: HDFC genelde dizi linklerini farklı yapıda tutabilir, burayı siteye göre özelleştirebilirsin
+                    targetUrl = targetUrl.replace(/\/$/, "") + "-sezon-" + seasonNum + "-bolum-" + episodeNum;
+                }
+
+                console.error(`[${PROVIDER_NAME}] Sayfa URL: ${targetUrl}`);
+                return axios.get(targetUrl, { headers: DEFAULT_HEADERS });
+            })
+            .then(function(pageRes) {
+                var $page = cheerio.load(pageRes.data);
+                
+                // Kotlin'deki loadLinks mantığı: "alternative-link" butonlarını bul
+                var videoID = $page("button.alternative-link").first().attr("data-video");
+
+                if (!videoID) {
+                    console.error(`[${PROVIDER_NAME}] HATA: Video ID bulunamadı.`);
+                    return resolve(EMPTY_RESULT);
+                }
+
+                // Video API isteği
+                return axios.get(`${BASE_URL}/video/${videoID}/`, { 
+                    headers: DEFAULT_HEADERS,
+                    referer: pageRes.config.url 
+                });
+            })
+            .then(function(apiRes) {
+                var apiData = apiRes.data; // JSON String
+                
+                // Kotlin: Regex("""data-src=\\"([^"]+)""").find(apiGet)
+                var iframeMatch = apiData.match(/data-src=\\"([^"]+)/);
+                var iframeUrl = iframeMatch ? iframeMatch[1].replace(/\\/g, "") : "";
+
+                if (iframeUrl.contains("rapidrame")) {
+                    iframeUrl = BASE_URL + "/rplayer/" + iframeUrl.split("?rapidrame_id=")[1];
+                }
+
+                console.error(`[${PROVIDER_NAME}] Iframe/Player URL: ${iframeUrl}`);
+                return axios.get(iframeUrl, { headers: DEFAULT_HEADERS });
+            })
+            .then(function(playerRes) {
+                // Kotlin'deki getAndUnpack ve dcHello mantığı
+                var scriptContent = playerRes.data;
+                var fileLinkMatch = scriptContent.match(/file_link="(.*?)"/);
+                
+                if (!fileLinkMatch) {
+                    console.error(`[${PROVIDER_NAME}] HATA: file_link bulunamadı.`);
+                    return resolve(EMPTY_RESULT);
+                }
+
+                // Base64 parçalarını ayıkla (Kotlin: Regex("\"(.*?)\"").findAll(base64Input))
+                var partsMatch = fileLinkMatch[1].match(/"(.*?)"/g);
+                var parts = partsMatch ? partsMatch.map(p => p.replace(/"/g, "")) : [];
+
+                var finalLink = decodeSource(parts);
+
+                if (finalLink) {
+                    console.error(`[${PROVIDER_NAME}] BAŞARILI LİNK: ${finalLink}`);
+                    
+                    resolve([{
+                        name: PROVIDER_NAME,
+                        title: "HDFC - HD",
+                        url: finalLink,
+                        quality: "1080p",
+                        headers: {
+                            "User-Agent": DEFAULT_HEADERS["User-Agent"],
+                            "Referer": BASE_URL + "/"
+                        }
+                    }]);
+                } else {
+                    resolve(EMPTY_RESULT);
+                }
+            })
+            .catch(function(err) {
+                console.error(`[${PROVIDER_NAME}] KRİTİK HATA: ${err.message}`);
+                resolve(EMPTY_RESULT);
+            });
+    });
+}
+
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = { getStreams: getStreams };
+}
