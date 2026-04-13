@@ -6,23 +6,10 @@
     "poster": "https://picon.pics/TR/Ulusal/Startv.png",
     "background": "https://picon.pics/TR/Ulusal/Startv.png",
     "logo": "https://i.imgur.com/Dlsm9XP.png",
-    "description": "Türkiye'nin ilk ulusal televizyon kanalı. Canlı yayınlar, diziler ve haberler...",
+    "description": "Türkiye'nin ilk ulusal televizyon kanalı. Canlı yayınlar, diziler ve haberler.**..",
     "genres": ["Genel"],
     "releaseInfo": "LIVE",
-    "runtime": "Canlı Yayın",
-    "trailers": [
-      {
-        "source": "Mzw2ttJD2qQ",
-        "type": "Trailer"
-      }
-    ],
-    "videos": [
-      {
-        "id": "star",
-        "title": "Canlı Yayın",
-        "released": "2024-01-01T00:00:00.000Z"
-      }
-    ]
+    "runtime": "Canlı Yayın"
   }
 }
 
