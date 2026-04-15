@@ -1,4 +1,4 @@
-// RecTV_v12_Dizi_Film_Link_Birlestirme_Sistemi (Gelişmiş Filtreleme)
+// RecTV_v12_Dizi_Film_Link_Birlestirme_Sistemi (Film Desteği Onarılmış)
 var cheerio = require("cheerio-without-node-native");
 
 var BASE_URL = "https://a.prectv67.lol";
@@ -58,7 +58,6 @@ async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
         const sRes = await fetch(searchUrl, { headers: searchHeaders });
         const sData = await sRes.json();
         
-        // Posterler ve serileri birleştir
         const items = (sData.series || []).concat(sData.posters || []);
         if (items.length === 0) return [];
 
@@ -68,18 +67,19 @@ async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
             const targetTitle = target.title.toLowerCase().trim();
             const searchTitle = query.toLowerCase().trim();
             
-            // --- GELİŞMİŞ NOKTA ATIŞI FİLTRELEME ---
-            // 1. Tam Eşleşme
-            const isExactMatch = targetTitle === searchTitle;
-            // 2. Yıl Parantezi Kontrolü (Sadece "Film Adı (2024)" gibi yapıları kabul eder)
-            const isYearMatch = targetTitle.startsWith(searchTitle + " (");
-            // 3. Yanlış Tür Koruması (Film ararken dizi gelmesini engeller)
-            const isWrongType = isMovie && (target.type === "serie" || (target.label && target.label.toLowerCase().includes("dizi")));
+            // --- DAHA ESNEK AMA GÜVENLİ FİLTRE ---
+            // Sadece aranan kelime başlığın içinde geçmiyorsa veya yanlış türse atla
+            // Bu sayede "Film Adı - Dublaj" gibi sonuçlar elenmez.
+            if (!targetTitle.includes(searchTitle)) continue;
 
-            // Başlık uymuyorsa VEYA tür yanlışsa bu içeriği atla
-            if ((!isExactMatch && !isYearMatch) || isWrongType) continue;
+            // Eğer film arıyorsak ama gelen "serie" ise veya "dizi" etiketi varsa atla
+            const isActuallySerie = target.type === "serie" || (target.label && target.label.toLowerCase().includes("dizi"));
+            if (isMovie && isActuallySerie) continue;
 
-            if (target.type === "serie" || (!isMovie && target.label && target.label.toLowerCase().includes("dizi"))) {
+            // Dizi arıyorsak ama film geldiyse atla
+            if (!isMovie && !isActuallySerie) continue;
+
+            if (isActuallySerie) {
                 // --- DİZİ MANTIĞI ---
                 const seasonRes = await fetch(`${BASE_URL}/api/season/by/serie/${target.id}/${SW_KEY}/`, { headers: searchHeaders });
                 const seasons = await seasonRes.json();
@@ -103,14 +103,16 @@ async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                         }
                     }
                 }
-            } else if (isMovie) {
+            } else {
                 // --- FİLM MANTIĞI ---
                 let movieSources = target.sources || [];
-                if (movieSources.length === 0) {
+                // Eğer kaynaklar boşsa detay sayfasından çek
+                if (!movieSources || movieSources.length === 0) {
                     const detRes = await fetch(`${BASE_URL}/api/movie/${target.id}/${SW_KEY}/`, { headers: searchHeaders });
                     const detData = await detRes.json();
                     movieSources = detData.sources || [];
                 }
+                
                 movieSources.forEach((src, idx) => {
                     const res = analyzeStream(src.url, idx, target.label);
                     finalResults.push({
@@ -123,11 +125,9 @@ async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
             }
         }
 
-        // Tekrarlanan URL'leri temizle
         return finalResults.filter((v, i, a) => a.findIndex(t => (t.url === v.url)) === i);
 
     } catch (err) { 
-        console.log("Hata oluştu:", err);
         return []; 
     }
 }
