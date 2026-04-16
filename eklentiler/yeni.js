@@ -1,9 +1,9 @@
 var TMDB_API_KEY = '500330721680edb6d5f7f12ba7cd9023';
-var VERSION      = "8.1.0-MULTI-SERVER";
+var VERSION      = "9.0.0-ONLY-MIXDROP";
 
 async function getStreams(tmdbId, mediaType, season, episode) {
     try {
-        // 1. TMDB Verisini Çek (Film/Dizi detaylarını ve IMDb ID'yi al)
+        // 1. TMDB Verisini Çek
         const typePath = (mediaType === 'movie') ? 'movie' : 'tv';
         const tmdbUrl = `https://api.themoviedb.org/3/${typePath}/${tmdbId}?api_key=${TMDB_API_KEY}&language=tr-TR&append_to_response=external_ids`;
         
@@ -13,12 +13,9 @@ async function getStreams(tmdbId, mediaType, season, episode) {
         const imdbId = d.external_ids ? d.external_ids.imdb_id : null;
         const title = d.title || d.name || "İçerik";
         
-        // IMDb ID yoksa veya hatalıysa boş dön
         if (!imdbId || !imdbId.startsWith('tt')) return [];
 
-        let streams = [];
-        
-        // 2. URL Uzantısını Belirle (Film için boş, dizi için /s1/e01 formatı)
+        // 2. Formatı Belirle (Film/Dizi)
         let suffix = "";
         let displayTitle = title;
 
@@ -32,52 +29,38 @@ async function getStreams(tmdbId, mediaType, season, episode) {
             displayTitle += ` - ${sStr.toUpperCase()}${eStr.toUpperCase()}`;
         }
 
-        // 3. Kontrol Edilecek Sunucu Listesi
-        // Not: Mixdrop için sitenin kullandığı güncel yolu (mx, md vb.) buraya yazmalısın.
-        const servers = [
-            { id: "vidmody", label: "Vidmody", path: "vs" },
-            { id: "mixdrop", label: "Mixdrop",  path: "mx" } 
-        ];
+        // 3. SADECE MIXDROP KONTROLÜ
+        // Genellikle vidmody.com/mx/tt... veya vidmody.com/mix/tt... kullanılır
+        const mixdropUrl = `https://vidmody.com/mx/${imdbId}${suffix}`;
 
-        // 4. Sunucuları Döngüye Al ve Kontrol Et
-        for (const server of servers) {
-            const targetUrl = `https://vidmody.com/${server.path}/${imdbId}${suffix}`;
-
-            try {
-                // HEAD isteği ile linkin aktif olup olmadığına bak (Hızlı kontrol)
-                const checkRes = await fetch(targetUrl, { 
-                    method: 'HEAD',
-                    headers: { 'Referer': 'https://vidmody.com/' }
-                });
-                
-                if (checkRes.status === 200) {
-                    // Eğer link çalışıyorsa listeye ekle
-                    streams.push({
-                        url: targetUrl,
-                        name: server.label, // Burada "Vidmody" veya "Mixdrop" yazar
-                        title: displayTitle,
-                        quality: "Auto",
-                        headers: {
-                            'Referer': 'https://vidmody.com/',
-                            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-                        }
-                    });
-                }
-            } catch (err) {
-                // Bir sunucuda hata olursa diğerine geçmek için devam et
-                console.log(`${server.label} kontrol edilemedi: ${err.message}`);
-                continue;
+        try {
+            const checkRes = await fetch(mixdropUrl, { 
+                method: 'HEAD',
+                headers: { 'Referer': 'https://vidmody.com/' }
+            });
+            
+            if (checkRes.status === 200) {
+                return [{
+                    url: mixdropUrl,
+                    name: "Mixdrop", // Uygulama ekranında görünecek isim
+                    title: displayTitle,
+                    quality: "1080p",
+                    headers: {
+                        'Referer': 'https://vidmody.com/',
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36'
+                    }
+                }];
             }
+        } catch (err) {
+            console.log("Mixdrop linki bulunamadı veya erişilemedi.");
         }
 
-        // Bulunan tüm aktif linkleri döndür
-        return streams;
+        return []; // Hiçbir şey bulunamazsa boş liste dön
 
     } catch (e) {
-        console.error(`[V${VERSION}] GENEL HATA: ${e.message}`);
+        console.error(`[V${VERSION}] HATA: ${e.message}`);
         return [];
     }
 }
 
-// Module export (CS3/Nuvio uyumu için)
 if (typeof module !== 'undefined') module.exports = { getStreams };
