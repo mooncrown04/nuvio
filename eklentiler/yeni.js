@@ -1,6 +1,5 @@
 /**
- * Nuvio Local Scraper - SinemaCX (V3 - Stabilize Versiyon)
- * Arama doğrulaması ve Geçersiz İçerik hatası düzeltildi.
+ * Nuvio Local Scraper - SinemaCX (V5 - Kesin Eşleşme)
  */
 
 var cheerio = require("cheerio-without-node-native");
@@ -15,56 +14,53 @@ const WORKING_HEADERS = {
 
 function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
     return new Promise(function(resolve, reject) {
+        var streams = [];
         
-        // 1. TMDB Bilgilerini Al
+        // 1. TMDB Verisini Al
         var tmdbUrl = 'https://api.themoviedb.org/3/' + (mediaType === 'movie' ? 'movie' : 'tv') + '/' + tmdbId + '?language=tr-TR&api_key=4ef0d7355d9ffb5151e987764708ce96';
 
         fetch(tmdbUrl)
             .then(function(res) { return res.json(); })
             .then(function(data) {
-                var query = data.title || data.name;
-                // Arama sorgusunu temizle (Örn: "Ölüler Ordusu: Hırsızlar" -> "Ölüler Ordusu")
-                var cleanQuery = query.split(":")[0].split("-")[0].trim();
+                var originalTitle = (data.title || data.name).toLowerCase().trim();
                 
-                return fetch('https://www.sinema.news/?s=' + encodeURIComponent(cleanQuery), { headers: WORKING_HEADERS })
+                // Arama sorgusunu yap
+                return fetch('https://www.sinema.news/?s=' + encodeURIComponent(originalTitle), { headers: WORKING_HEADERS })
                     .then(function(res) { return res.text(); })
-                    .then(function(html) { return { html: html, originalTitle: query }; });
+                    .then(function(html) { return { html: html, targetTitle: originalTitle }; });
             })
             .then(function(obj) {
                 var $ = cheerio.load(obj.html);
                 var targetUrl = null;
                 var results = $("div.icerik div.frag-k");
 
-                if (results.length === 0) return resolve([]);
-
-                // Başlık Kontrolü: TMDB ismi ile site başlığını karşılaştır
+                // --- KRİTİK NOKTA: TAM EŞLEŞME KONTROLÜ ---
                 results.each(function() {
-                    var foundTitle = $(this).find("div.yanac a").text().toLowerCase().trim();
-                    var searchTitle = obj.originalTitle.toLowerCase().trim();
-                    
-                    if (foundTitle.includes(searchTitle) || searchTitle.includes(foundTitle)) {
+                    var siteTitle = $(this).find("div.yanac a").text().toLowerCase().trim();
+                    var searchTitle = obj.targetTitle;
+
+                    // Eğer site başlığı TMDB başlığını TAM olarak içeriyorsa veya eşitse
+                    // Örn: TMDB "Ölüler Ordusu" -> Site "Ölüler Ordusu izle" (Eşleşir)
+                    // Örn: TMDB "Ölüler Ordusu" -> Site "Resident Evil: Ölümden Sonra" (Eşleşmez)
+                    if (siteTitle.includes(searchTitle)) {
                         targetUrl = $(this).find("div.yanac a").attr("href");
-                        return false; 
+                        return false; // Doğruyu bulduk, döngüyü kır.
                     }
                 });
 
-                // Eşleşme yoksa ilk sonucu dene
-                if (!targetUrl) targetUrl = results.first().find("div.yanac a").attr("href");
-                
-                if (!targetUrl) return resolve([]);
+                if (!targetUrl) return resolve([]); // Eşleşme yoksa yanlış filme gitme, boş dön.
+
                 return fetch(targetUrl, { headers: WORKING_HEADERS });
             })
             .then(function(res) { return res ? res.text() : null; })
             .then(function(html) {
                 if (!html) return resolve([]);
-                
                 var $ = cheerio.load(html);
                 var iframeRaw = $("iframe").first().attr("data-vsrc") || $("iframe").first().attr("src");
 
                 if (!iframeRaw) return resolve([]);
                 var iframeLink = iframeRaw.split("?img=")[0];
 
-                // Iframe içeriğine git (Video linkini ve altyazıyı çekmek için)
                 return fetch(iframeLink, { 
                     headers: { 'Referer': 'https://www.sinema.news/' } 
                 }).then(function(res) { 
@@ -76,19 +72,16 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
             .then(function(obj) {
                 if (!obj) return resolve([]);
 
-                var streams = [];
                 var iframeSource = obj.content;
                 var currentIframe = obj.link;
-
-                // Altyazı Regex
                 var subMatch = iframeSource.match(/playerjsSubtitle\s*[:=]\s*["']\[(.*?)\](https?:\/\/[^"'\s]+)["']/);
-                var subLabel = subMatch ? subMatch[1] : "";
 
+                // 1080p Kaynağı Çekme
                 if (currentIframe.includes("player.filmizle.in")) {
                     var videoId = currentIframe.split("/").pop();
                     var apiUrl = "https://player.filmizle.in/player/index.php?data=" + videoId + "&do=getVideo";
 
-                    fetch(apiUrl, {
+                    return fetch(apiUrl, {
                         method: 'POST',
                         headers: {
                             'X-Requested-With': 'XMLHttpRequest',
@@ -102,10 +95,8 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                         if (json && json.securedLink) {
                             streams.push({
                                 name: "SinemaCX - 1080p",
-                                title: subLabel ? "Altyazı: " + subLabel : "Türkçe Dublaj",
                                 url: json.securedLink,
                                 quality: "1080p",
-                                // Hata almamak için gerekli Header'lar
                                 headers: { 
                                     'Referer': 'https://player.filmizle.in/',
                                     'User-Agent': WORKING_HEADERS['User-Agent']
@@ -113,11 +104,20 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                                 provider: "sinemacx"
                             });
                         }
+                        // Embed her zaman ekle (Yedek)
+                        streams.push({
+                            name: "SinemaCX - Embed",
+                            url: currentIframe,
+                            quality: "720p",
+                            headers: { 'Referer': 'https://www.sinema.news/' },
+                            provider: "sinemacx"
+                        });
                         resolve(streams);
-                    })
-                    .catch(function() { resolve([]); });
+                    }).catch(function() {
+                        streams.push({ name: "SinemaCX - Embed", url: currentIframe, quality: "720p", headers: { 'Referer': 'https://www.sinema.news/' }, provider: "sinemacx" });
+                        resolve(streams);
+                    });
                 } else {
-                    // Alternatif Player
                     streams.push({
                         name: "SinemaCX - Embed",
                         url: currentIframe,
@@ -128,14 +128,12 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                     resolve(streams);
                 }
             })
-            .catch(function(err) {
-                console.error('Hata:', err);
+            .catch(function() {
                 resolve([]);
             });
     });
 }
 
-// Module Export
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = { getStreams: getStreams };
 } else {
