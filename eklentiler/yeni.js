@@ -1,5 +1,5 @@
 /**
- * Nuvio Local Scraper - SinemaCX (V37 - Gelişmiş Arama & Dil Analizi)
+ * Nuvio Local Scraper - SinemaCX (V38 - Süper Sadeleştirme)
  */
 
 var cheerio = require("cheerio-without-node-native");
@@ -24,41 +24,42 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
         fetch(tmdbUrl)
             .then(res => res.json())
             .then(data => {
-                var trTitle = (data.title || data.name || "").toLowerCase().trim();
-                var orgTitle = (data.original_title || data.original_name || "").toLowerCase().trim();
+                var trTitle = (data.title || data.name || "").toLowerCase();
+                var orgTitle = (data.original_title || data.original_name || "").toLowerCase();
                 displayTitle = (data.title || data.name || PROVIDER_NAME);
                 releaseYear = (data.release_date || data.first_air_date || "").split("-")[0];
 
-                console.error(`[${PROVIDER_NAME}] Arama: ${trTitle} / ${orgTitle}`);
+                console.error(`[${PROVIDER_NAME}] Analiz: ${trTitle} (${releaseYear})`);
 
-                // Arama Zinciri: TR -> ORG -> Parçalı Arama
-                return searchOnSite(trTitle, releaseYear).then(res1 => {
-                    if (res1 && res1.score >= 2) return res1;
-                    return searchOnSite(orgTitle, releaseYear).then(res2 => {
+                // ARAMA STRATEJİSİ:
+                // 1. Sadece ana kelimeleri al (Örn: Resident Evil 5)
+                var query1 = trTitle.replace(/[:.,\-]/g, ' ').split(" ").slice(0, 3).join(" ");
+                var query2 = orgTitle.replace(/[:.,\-]/g, ' ').split(" ").slice(0, 3).join(" ");
+
+                return searchOnSite(query1, releaseYear).then(res1 => {
+                    if (res1 && res1.score >= 5) return res1;
+                    return searchOnSite(query2, releaseYear).then(res2 => {
                         if (res2) return res2;
-                        // Hâlâ yoksa sadece ana ismi arat (Örn: Resident Evil)
-                        var mainWord = orgTitle.split(" ")[0];
-                        return searchOnSite(mainWord, releaseYear);
+                        // Hâlâ yoksa en sade hali (Sadece ilk iki kelime)
+                        return searchOnSite(orgTitle.split(" ")[0], releaseYear);
                     });
                 });
             })
             .then(result => {
                 if (!result) {
-                    console.error(`[${PROVIDER_NAME}] Sonuç bulunamadı.`);
+                    console.error(`[${PROVIDER_NAME}] Hiçbir varyasyonla bulunamadı.`);
                     return resolve(EMPTY_RESULT);
                 }
 
-                console.error(`[${PROVIDER_NAME}] Eşleşme Bulundu: ${result.siteTitle}`);
+                console.error(`[${PROVIDER_NAME}] Hedef URL: ${result.url}`);
 
                 return fetch(result.url, { headers: WORKING_HEADERS }).then(res => res.text()).then(html => {
                     var $page = cheerio.load(html);
                     
-                    // DİL VERİSİNİ BURADA YAKALIYORUZ
-                    // Sayfa başlığında veya açıklamasında "Dublaj/Altyazı" var mı bak
-                    var pageContent = $page("body").text().toLowerCase();
-                    var isDublaj = pageContent.includes("dublaj") || result.siteTitle.toLowerCase().includes("dublaj");
-                    var isAltyazi = pageContent.includes("altyazı") || result.siteTitle.toLowerCase().includes("altyazı");
-                    var langInfo = isDublaj ? "Dublaj" : (isAltyazi ? "Altyazı" : "HD");
+                    // Dil Kontrolü
+                    var pageText = $page("body").text().toLowerCase();
+                    var isDublaj = pageText.includes("dublaj") || result.siteTitle.toLowerCase().includes("dublaj");
+                    var langInfo = isDublaj ? "Dublaj" : "Altyazı";
 
                     var iframeUrl = "";
                     $page("iframe").each(function() {
@@ -101,24 +102,30 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
 
 function searchOnSite(query, year) {
     if (!query || query.length < 2) return Promise.resolve(null);
-    var cleanQuery = query.replace(/[:.,\-]/g, ' ').replace(/\s+/g, ' ').trim();
+    var cleanQuery = query.toLowerCase().trim();
     var searchUrl = `${BASE_URL}/?s=` + encodeURIComponent(cleanQuery);
     
     return fetch(searchUrl, { headers: WORKING_HEADERS }).then(res => res.text()).then(html => {
         var $ = cheerio.load(html);
         var results = [];
-        var queryWords = cleanQuery.toLowerCase().split(' ').filter(w => w.length > 2);
 
         $("a").each(function() {
             var url = $(this).attr("href") || "";
             var title = $(this).text().toLowerCase().trim();
-            if (!url.startsWith(BASE_URL) || url.includes("/izle/") || url.includes("/category/") || title.length < 5) return;
+            
+            // Filtreleme
+            if (!url.startsWith(BASE_URL) || url.includes("/category/") || title.length < 5) return;
 
             var score = 0;
-            queryWords.forEach(word => { if (title.includes(word)) score++; });
-            if (year && title.includes(year)) score += 5; // Yıl eşleşmesi varsa direkt öne çıkar
+            var words = cleanQuery.split(" ");
+            words.forEach(w => { if (title.includes(w)) score += 2; });
+            
+            // KRİTİK: Eğer yıl başlıkta geçiyorsa bu en güçlü adaydır
+            if (year && title.includes(year)) score += 10;
+            // URL içindeki benzerlik (Senin verdiğin resident-evil-5 örneği için)
+            if (url.includes(cleanQuery.replace(/\s+/g, '-'))) score += 5;
 
-            if (score > 1) {
+            if (score > 3) {
                 results.push({ url: url, siteTitle: $(this).text().trim(), score: score });
             }
         });
