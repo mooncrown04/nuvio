@@ -1,3 +1,7 @@
+// ============================================================
+//  WebteIzle — Nuvio Provider (V26 Precision)
+// ============================================================
+
 var BASE_URL     = 'https://webteizle3.xyz';
 var TMDB_API_KEY = '500330721680edb6d5f7f12ba7cd9023';
 
@@ -5,7 +9,8 @@ var HEADERS = {
   'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:137.0) Gecko/20100101 Firefox/137.0',
   'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
   'Accept-Language': 'tr-TR,tr;q=0.9,en;q=0.8',
-  'Referer': BASE_URL + '/'
+  'Referer': BASE_URL + '/',
+  'Origin': BASE_URL
 };
 
 // ── TMDB ──────────────────────────────────────────────────────
@@ -30,7 +35,7 @@ function titleToSlug(title) {
     .replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'');
 }
 
-// ── Film sayfası bul ──────────────────────────────────────────
+// ── Sayfa Bulma ──────────────────────────────────────────
 function findFilmPage(titleTr, titleEn) {
   var slugTr = titleToSlug(titleTr);
   var slugEn = titleToSlug(titleEn);
@@ -42,9 +47,9 @@ function findFilmPage(titleTr, titleEn) {
     if (i >= candidates.length) return searchFallback(titleTr, titleEn);
     var url = candidates[i];
     return fetch(url, { headers: HEADERS }).then(function(r) {
-      if (!r.ok) { console.error("CANDIDATE_STATUS_ERROR: " + url + " (" + r.status + ")"); return tryNext(i + 1); }
+      if (!r.ok) return tryNext(i + 1);
       return r.text().then(function(html) {
-        if (html.indexOf('data-id') === -1) { console.error("NO_DATA_ID_IN_PAGE: " + url); return tryNext(i + 1); }
+        if (html.indexOf('data-id') === -1) return tryNext(i + 1);
         return { url: url, html: html };
       });
     }).catch(function(e) { console.error("CANDIDATE_FETCH_ERROR: " + e.message); return tryNext(i + 1); });
@@ -62,7 +67,7 @@ function searchFallback(titleTr, titleEn) {
   .then(function(r) { return r.json(); })
   .then(function(data) {
     var items = (data.results && data.results.filmler && data.results.filmler.results) || [];
-    if (!items.length) { console.error("SEARCH_FALLBACK_EMPTY: " + query); throw new Error('Film bulunamadi'); }
+    if (!items.length) { console.error("SEARCH_EMPTY: " + query); throw new Error('Film bulunamadi'); }
     var pageUrl = items[0].url.startsWith('http') ? items[0].url : BASE_URL + items[0].url;
     return fetch(pageUrl, { headers: HEADERS }).then(function(r) { return r.text().then(function(html) { return { url: pageUrl, html: html }; }); });
   }).catch(function(e) { console.error("SEARCH_FALLBACK_ERROR: " + e.message); throw e; });
@@ -73,7 +78,6 @@ function processEmbed(embedData, dilAd, originalTitle) {
   var providerName = embedData.baslik || "Kaynak";
   if (['pixel', 'netu'].includes(providerName.toLowerCase())) return Promise.resolve(null);
 
-  // URL kontrolü (Başına BASE_URL ekleyerek scheme hatasını önlüyoruz)
   return fetch(BASE_URL + '/ajax/dataEmbed.asp', {
     method: 'POST',
     headers: Object.assign({}, HEADERS, { 'Content-Type': 'application/x-www-form-urlencoded', 'X-Requested-With': 'XMLHttpRequest', 'Origin': BASE_URL }),
@@ -98,17 +102,17 @@ function processEmbed(embedData, dilAd, originalTitle) {
     else if (src.indexOf('sibnet') !== -1) p = "Sibnet";
     else if (src.indexOf('filemoon') !== -1) p = "FileMoon";
 
-    var flag = dilAd === 'TR Dublaj' ? '🇹🇷 ' : '🌐 ';
+    var flag = dilAd.includes('Dublaj') ? '🇹🇷 ' : '🌐 ';
 
     return fetch(src, { headers: Object.assign({}, HEADERS, { 'Referer': BASE_URL + '/' }) })
       .then(function(r) { return r.text(); })
       .then(function(innerHtml) {
         var m = innerHtml.match(/file\s*:\s*['"]?(https?:\/\/[^\s"'<>]+\.m3u8[^\s"'<>]*)/i);
-        if (!m) { console.error("M3U8_NOT_FOUND_IN_SRC: " + src); return null; }
+        if (!m) { console.error("M3U8_NOT_FOUND: " + p + " (" + src + ")"); return null; }
 
         return {
-          name: originalTitle, // Üstte Film İsmi
-          title: '⌜ WEBTEIZLE ⌟ | ' + p + ' | ' + flag + dilAd, // Altta Sağlayıcı ve Dil
+          name: originalTitle,
+          title: '⌜ WEBTEIZLE ⌟ | ' + p + ' | ' + flag + dilAd,
           url: m[1],
           quality: 'Auto',
           type: 'hls',
