@@ -1,135 +1,125 @@
-// RecTV_v12_Dizi_Film_Link_Birlestirme_Sistemi (Film Desteği Onarılmış)
+/**
+ * Nuvio Local Scraper - SinemaCX (V43 - Final UI & Universal Fix)
+ */
+
 var cheerio = require("cheerio-without-node-native");
 
-var BASE_URL = "https://a.prectv67.lol";
-var SW_KEY = "4F5A9C3D9A86FA54EACEDDD635185/c3c5bd17-e37b-4b94-a944-8a3688a30452";
+const PROVIDER_NAME = "SinemaCX";
+const BASE_URL = "https://www.sinema.la";
+const EMPTY_RESULT = [];
 
-var HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
-    'Referer': 'https://twitter.com/',
-    'Accept': 'application/json'
+const WORKING_HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Referer': 'https://www.sinema.la/'
 };
 
-var cachedToken = null;
-
-async function getAuthToken() {
-    if (cachedToken) return cachedToken;
-    try {
-        const res = await fetch(BASE_URL + "/api/attest/nonce", { headers: HEADERS });
-        const text = await res.text();
-        try {
-            const json = JSON.parse(text);
-            cachedToken = json.accessToken || text.trim();
-        } catch (e) { cachedToken = text.trim(); }
-        return cachedToken;
-    } catch (e) { return null; }
-}
-
-function analyzeStream(url, index, itemLabel) {
-    const lowUrl = url.toLowerCase();
-    const lowLabel = (itemLabel || "").toLowerCase();
-    let info = { icon: "🌐", text: "Orijinal / Altyazı" };
-
-    if (lowLabel.includes("dublaj") || lowUrl.includes("dublaj")) {
-        if (lowLabel.includes("altyazı") && index === 1) {
-            info.icon = "🌐";
-            info.text = "Orijinal / Altyazı";
-        } else {
-            info.icon = "🇹🇷";
-            info.text = "Türkçe Dublaj";
-        }
-    }
-    return info;
-}
-
-async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
-    try {
-        const isMovie = (mediaType === 'movie');
-        const tmdbUrl = `https://api.themoviedb.org/3/${isMovie ? 'movie' : 'tv'}/${tmdbId}?language=tr-TR&api_key=4ef0d7355d9ffb5151e987764708ce96`;
-        const tmdbRes = await fetch(tmdbUrl);
-        const tmdbData = await tmdbRes.json();
-        const query = tmdbData.title || tmdbData.name;
-        if (!query) return [];
-
-        const token = await getAuthToken();
-        const searchHeaders = Object.assign({}, HEADERS, { 'Authorization': 'Bearer ' + token });
-        const searchUrl = `${BASE_URL}/api/search/${encodeURIComponent(query)}/${SW_KEY}/`;
+function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
+    return new Promise(function(resolve) {
+        var isMovie = mediaType === 'movie';
+        var tmdbUrl = 'https://api.themoviedb.org/3/' + (isMovie ? 'movie' : 'tv') + '/' + tmdbId + '?language=tr-TR&api_key=4ef0d7355d9ffb5151e987764708ce96';
         
-        const sRes = await fetch(searchUrl, { headers: searchHeaders });
-        const sData = await sRes.json();
-        
-        const items = (sData.series || []).concat(sData.posters || []);
-        if (items.length === 0) return [];
+        fetch(tmdbUrl).then(res => res.json()).then(data => {
+            var trTitle = (data.title || data.name || "").toLowerCase();
+            var orgTitle = (data.original_title || data.original_name || "").toLowerCase();
+            var displayTitle = (data.title || data.name || "İçerik");
+            var releaseYear = (data.release_date || data.first_air_date || "").split("-")[0];
 
-        let finalResults = [];
+            // Arama Terimi (Kısa isimler için TR yoksa ORG kullan)
+            var query = trTitle.length < 2 ? orgTitle : trTitle;
+            var cleanQuery = query.replace(/[:.,\-]/g, ' ').trim();
 
-        for (let target of items) {
-            const targetTitle = target.title.toLowerCase().trim();
-            const searchTitle = query.toLowerCase().trim();
-            
-            // --- DAHA ESNEK AMA GÜVENLİ FİLTRE ---
-            // Sadece aranan kelime başlığın içinde geçmiyorsa veya yanlış türse atla
-            // Bu sayede "Film Adı - Dublaj" gibi sonuçlar elenmez.
-            if (!targetTitle.includes(searchTitle)) continue;
+            return searchOnSite(cleanQuery, releaseYear, isMovie).then(result => {
+                if (!result && orgTitle !== cleanQuery) {
+                    return searchOnSite(orgTitle, releaseYear, isMovie);
+                }
+                return result;
+            }).then(result => {
+                if (!result) return resolve(EMPTY_RESULT);
 
-            // Eğer film arıyorsak ama gelen "serie" ise veya "dizi" etiketi varsa atla
-            const isActuallySerie = target.type === "serie" || (target.label && target.label.toLowerCase().includes("dizi"));
-            if (isMovie && isActuallySerie) continue;
+                return fetch(result.url, { headers: WORKING_HEADERS }).then(res => res.text()).then(html => {
+                    var $page = cheerio.load(html);
+                    var pageText = $page("body").text().toLowerCase();
+                    var siteTitleLower = result.siteTitle.toLowerCase();
+                    
+                    // --- UI DÜZENLEME: DİL BİLGİSİ ---
+                    var langInfo = "HD";
+                    if (pageText.includes("dublaj") || siteTitleLower.includes("dublaj")) langInfo = "Türkçe Dublaj";
+                    else if (pageText.includes("altyazı") || siteTitleLower.includes("altyazı")) langInfo = "Türkçe Altyazı";
 
-            // Dizi arıyorsak ama film geldiyse atla
-            if (!isMovie && !isActuallySerie) continue;
-
-            if (isActuallySerie) {
-                // --- DİZİ MANTIĞI ---
-                const seasonRes = await fetch(`${BASE_URL}/api/season/by/serie/${target.id}/${SW_KEY}/`, { headers: searchHeaders });
-                const seasons = await seasonRes.json();
-                
-                for (let s of seasons) {
-                    let sNumber = parseInt(s.title.match(/\d+/) || 0);
-                    if (sNumber == seasonNum) {
-                        for (let ep of s.episodes) {
-                            let epNumber = parseInt(ep.title.match(/\d+/) || 0);
-                            if (epNumber == episodeNum) {
-                                (ep.sources || []).forEach((src, idx) => {
-                                    const res = analyzeStream(src.url, idx, ep.label || s.title || target.label);
-                                    finalResults.push({
-                                        name: `${query} [${res.icon} ${res.text}]`,
-                                        url: src.url,
-                                        quality: "Auto",
-                                        headers: { 'User-Agent': 'googleusercontent', 'Referer': 'https://twitter.com/', 'Accept-Encoding': 'identity' }
-                                    });
-                                });
-                            }
+                    var iframeUrl = "";
+                    $page("iframe").each(function() {
+                        var src = $page(this).attr("data-vsrc") || $page(this).attr("src") || "";
+                        if (src.includes("player.filmizle.in")) {
+                            iframeUrl = src.split("?img=")[0];
+                            return false;
                         }
-                    }
-                }
-            } else {
-                // --- FİLM MANTIĞI ---
-                let movieSources = target.sources || [];
-                // Eğer kaynaklar boşsa detay sayfasından çek
-                if (!movieSources || movieSources.length === 0) {
-                    const detRes = await fetch(`${BASE_URL}/api/movie/${target.id}/${SW_KEY}/`, { headers: searchHeaders });
-                    const detData = await detRes.json();
-                    movieSources = detData.sources || [];
-                }
-                
-                movieSources.forEach((src, idx) => {
-                    const res = analyzeStream(src.url, idx, target.label);
-                    finalResults.push({
-                        name: `${query} [${res.icon} ${res.text}]`,
-                        url: src.url,
-                        quality: "Auto",
-                        headers: { 'User-Agent': 'googleusercontent', 'Referer': 'https://twitter.com/', 'Accept-Encoding': 'identity' }
+                    });
+
+                    if (!iframeUrl) return resolve(EMPTY_RESULT);
+
+                    var videoId = iframeUrl.split("/").pop();
+                    return fetch("https://player.filmizle.in/player/index.php?data=" + videoId + "&do=getVideo", {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/x-www-form-urlencoded',
+                            'X-Requested-With': 'XMLHttpRequest',
+                            'Referer': iframeUrl
+                        },
+                        body: "data=" + videoId + "&do=getVideo"
+                    }).then(r => r.json()).then(json => {
+                        if (json && json.securedLink) {
+                            // --- İSTEDİĞİN GÖRSEL ŞABLON ---
+                            resolve([{
+                                name: displayTitle, // Üstte Film İsmi (Sabit)
+                                title: langInfo,    // Altta Dil/Durum Bilgisi
+                                url: json.securedLink,
+                                quality: "1080p",
+                                headers: { 'Referer': 'https://player.filmizle.in/' }
+                            }]);
+                        } else { resolve(EMPTY_RESULT); }
                     });
                 });
-            }
-        }
-
-        return finalResults.filter((v, i, a) => a.findIndex(t => (t.url === v.url)) === i);
-
-    } catch (err) { 
-        return []; 
-    }
+            });
+        }).catch(err => {
+            resolve(EMPTY_RESULT);
+        });
+    });
 }
 
-module.exports = { getStreams };
+function searchOnSite(query, year, isMovie) {
+    if (!query) return Promise.resolve(null);
+    var searchUrl = `${BASE_URL}/?s=` + encodeURIComponent(query);
+    
+    return fetch(searchUrl, { headers: WORKING_HEADERS }).then(res => res.text()).then(html => {
+        var $ = cheerio.load(html);
+        var results = [];
+
+        $("a").each(function() {
+            var url = $(this).attr("href") || "";
+            var title = $(this).text().toLowerCase().trim();
+            if (!url.startsWith(BASE_URL) || url.includes("/category/") || title.length < 2) return;
+
+            var score = 0;
+            // From gibi diziler için tam eşleşme koruması
+            if (title === query.toLowerCase()) score += 15;
+            if (title.includes(query.toLowerCase())) score += 5;
+            if (year && title.includes(year)) score += 10;
+            
+            if (!isMovie && (title.includes("dizi") || title.includes("sezon"))) score += 5;
+
+            if (score > 4) {
+                results.push({ url: url, siteTitle: title, score: score });
+            }
+        });
+
+        if (results.length > 0) {
+            results.sort((a, b) => b.score - a.score);
+            return results[0];
+        }
+        return null;
+    });
+}
+
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = { getStreams: getStreams };
+}
