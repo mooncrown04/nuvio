@@ -1,11 +1,11 @@
 /**
- * Nuvio Local Scraper - SinemaCX (V17 - Arama Mantığı Esnetildi)
+ * Nuvio Local Scraper - SinemaCX (V24 - Gelişmiş Arama & Detaylı İsim)
  */
 
 var cheerio = require("cheerio-without-node-native");
 
 const PROVIDER_NAME = "SinemaCX";
-const BASE_URL = "https://www.sinema.news"; // Site yönlendirse bile arama buradan başlar
+const BASE_URL = "https://www.sinema.news";
 const EMPTY_RESULT = [];
 
 const WORKING_HEADERS = {
@@ -19,6 +19,9 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
     return new Promise(function(resolve) {
         var isMovie = mediaType === 'movie';
         var tmdbUrl = 'https://api.themoviedb.org/3/' + (isMovie ? 'movie' : 'tv') + '/' + tmdbId + '?language=tr-TR&api_key=4ef0d7355d9ffb5151e987764708ce96';
+        
+        var displayTitle = ""; 
+        var extraInfo = "1080p"; 
 
         fetch(tmdbUrl)
             .then(function(res) { return res.json(); })
@@ -26,29 +29,38 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                 var trTitle = (data.title || data.name || "").toLowerCase().trim();
                 var orgTitle = (data.original_title || data.original_name || "").toLowerCase().trim();
                 
+                displayTitle = (data.title || data.name || PROVIDER_NAME);
+
                 console.error(`[${PROVIDER_NAME}] Sorgu: ${trTitle}`);
 
-                // Önce TR isimle ara, olmazsa ORG isimle
-                return searchOnSite(trTitle).then(function(url) {
-                    if (url) return url;
+                // 1. Türkçe isimle ara
+                return searchOnSite(trTitle).then(function(res1) {
+                    if (res1) return res1;
+                    // 2. Bulunamazsa İngilizce isimle ara
                     if (trTitle !== orgTitle) {
-                        console.error(`[${PROVIDER_NAME}] TR sonuç vermedi, ORG deneniyor: ${orgTitle}`);
+                        console.error(`[${PROVIDER_NAME}] TR sonuç yok, ORG deneniyor: ${orgTitle}`);
                         return searchOnSite(orgTitle);
                     }
                     return null;
                 });
             })
-            .then(function(targetUrl) {
-                if (!targetUrl) {
+            .then(function(searchResult) {
+                if (!searchResult || !searchResult.url) {
                     console.error(`[${PROVIDER_NAME}] HATA: Hiçbir sonuç eşleşmedi.`);
                     return resolve(EMPTY_RESULT);
                 }
 
+                // Dil tespiti (Sitedeki başlıktan çekiyoruz)
+                var sTitle = searchResult.siteTitle.toLowerCase();
+                if (sTitle.includes("dublaj")) extraInfo = "Türkçe Dublaj";
+                else if (sTitle.includes("altyazı") || sTitle.includes("altyazi")) extraInfo = "Türkçe Altyazılı";
+
+                var targetUrl = searchResult.url;
                 if (!isMovie) {
                     targetUrl = targetUrl.replace(/\/$/, "") + "-sezon-" + seasonNum + "-bolum-" + episodeNum;
                 }
 
-                console.error(`[${PROVIDER_NAME}] Hedef URL: ${targetUrl}`);
+                console.error(`[${PROVIDER_NAME}] Hedef: ${targetUrl}`);
                 return fetch(targetUrl, { headers: WORKING_HEADERS });
             })
             .then(function(res) { return res ? res.text() : null; })
@@ -56,15 +68,13 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                 if (!html) return resolve(EMPTY_RESULT);
                 var $page = cheerio.load(html);
                 
-                // Fragman/Film tespiti
                 var iframes = [];
                 $page("iframe").each(function() { 
                     var s = $page(this).attr("data-vsrc") || $page(this).attr("src") || "";
                     if (s) iframes.push(s);
                 });
 
-                if (iframes.every(s => s.includes("youtube") || s.includes("fragman"))) {
-                    console.error(`[${PROVIDER_NAME}] Fragman sayfası, 2. sayfaya geçiliyor.`);
+                if (iframes.length > 0 && iframes.every(s => s.includes("youtube") || s.includes("fragman"))) {
                     var currentUrl = $page("link[rel='canonical']").attr("href") || "";
                     var altUrl = currentUrl.endsWith("/") ? currentUrl + "2/" : currentUrl + "/2/";
                     return fetch(altUrl, { headers: WORKING_HEADERS }).then(r => r.text());
@@ -99,8 +109,9 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
             })
             .then(function(json) {
                 if (json && json.securedLink) {
+                    // name alanına Film Adı (Detay - Site) formatında veri koyuyoruz
                     resolve([{
-                        name: PROVIDER_NAME,
+                        name: displayTitle + " (" + extraInfo + " - " + PROVIDER_NAME + ")",
                         url: json.securedLink,
                         quality: "1080p",
                         headers: { 'Referer': 'https://player.filmizle.in/' }
@@ -115,30 +126,33 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
 }
 
 function searchOnSite(query) {
-    // Arama URL'sini temizleyelim
-    var searchUrl = `${BASE_URL}/?s=` + encodeURIComponent(query);
+    // ARAMA TEMİZLİĞİ: Savaş Makinası: İntikam -> savas makinasi intikam
+    var cleanQuery = query.replace(/[^\w\sıişğüç]/gi, ' ').replace(/\s+/g, ' ').trim();
+    var searchUrl = `${BASE_URL}/?s=` + encodeURIComponent(cleanQuery);
     
     return fetch(searchUrl, { headers: WORKING_HEADERS })
-        .then(function(res) { return res.text(); })
-        .then(function(html) {
+        .then(res => res.text())
+        .then(html => {
             var $search = cheerio.load(html);
-            var foundUrl = null;
+            var match = null;
 
-            // Sinema.la / Sinema.news için en geniş seçiciyi kullanıyoruz
-            // İlk olarak .frag-k içindeki yanac a'ya bak, yoksa herhangi bir h2 a'ya bak
-            var links = $search("div.icerik div.frag-k div.yanac a, div.video-content h2 a, article h2 a");
-            
-            if (links.length > 0) {
-                // Sadece ilk sonucu al (Şablonuna geri döndük ama filtreyi yumuşattık)
-                var firstLink = links.first();
-                var title = firstLink.text().toLowerCase().trim();
+            // En kapsamlı seçiciler
+            $search("div.icerik div.frag-k, div.video-content, article").each(function() {
+                var anchor = $search(this).find("div.yanac a, h2 a, a").first();
+                var siteTitle = anchor.text();
+                var cleanSiteTitle = siteTitle.toLowerCase().replace(/[^\w\sıişğüç]/gi, ' ').replace(/\s+/g, ' ').trim();
                 
-                // Eğer site başlığı aranan kelimenin en az %50'sini içeriyorsa kabul et
-                if (title.includes(query) || query.includes(title)) {
-                    foundUrl = firstLink.attr("href");
+                // ESNEK KONTROL: Kelimeleri parçalayıp eşleştiriyoruz (War Machine için kesin çözüm)
+                var qWords = cleanQuery.split(' ');
+                var matchCount = 0;
+                qWords.forEach(w => { if (w.length > 2 && cleanSiteTitle.includes(w)) matchCount++; });
+
+                if (cleanSiteTitle.includes(cleanQuery) || cleanQuery.includes(cleanSiteTitle) || matchCount >= 2) {
+                    match = { url: anchor.attr("href"), siteTitle: siteTitle };
+                    return false;
                 }
-            }
-            return foundUrl;
+            });
+            return match;
         });
 }
 
