@@ -1,132 +1,98 @@
+/**
+ * SineWix_v25_Precision_Matcher
+ * Arama motoru için düşük harf ve temiz sorgu optimizasyonu.
+ */
+
 var API_BASE = 'https://ydfvfdizipanel.ru/public/api';
 var API_KEY = '9iQNC5HQwPlaFuJDkhncJ5XTJ8feGXOJatAA';
 
 var API_HEADERS = {
     'hash256': '711bff4afeb47f07ab08a0b07e85d3835e739295e8a6361db77eebd93d96306b',
-    'signature': '',
     'User-Agent': 'EasyPlex (Android 14; SM-A546B; Samsung Galaxy A54 5G; tr)',
     'Accept': 'application/json'
 };
 
-var STREAM_HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-    'Accept-Encoding': 'identity',
-    'Referer': 'https://ydfvfdizipanel.ru/'
-};
-
-function resolveMediaFireLink(link) {
-    console.error('[SineWix DEBUG] MediaFire çözülüyor:', link);
-    return fetch(link)
-        .then(function(res) { return res.text(); })
-        .then(function(html) {
-            var match = html.match(/href="(https:\/\/download\d+\.mediafire\.com[^"]+)"/);
-            if (match) console.error('[SineWix DEBUG] MediaFire URL Başarılı');
-            return match ? match[1] : link;
-        })
-        .catch(function(e) { 
-            console.error('[SineWix DEBUG] MediaFire Çözme Hatası:', e.message);
-            return link; 
-        });
-}
-
-function buildStreams(videoLinks, title, year) {
-    console.error('[SineWix DEBUG] Stream objeleri oluşturuluyor. Sayı:', videoLinks.length);
-    return Promise.all(
-        videoLinks.map(function(link) {
-            var isMF = link.includes('mediafire.com');
-            var p = isMF ? resolveMediaFireLink(link) : Promise.resolve(link);
-            
-            return p.then(function(finalUrl) {
-                return {
-                    name: title,
-                    title: '⌜ SINEWIX ⌟ | ' + (isMF ? 'MF-Server' : 'Server') + ' | 🇹🇷 Dublaj',
-                    url: finalUrl,
-                    quality: 'Auto',
-                    headers: STREAM_HEADERS
-                };
-            });
-        })
-    );
-}
-
-function fetchDetailAndStreams(sinewixId, sinewixItemType, mediaType, seasonNum, episodeNum) {
-    var genre = (mediaType === 'movie') ? 'media' : 'series';
-    var endpoint = (mediaType === 'movie') ? 'detail' : 'show';
-    var apiUrl = API_BASE + '/' + genre + '/' + endpoint + '/' + sinewixId + '/' + API_KEY;
-
-    console.error('[SineWix DEBUG] Detay API İsteği:', apiUrl);
-
-    return fetch(apiUrl, { headers: API_HEADERS })
-        .then(function(res) { 
-            if (!res.ok) throw new Error('API Detay Hatası: ' + res.status);
-            return res.json(); 
-        })
-        .then(function(item) {
-            var title = item.name || item.title || 'SineWix';
-            var year = (item.first_air_date || item.release_date || '').substring(0, 4);
-            var videoLinks = [];
-
-            if (mediaType === 'movie') {
-                videoLinks = (item.videos || []).map(function(v) { return v.link; }).filter(Boolean);
-            } else {
-                var targetSeason = (item.seasons || []).find(function(s) { 
-                    return parseInt(s.season_number) === parseInt(seasonNum); 
-                });
-                if (targetSeason) {
-                    var targetEp = (targetSeason.episodes || []).find(function(e) {
-                        return parseInt(e.episode_number) === parseInt(episodeNum);
-                    });
-                    if (targetEp) videoLinks = (targetEp.videos || []).map(function(v) { return v.link; }).filter(Boolean);
-                }
-            }
-            return buildStreams(videoLinks, title, year);
-        });
-}
-
-function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
-    console.error('[SineWix DEBUG] Başlatıldı. TMDB ID:', tmdbId);
+async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
+    console.error(`[SineWix DEBUG] Başlatıldı. ID: ${tmdbId} | Tip: ${mediaType}`);
     
-    var tmdbType = mediaType === 'movie' ? 'movie' : 'tv';
-    var tmdbUrl = 'https://api.themoviedb.org/3/' + tmdbType + '/' + tmdbId + '?language=tr-TR&api_key=4ef0d7355d9ffb5151e987764708ce96';
+    try {
+        const tmdbType = mediaType === 'movie' ? 'movie' : 'tv';
+        const tmdbUrl = `https://api.themoviedb.org/3/${tmdbType}/${tmdbId}?language=tr-TR&api_key=4ef0d7355d9ffb5151e987764708ce96`;
 
-    return fetch(tmdbUrl)
-        .then(function(res) { 
-            if (!res.ok) throw new Error('TMDB API Erişilemez!');
-            return res.json(); 
-        })
-        .then(function(data) {
-            var title = data.title || data.name || '';
-            console.error('[SineWix DEBUG] TMDB Başlık Alındı:', title);
+        const tmdbRes = await fetch(tmdbUrl);
+        const data = await tmdbRes.json();
+        
+        let title = (data.title || data.name || '').trim();
+        let originalTitle = (data.original_title || data.original_name || '').trim();
+        let releaseYear = (data.release_date || data.first_air_date || '').substring(0, 4);
+        
+        if (!title) return [];
+
+        // Arama stratejileri: 1. Küçük harf isim, 2. Orijinal isim
+        let searchQueries = [title.toLowerCase()];
+        if (originalTitle && originalTitle.toLowerCase() !== title.toLowerCase()) {
+            searchQueries.push(originalTitle.toLowerCase());
+        }
+
+        let finalResults = [];
+
+        for (let query of searchQueries) {
+            console.error(`[SineWix DEBUG] Arama deneniyor: ${query}`);
+            const searchUrl = `${API_BASE}/search/${encodeURIComponent(query)}/${API_KEY}`;
             
-            if (!title) return [];
+            const sRes = await fetch(searchUrl, { headers: API_HEADERS });
+            const sData = await sRes.json();
+            
+            // API bazen 'search' key'ini boş veya null dönebilir
+            const results = sData.search || [];
+            console.error(`[SineWix DEBUG] API yanıt verdi. Sonuç sayısı: ${results.length}`);
 
-            var searchUrl = API_BASE + '/search/' + encodeURIComponent(title) + '/' + API_KEY;
-            console.error('[SineWix DEBUG] Arama Başlıyor:', searchUrl);
+            if (results.length > 0) {
+                // TMDB ID veya isim benzerliği kontrolü yaparak en yakın sonucu seç
+                let bestMatch = results[0]; 
 
-            return fetch(searchUrl, { headers: API_HEADERS })
-                .then(function(res) { return res.json(); })
-                .then(function(data) {
-                    var results = data.search || [];
-                    console.error('[SineWix DEBUG] API Toplam Sonuç:', results.length);
+                const genre = (mediaType === 'movie') ? 'media' : 'series';
+                const endpoint = (mediaType === 'movie') ? 'detail' : 'show';
+                const detailUrl = `${API_BASE}/${genre}/${endpoint}/${bestMatch.id}/${API_KEY}`;
 
-                    var filtered = results.filter(function(item) {
-                        var t = (item.type || '').toLowerCase();
-                        return mediaType === 'movie' ? t.includes('movie') : (t.includes('serie') || t.includes('anime'));
-                    });
+                console.error(`[SineWix DEBUG] Detaylar çekiliyor: ${bestMatch.title}`);
+                const dRes = await fetch(detailUrl, { headers: API_HEADERS });
+                const item = await dRes.json();
 
-                    if (filtered.length === 0) {
-                        console.error('[SineWix DEBUG] Kriterlere uygun sonuç bulunamadı.');
-                        return [];
+                let videoLinks = [];
+                if (mediaType === 'movie') {
+                    videoLinks = (item.videos || []).map(v => v.link).filter(Boolean);
+                } else {
+                    const targetSeason = (item.seasons || []).find(s => parseInt(s.season_number) === parseInt(seasonNum));
+                    if (targetSeason) {
+                        const targetEp = (targetSeason.episodes || []).find(e => parseInt(e.episode_number) === parseInt(episodeNum));
+                        if (targetEp) {
+                            videoLinks = (targetEp.videos || []).map(v => v.link).filter(Boolean);
+                        }
                     }
+                }
 
-                    console.error('[SineWix DEBUG] En iyi eşleşme ID:', filtered[0].id);
-                    return fetchDetailAndStreams(filtered[0].id, filtered[0].type, mediaType, seasonNum, episodeNum);
+                videoLinks.forEach((link, idx) => {
+                    finalResults.push({
+                        name: title,
+                        title: `⌜ SINEWIX ⌟ | Kaynak ${idx + 1} | 🇹🇷 Dublaj`,
+                        url: link,
+                        quality: 'HD',
+                        headers: { 'Referer': 'https://ydfvfdizipanel.ru/' }
+                    });
                 });
-        })
-        .catch(function(err) {
-            console.error('[SineWix KRİTİK HATA]:', err.message);
-            return [];
-        });
+
+                if (finalResults.length > 0) break; // Sonuç bulunduysa döngüden çık
+            }
+        }
+
+        console.error(`[SineWix DEBUG] İşlem tamamlandı. Bulunan kaynak: ${finalResults.length}`);
+        return finalResults;
+
+    } catch (err) {
+        console.error(`[SineWix DEBUG] KRİTİK HATA: ${err.message}`);
+        return [];
+    }
 }
 
 module.exports = { getStreams };
