@@ -1,11 +1,11 @@
 /**
- * Nuvio Local Scraper - SinemaCX (V17 - Arama Mantığı Esnetildi)
+ * Nuvio Local Scraper - SinemaCX (V19 - Film İsmi Eklendi)
  */
 
 var cheerio = require("cheerio-without-node-native");
 
 const PROVIDER_NAME = "SinemaCX";
-const BASE_URL = "https://www.sinema.news"; // Site yönlendirse bile arama buradan başlar
+const BASE_URL = "https://www.sinema.news";
 const EMPTY_RESULT = [];
 
 const WORKING_HEADERS = {
@@ -19,6 +19,9 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
     return new Promise(function(resolve) {
         var isMovie = mediaType === 'movie';
         var tmdbUrl = 'https://api.themoviedb.org/3/' + (isMovie ? 'movie' : 'tv') + '/' + tmdbId + '?language=tr-TR&api_key=4ef0d7355d9ffb5151e987764708ce96';
+        
+        // Film ismini burada saklayacağız
+        var displayTitle = "SinemaCX"; 
 
         fetch(tmdbUrl)
             .then(function(res) { return res.json(); })
@@ -26,9 +29,11 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                 var trTitle = (data.title || data.name || "").toLowerCase().trim();
                 var orgTitle = (data.original_title || data.original_name || "").toLowerCase().trim();
                 
+                // Player'da görünecek ismi ayarla
+                displayTitle = (data.title || data.name || PROVIDER_NAME);
+                
                 console.error(`[${PROVIDER_NAME}] Sorgu: ${trTitle}`);
 
-                // Önce TR isimle ara, olmazsa ORG isimle
                 return searchOnSite(trTitle).then(function(url) {
                     if (url) return url;
                     if (trTitle !== orgTitle) {
@@ -48,7 +53,7 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                     targetUrl = targetUrl.replace(/\/$/, "") + "-sezon-" + seasonNum + "-bolum-" + episodeNum;
                 }
 
-                console.error(`[${PROVIDER_NAME}] Hedef URL: ${targetUrl}`);
+                console.error(`[${PROVIDER_NAME}] Hedef Sayfa: ${targetUrl}`);
                 return fetch(targetUrl, { headers: WORKING_HEADERS });
             })
             .then(function(res) { return res ? res.text() : null; })
@@ -56,18 +61,16 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                 if (!html) return resolve(EMPTY_RESULT);
                 var $page = cheerio.load(html);
                 
-                // Fragman/Film tespiti
                 var iframes = [];
                 $page("iframe").each(function() { 
                     var s = $page(this).attr("data-vsrc") || $page(this).attr("src") || "";
                     if (s) iframes.push(s);
                 });
 
-                if (iframes.every(s => s.includes("youtube") || s.includes("fragman"))) {
-                    console.error(`[${PROVIDER_NAME}] Fragman sayfası, 2. sayfaya geçiliyor.`);
+                if (iframes.every(function(s) { return s.includes("youtube") || s.includes("fragman"); })) {
                     var currentUrl = $page("link[rel='canonical']").attr("href") || "";
                     var altUrl = currentUrl.endsWith("/") ? currentUrl + "2/" : currentUrl + "/2/";
-                    return fetch(altUrl, { headers: WORKING_HEADERS }).then(r => r.text());
+                    return fetch(altUrl, { headers: WORKING_HEADERS }).then(function(r) { return r.text(); });
                 }
                 return html;
             })
@@ -95,12 +98,13 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                         'Referer': iframeUrl
                     },
                     body: "data=" + videoId + "&do=getVideo"
-                }).then(r => r.json());
+                }).then(function(r) { return r.json(); });
             })
             .then(function(json) {
                 if (json && json.securedLink) {
+                    // BURASI: name kısmına dinamik film ismini ekledik
                     resolve([{
-                        name: PROVIDER_NAME,
+                        name: displayTitle, 
                         url: json.securedLink,
                         quality: "1080p",
                         headers: { 'Referer': 'https://player.filmizle.in/' }
@@ -115,8 +119,8 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
 }
 
 function searchOnSite(query) {
-    // Arama URL'sini temizleyelim
-    var searchUrl = `${BASE_URL}/?s=` + encodeURIComponent(query);
+    var cleanQuery = query.replace(/[:.,\-]/g, ' ').replace(/\s+/g, ' ').trim();
+    var searchUrl = `${BASE_URL}/?s=` + encodeURIComponent(cleanQuery);
     
     return fetch(searchUrl, { headers: WORKING_HEADERS })
         .then(function(res) { return res.text(); })
@@ -124,20 +128,16 @@ function searchOnSite(query) {
             var $search = cheerio.load(html);
             var foundUrl = null;
 
-            // Sinema.la / Sinema.news için en geniş seçiciyi kullanıyoruz
-            // İlk olarak .frag-k içindeki yanac a'ya bak, yoksa herhangi bir h2 a'ya bak
-            var links = $search("div.icerik div.frag-k div.yanac a, div.video-content h2 a, article h2 a");
-            
-            if (links.length > 0) {
-                // Sadece ilk sonucu al (Şablonuna geri döndük ama filtreyi yumuşattık)
-                var firstLink = links.first();
-                var title = firstLink.text().toLowerCase().trim();
+            $search("div.icerik div.frag-k, div.video-content, article").each(function() {
+                var anchor = $search(this).find("div.yanac a, h2 a, a").first();
+                var siteTitle = anchor.text().toLowerCase().trim();
+                var cleanSiteTitle = siteTitle.replace(/[:.,\-]/g, ' ').replace(/\s+/g, ' ').trim();
                 
-                // Eğer site başlığı aranan kelimenin en az %50'sini içeriyorsa kabul et
-                if (title.includes(query) || query.includes(title)) {
-                    foundUrl = firstLink.attr("href");
+                if (cleanSiteTitle.includes(cleanQuery) || cleanQuery.includes(cleanSiteTitle)) {
+                    foundUrl = anchor.attr("href");
+                    if (foundUrl) return false;
                 }
-            }
+            });
             return foundUrl;
         });
 }
