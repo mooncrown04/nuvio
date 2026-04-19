@@ -1,5 +1,5 @@
 /**
- * Nuvio Local Scraper - SinemaCX (V15 - $ Hatası Düzeltildi)
+ * Nuvio Local Scraper - SinemaCX (V16 - Kapsamlı $ Tanımlaması)
  */
 
 var cheerio = require("cheerio-without-node-native");
@@ -11,7 +11,6 @@ const EMPTY_RESULT = [];
 const WORKING_HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,webp,*/*;q=0.8',
-    'Accept-Language': 'tr-TR,tr;q=0.9',
     'X-Requested-With': 'XMLHttpRequest'
 };
 
@@ -25,8 +24,8 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
         fetch(tmdbUrl)
             .then(function(res) { return res.json(); })
             .then(function(data) {
-                var trTitle = (data.title || data.name).toLowerCase().trim();
-                var orgTitle = (data.original_title || data.original_name).toLowerCase().trim();
+                var trTitle = (data.title || data.name || "").toLowerCase().trim();
+                var orgTitle = (data.original_title || data.original_name || "").toLowerCase().trim();
                 
                 console.error(`[${PROVIDER_NAME}] TR: ${trTitle} | ORG: ${orgTitle}`);
 
@@ -41,7 +40,7 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
             })
             .then(function(targetUrl) {
                 if (!targetUrl) {
-                    console.error(`[${PROVIDER_NAME}] HATA: Hiçbir isimle sonuç bulunamadı.`);
+                    console.error(`[${PROVIDER_NAME}] HATA: Sonuç bulunamadı.`);
                     return resolve(EMPTY_RESULT);
                 }
 
@@ -56,33 +55,36 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
             .then(function(html) {
                 if (!html) return resolve(EMPTY_RESULT);
                 
-                // BURADA $ TANIMLANDI
-                var $ = cheerio.load(html);
+                // --- KRİTİK DÜZELTME: $ BURADA TANIMLANIYOR ---
+                var $page = cheerio.load(html); 
                 var iframes = [];
 
-                $("iframe").each(function() { 
-                    iframes.push($(this).attr("data-vsrc") || $(this).attr("src") || ""); 
+                $page("iframe").each(function() { 
+                    var src = $page(this).attr("data-vsrc") || $page(this).attr("src") || "";
+                    if (src) iframes.push(src); 
                 });
 
-                var isTrailer = iframes.length > 0 && iframes.every(s => s.includes("youtube") || s.includes("fragman") || s.includes("trailer"));
+                var isTrailer = iframes.length > 0 && iframes.every(function(s) {
+                    return s.includes("youtube") || s.includes("fragman") || s.includes("trailer");
+                });
                 
                 if (isTrailer) {
                     console.error(`[${PROVIDER_NAME}] Fragman atlanıyor, /2/ deneniyor.`);
-                    var currentUrl = $("link[rel='canonical']").attr("href") || "";
+                    var currentUrl = $page("link[rel='canonical']").attr("href") || "";
                     var altUrl = currentUrl.endsWith("/") ? currentUrl + "2/" : currentUrl + "/2/";
-                    return fetch(altUrl, { headers: WORKING_HEADERS }).then(r => r.text());
+                    return fetch(altUrl, { headers: WORKING_HEADERS }).then(function(r) { return r.text(); });
                 }
                 return html;
             })
             .then(function(finalHtml) {
                 if (!finalHtml) return resolve(EMPTY_RESULT);
                 
-                // BURADA $ TEKRAR TANIMLANDI (Farklı bir HTML gelmiş olabilir)
+                // --- KRİTİK DÜZELTME: $ YİNE TANIMLANIYOR ---
                 var $final = cheerio.load(finalHtml);
                 var iframeUrl = "";
 
                 $final("iframe").each(function() {
-                    var src = $(this).attr("data-vsrc") || $(this).attr("src") || "";
+                    var src = $final(this).attr("data-vsrc") || $final(this).attr("src") || "";
                     if (src.includes("player.filmizle.in")) {
                         iframeUrl = src.split("?img=")[0];
                         return false;
@@ -90,7 +92,7 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                 });
 
                 if (!iframeUrl) {
-                    console.error(`[${PROVIDER_NAME}] HATA: player.filmizle.in bulunamadı.`);
+                    console.error(`[${PROVIDER_NAME}] HATA: Iframe bulunamadı.`);
                     return resolve(EMPTY_RESULT);
                 }
 
@@ -103,7 +105,7 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                         'Referer': iframeUrl
                     },
                     body: "data=" + videoId + "&do=getVideo"
-                }).then(r => r.json());
+                }).then(function(r) { return r.json(); });
             })
             .then(function(json) {
                 if (json && json.securedLink) {
@@ -128,14 +130,17 @@ function searchOnSite(query) {
     return fetch(`${BASE_URL}/?s=` + encodeURIComponent(query), { headers: WORKING_HEADERS })
         .then(function(res) { return res.text(); })
         .then(function(html) {
+            // --- KRİTİK DÜZELTME: $ BURADA DA TANIMLANIYOR ---
             var $search = cheerio.load(html);
             var foundUrl = null;
             
-            // Seçiciyi hem SinemaCX hem SinemaLA yapısına göre kontrol ediyoruz
-            $search("div.icerik div.frag-k, div.video-content").each(function() {
-                var siteTitle = $search(this).find("div.yanac a, h2 a").text().toLowerCase().trim();
+            // Sinema.la ve Sinema.news seçicileri
+            $search("div.icerik div.frag-k, div.video-content, article").each(function() {
+                var anchor = $search(this).find("div.yanac a, h2 a, a").first();
+                var siteTitle = anchor.text().toLowerCase().trim();
+                
                 if (siteTitle.includes(query.toLowerCase().trim())) {
-                    foundUrl = $search(this).find("div.yanac a, h2 a").attr("href");
+                    foundUrl = anchor.attr("href");
                     return false;
                 }
             });
