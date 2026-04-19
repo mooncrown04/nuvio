@@ -1,6 +1,6 @@
 /**
- * RecTV_v13_Dizi_Film_Sistemi
- * UI Standartları Uygulanmış & From Dizisi Fixlenmiş Sürüm
+ * RecTV_v14_Dizi_Film_Sistemi
+ * Standartlar: Console.error aktif, Bayraklar aktif, From Fixli
  */
 
 var cheerio = require("cheerio-without-node-native");
@@ -32,17 +32,21 @@ async function getAuthToken() {
 function analyzeStream(url, index, itemLabel) {
     const lowUrl = url.toLowerCase();
     const lowLabel = (itemLabel || "").toLowerCase();
-    // Yeni Standart: Sadece metin döndür, ikonlar opsiyonel
-    let text = "Orijinal / Altyazı";
+    
+    // Standart: Dublajsa TR Bayrağı, değilse Dünya ikonu
+    let info = { icon: "🌐", text: "Orijinal / Altyazı" };
 
     if (lowLabel.includes("dublaj") || lowUrl.includes("dublaj")) {
+        // Eğer etiket hem dublaj hem altyazı içeriyorsa (multi) ve index 1 ise altyazı say
         if (lowLabel.includes("altyazı") && index === 1) {
-            text = "Türkçe Altyazı";
+            info.icon = "🌐";
+            info.text = "Türkçe Altyazı";
         } else {
-            text = "Türkçe Dublaj";
+            info.icon = "🇹🇷";
+            info.text = "Türkçe Dublaj";
         }
     }
-    return text;
+    return info;
 }
 
 async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
@@ -55,6 +59,8 @@ async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
         const query = tmdbData.title || tmdbData.name;
         if (!query) return [];
 
+        console.error(`[RecTV Search] Sorgu: ${query} | Tür: ${mediaType}`);
+
         const token = await getAuthToken();
         const searchHeaders = Object.assign({}, HEADERS, { 'Authorization': 'Bearer ' + token });
         const searchUrl = `${BASE_URL}/api/search/${encodeURIComponent(query)}/${SW_KEY}/`;
@@ -63,7 +69,10 @@ async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
         const sData = await sRes.json();
         
         const items = (sData.series || []).concat(sData.posters || []);
-        if (items.length === 0) return [];
+        if (items.length === 0) {
+            console.error("[RecTV] Sitede içerik bulunamadı.");
+            return [];
+        }
 
         let finalResults = [];
         const searchTitle = query.toLowerCase().trim();
@@ -71,10 +80,11 @@ async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
         for (let target of items) {
             const targetTitle = target.title.toLowerCase().trim();
             
-            // --- NOKTA ATIŞI FİLTRE (FROM FİX) ---
-            // 1. Eğer isim birebir uyuşmuyorsa (From != From Hell), daha sıkı kontrol et
+            // --- FROM VE KISA İSİMLER İÇİN AKILLI FİLTRE ---
+            // Eğer aranan isim 5 harften kısaysa (Örn: From), başlık aranan kelimeyle başlamalı.
+            // Bu sayede "From Hell" gibi içinde 'from' geçen ama 'from' ile başlamayanları eleriz.
             if (searchTitle.length < 5) {
-                if (targetTitle !== searchTitle) continue; 
+                if (!targetTitle.startsWith(searchTitle)) continue;
             } else {
                 if (!targetTitle.includes(searchTitle)) continue;
             }
@@ -82,6 +92,8 @@ async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
             const isActuallySerie = target.type === "serie" || (target.label && target.label.toLowerCase().includes("dizi"));
             if (isMovie && isActuallySerie) continue;
             if (!isMovie && !isActuallySerie) continue;
+
+            console.error(`[RecTV Match] Eşleşme Bulundu: ${target.title} (ID: ${target.id})`);
 
             if (isActuallySerie) {
                 const seasonRes = await fetch(`${BASE_URL}/api/season/by/serie/${target.id}/${SW_KEY}/`, { headers: searchHeaders });
@@ -94,10 +106,10 @@ async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                             let epNumber = parseInt(ep.title.match(/\d+/) || 0);
                             if (epNumber == episodeNum) {
                                 (ep.sources || []).forEach((src, idx) => {
-                                    const langStatus = analyzeStream(src.url, idx, ep.label || s.title || target.label);
+                                    const streamInfo = analyzeStream(src.url, idx, ep.label || s.title || target.label);
                                     finalResults.push({
-                                        name: query,       // ÜST SATIR: Film/Dizi Adı
-                                        title: langStatus, // ALT SATIR: Dil Bilgisi
+                                        name: query, // Üst Satır
+                                        title: `${streamInfo.icon} ${streamInfo.text}`, // Alt Satır (Bayraklı)
                                         url: src.url,
                                         quality: "1080p",
                                         headers: { 'User-Agent': 'googleusercontent', 'Referer': 'https://twitter.com/', 'Accept-Encoding': 'identity' }
@@ -116,10 +128,10 @@ async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                 }
                 
                 movieSources.forEach((src, idx) => {
-                    const langStatus = analyzeStream(src.url, idx, target.label);
+                    const streamInfo = analyzeStream(src.url, idx, target.label);
                     finalResults.push({
-                        name: query,       // ÜST SATIR: Film/Dizi Adı
-                        title: langStatus, // ALT SATIR: Dil Bilgisi
+                        name: query, // Üst Satır
+                        title: `${streamInfo.icon} ${streamInfo.text}`, // Alt Satır (Bayraklı)
                         url: src.url,
                         quality: "1080p",
                         headers: { 'User-Agent': 'googleusercontent', 'Referer': 'https://twitter.com/', 'Accept-Encoding': 'identity' }
@@ -128,9 +140,11 @@ async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
             }
         }
 
+        console.error(`[RecTV Sonuç] Toplam Link Sayısı: ${finalResults.length}`);
         return finalResults.filter((v, i, a) => a.findIndex(t => (t.url === v.url)) === i);
 
     } catch (err) { 
+        console.error("[RecTV Hata] " + err.message);
         return []; 
     }
 }
