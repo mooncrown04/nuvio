@@ -1,5 +1,5 @@
 /**
- * Nuvio Local Scraper - SinemaCX (V20 - Dublaj/Altyazı Detayı Eklendi)
+ * Nuvio Local Scraper - SinemaCX (V21 - Zenginleştirilmiş İsim Yapısı)
  */
 
 var cheerio = require("cheerio-without-node-native");
@@ -20,10 +20,8 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
         var isMovie = mediaType === 'movie';
         var tmdbUrl = 'https://api.themoviedb.org/3/' + (isMovie ? 'movie' : 'tv') + '/' + tmdbId + '?language=tr-TR&api_key=4ef0d7355d9ffb5151e987764708ce96';
         
-        var movieInfo = {
-            title: "",
-            extra: "1080p" // Varsayılan detay
-        };
+        var displayTitle = ""; 
+        var extraInfo = "1080p"; // Varsayılan veri
 
         fetch(tmdbUrl)
             .then(function(res) { return res.json(); })
@@ -31,27 +29,36 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                 var trTitle = (data.title || data.name || "").toLowerCase().trim();
                 var orgTitle = (data.original_title || data.original_name || "").toLowerCase().trim();
                 
-                movieInfo.title = (data.title || data.name || PROVIDER_NAME);
-                
-                return searchOnSite(trTitle).then(function(result) {
-                    if (result) return result;
+                // Player listesinde ana başlık olarak görünecek isim
+                displayTitle = (data.title || data.name || PROVIDER_NAME);
+
+                console.error(`[${PROVIDER_NAME}] Sorgu: ${trTitle}`);
+
+                // Türkçe ve İngilizce aramayı sırayla yap
+                return searchOnSite(trTitle).then(function(res1) {
+                    if (res1) return res1;
                     if (trTitle !== orgTitle) {
+                        console.error(`[${PROVIDER_NAME}] TR sonuç yok, ORG deneniyor...`);
                         return searchOnSite(orgTitle);
                     }
                     return null;
                 });
             })
-            .then(function(searchResult) {
-                if (!searchResult || !searchResult.url) {
+            .then(function(result) {
+                if (!result || !result.url) {
+                    console.error(`[${PROVIDER_NAME}] HATA: Sonuç bulunamadı.`);
                     return resolve(EMPTY_RESULT);
                 }
 
-                // Sitedeki başlıktan Dublaj/Altyazı bilgisini ayıkla
-                var siteTitle = searchResult.siteTitle.toLowerCase();
-                if (siteTitle.includes("dublaj")) movieInfo.extra = "Türkçe Dublaj";
-                else if (siteTitle.includes("altyazı") || siteTitle.includes("altyazi")) movieInfo.extra = "Türkçe Altyazılı";
+                // --- BURASI: Sitedeki başlıktan Dublaj/Altyazı verisini çekiyoruz ---
+                var sTitle = result.siteTitle.toLowerCase();
+                if (sTitle.includes("dublaj")) {
+                    extraInfo = "Türkçe Dublaj";
+                } else if (sTitle.includes("altyazı") || sTitle.includes("altyazi")) {
+                    extraInfo = "Türkçe Altyazılı";
+                }
 
-                var targetUrl = searchResult.url;
+                var targetUrl = result.url;
                 if (!isMovie) {
                     targetUrl = targetUrl.replace(/\/$/, "") + "-sezon-" + seasonNum + "-bolum-" + episodeNum;
                 }
@@ -69,7 +76,7 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                     if (s) iframes.push(s);
                 });
 
-                if (iframes.every(function(s) { return s.includes("youtube") || s.includes("fragman"); })) {
+                if (iframes.length > 0 && iframes.every(function(s) { return s.includes("youtube") || s.includes("fragman"); })) {
                     var currentUrl = $page("link[rel='canonical']").attr("href") || "";
                     var altUrl = currentUrl.endsWith("/") ? currentUrl + "2/" : currentUrl + "/2/";
                     return fetch(altUrl, { headers: WORKING_HEADERS }).then(function(r) { return r.text(); });
@@ -104,9 +111,9 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
             })
             .then(function(json) {
                 if (json && json.securedLink) {
-                    // name kısmında: "Film Adı (Türkçe Dublaj - SinemaCX)" şeklinde görünür
+                    // --- SONUÇ: "Film Adı (Türkçe Dublaj - SinemaCX)" formatı ---
                     resolve([{
-                        name: movieInfo.title + " (" + movieInfo.extra + " - " + PROVIDER_NAME + ")",
+                        name: displayTitle + " (" + extraInfo + " - " + PROVIDER_NAME + ")",
                         url: json.securedLink,
                         quality: "1080p",
                         headers: { 'Referer': 'https://player.filmizle.in/' }
@@ -120,9 +127,6 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
     });
 }
 
-/**
- * Arama fonksiyonu artık sadece URL değil, site başlığını da dönüyor
- */
 function searchOnSite(query) {
     var cleanQuery = query.replace(/[:.,\-]/g, ' ').replace(/\s+/g, ' ').trim();
     var searchUrl = `${BASE_URL}/?s=` + encodeURIComponent(cleanQuery);
@@ -131,7 +135,7 @@ function searchOnSite(query) {
         .then(function(res) { return res.text(); })
         .then(function(html) {
             var $search = cheerio.load(html);
-            var result = null;
+            var match = null;
 
             $search("div.icerik div.frag-k, div.video-content, article").each(function() {
                 var anchor = $search(this).find("div.yanac a, h2 a, a").first();
@@ -139,14 +143,14 @@ function searchOnSite(query) {
                 var cleanSiteTitle = siteTitle.toLowerCase().replace(/[:.,\-]/g, ' ').replace(/\s+/g, ' ').trim();
                 
                 if (cleanSiteTitle.includes(cleanQuery) || cleanQuery.includes(cleanSiteTitle)) {
-                    result = {
-                        url: anchor.attr("href"),
-                        siteTitle: siteTitle // Dil tespiti için başlığı sakla
+                    match = { 
+                        url: anchor.attr("href"), 
+                        siteTitle: siteTitle // Başlığı dil tespiti için gönderiyoruz
                     };
                     return false;
                 }
             });
-            return result;
+            return match;
         });
 }
 
