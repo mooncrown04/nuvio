@@ -1,5 +1,5 @@
 /**
- * Nuvio Local Scraper - SinemaCX (V24 - Gelişmiş Arama & Detaylı İsim)
+ * Nuvio Local Scraper - SinemaCX (V26 - V17 Hibrit Versiyon)
  */
 
 var cheerio = require("cheerio-without-node-native");
@@ -14,7 +14,7 @@ const WORKING_HEADERS = {
 };
 
 function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
-    console.error(`[${PROVIDER_NAME}] Başlatıldı -> ID: ${tmdbId}`);
+    console.error(`[${PROVIDER_NAME}] --- BAŞLATILDI --- ID: ${tmdbId}`);
 
     return new Promise(function(resolve) {
         var isMovie = mediaType === 'movie';
@@ -28,46 +28,43 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
             .then(function(data) {
                 var trTitle = (data.title || data.name || "").toLowerCase().trim();
                 var orgTitle = (data.original_title || data.original_name || "").toLowerCase().trim();
-                
                 displayTitle = (data.title || data.name || PROVIDER_NAME);
 
-                console.error(`[${PROVIDER_NAME}] Sorgu: ${trTitle}`);
+                console.error(`[${PROVIDER_NAME}] TMDB: ${trTitle} / ${orgTitle}`);
 
-                // 1. Türkçe isimle ara
+                // V17 Mantığı: Önce TR, sonra ORG ara
                 return searchOnSite(trTitle).then(function(res1) {
                     if (res1) return res1;
-                    // 2. Bulunamazsa İngilizce isimle ara
                     if (trTitle !== orgTitle) {
-                        console.error(`[${PROVIDER_NAME}] TR sonuç yok, ORG deneniyor: ${orgTitle}`);
+                        console.error(`[${PROVIDER_NAME}] TR bulunamadı, ORG deneniyor...`);
                         return searchOnSite(orgTitle);
                     }
                     return null;
                 });
             })
-            .then(function(searchResult) {
-                if (!searchResult || !searchResult.url) {
-                    console.error(`[${PROVIDER_NAME}] HATA: Hiçbir sonuç eşleşmedi.`);
+            .then(function(result) {
+                if (!result || !result.url) {
+                    console.error(`[${PROVIDER_NAME}] HATA: Site eşleşmesi sağlanamadı.`);
                     return resolve(EMPTY_RESULT);
                 }
 
-                // Dil tespiti (Sitedeki başlıktan çekiyoruz)
-                var sTitle = searchResult.siteTitle.toLowerCase();
+                // Sitedeki başlıktan dil tespiti
+                var sTitle = result.siteTitle.toLowerCase();
                 if (sTitle.includes("dublaj")) extraInfo = "Türkçe Dublaj";
                 else if (sTitle.includes("altyazı") || sTitle.includes("altyazi")) extraInfo = "Türkçe Altyazılı";
 
-                var targetUrl = searchResult.url;
+                console.error(`[${PROVIDER_NAME}] Eşleşme: ${result.siteTitle} -> ${result.url}`);
+
+                var targetUrl = result.url;
                 if (!isMovie) {
                     targetUrl = targetUrl.replace(/\/$/, "") + "-sezon-" + seasonNum + "-bolum-" + episodeNum;
                 }
-
-                console.error(`[${PROVIDER_NAME}] Hedef: ${targetUrl}`);
                 return fetch(targetUrl, { headers: WORKING_HEADERS });
             })
             .then(function(res) { return res ? res.text() : null; })
             .then(function(html) {
                 if (!html) return resolve(EMPTY_RESULT);
                 var $page = cheerio.load(html);
-                
                 var iframes = [];
                 $page("iframe").each(function() { 
                     var s = $page(this).attr("data-vsrc") || $page(this).attr("src") || "";
@@ -75,6 +72,7 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                 });
 
                 if (iframes.length > 0 && iframes.every(s => s.includes("youtube") || s.includes("fragman"))) {
+                    console.error(`[${PROVIDER_NAME}] Fragman sayfası, sayfa 2'ye gidiliyor.`);
                     var currentUrl = $page("link[rel='canonical']").attr("href") || "";
                     var altUrl = currentUrl.endsWith("/") ? currentUrl + "2/" : currentUrl + "/2/";
                     return fetch(altUrl, { headers: WORKING_HEADERS }).then(r => r.text());
@@ -94,7 +92,10 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                     }
                 });
 
-                if (!iframeUrl) return resolve(EMPTY_RESULT);
+                if (!iframeUrl) {
+                    console.error(`[${PROVIDER_NAME}] HATA: Video player bulunamadı.`);
+                    return resolve(EMPTY_RESULT);
+                }
 
                 var videoId = iframeUrl.split("/").pop();
                 return fetch("https://player.filmizle.in/player/index.php?data=" + videoId + "&do=getVideo", {
@@ -109,7 +110,7 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
             })
             .then(function(json) {
                 if (json && json.securedLink) {
-                    // name alanına Film Adı (Detay - Site) formatında veri koyuyoruz
+                    console.error(`[${PROVIDER_NAME}] BAŞARILI: Link üretildi.`);
                     resolve([{
                         name: displayTitle + " (" + extraInfo + " - " + PROVIDER_NAME + ")",
                         url: json.securedLink,
@@ -119,35 +120,35 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                 } else { resolve(EMPTY_RESULT); }
             })
             .catch(function(err) {
-                console.error(`[${PROVIDER_NAME}] HATA: ${err.message}`);
+                console.error(`[${PROVIDER_NAME}] SİSTEM HATASI: ${err.message}`);
                 resolve(EMPTY_RESULT);
             });
     });
 }
 
 function searchOnSite(query) {
-    // ARAMA TEMİZLİĞİ: Savaş Makinası: İntikam -> savas makinasi intikam
-    var cleanQuery = query.replace(/[^\w\sıişğüç]/gi, ' ').replace(/\s+/g, ' ').trim();
+    // V17 gibi temiz arama terimi, ama Resident Evil için noktalamaları boşluğa çevirir
+    var cleanQuery = query.replace(/[:.,\-]/g, ' ').replace(/\s+/g, ' ').trim();
     var searchUrl = `${BASE_URL}/?s=` + encodeURIComponent(cleanQuery);
     
+    console.error(`[${PROVIDER_NAME}] Arama: ${searchUrl}`);
+
     return fetch(searchUrl, { headers: WORKING_HEADERS })
         .then(res => res.text())
         .then(html => {
             var $search = cheerio.load(html);
             var match = null;
 
-            // En kapsamlı seçiciler
-            $search("div.icerik div.frag-k, div.video-content, article").each(function() {
-                var anchor = $search(this).find("div.yanac a, h2 a, a").first();
-                var siteTitle = anchor.text();
-                var cleanSiteTitle = siteTitle.toLowerCase().replace(/[^\w\sıişğüç]/gi, ' ').replace(/\s+/g, ' ').trim();
+            // V17 Seçicileri
+            var links = $search("div.icerik div.frag-k div.yanac a, div.video-content h2 a, article h2 a, a");
+            
+            links.each(function() {
+                var anchor = $search(this);
+                var siteTitle = anchor.text().toLowerCase().trim();
+                var cleanSiteTitle = siteTitle.replace(/[:.,\-]/g, ' ').replace(/\s+/g, ' ').trim();
                 
-                // ESNEK KONTROL: Kelimeleri parçalayıp eşleştiriyoruz (War Machine için kesin çözüm)
-                var qWords = cleanQuery.split(' ');
-                var matchCount = 0;
-                qWords.forEach(w => { if (w.length > 2 && cleanSiteTitle.includes(w)) matchCount++; });
-
-                if (cleanSiteTitle.includes(cleanQuery) || cleanQuery.includes(cleanSiteTitle) || matchCount >= 2) {
+                // Hem tam içeriyor mu bak, hem de kelime bazlı küçük bir kontrol yap
+                if (cleanSiteTitle.includes(cleanQuery) || cleanQuery.includes(cleanSiteTitle)) {
                     match = { url: anchor.attr("href"), siteTitle: siteTitle };
                     return false;
                 }
