@@ -1,5 +1,5 @@
 /**
- * Nuvio Local Scraper - SinemaCX (V31 - Final Kararlı Sürüm)
+ * Nuvio Local Scraper - SinemaCX (V32 - Yazım Hatası Giderildi)
  */
 
 var cheerio = require("cheerio-without-node-native");
@@ -14,7 +14,7 @@ const WORKING_HEADERS = {
 };
 
 function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
-    console.error(`[${PROVIDER_NAME}] Başlatıldı: ${tmdbId}`);
+    console.error(`[${PROVIDER_NAME}] Analiz Başladı -> ID: ${tmdbId}`);
 
     return new Promise(function(resolve) {
         var isMovie = mediaType === 'movie';
@@ -41,65 +41,69 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                     return resolve(EMPTY_RESULT);
                 }
 
+                // HATALI KISIM BURASIYDI: 'detailInfo' olarak tanımlayıp her yerde bunu kullanıyoruz.
                 var sTitle = result.siteTitle.toLowerCase();
-                var detailInfo = "1080p"; // Değişken ismini netleştirdik
+                var detailInfo = "1080p"; 
                 if (sTitle.includes("dublaj")) detailInfo = "Türkçe Dublaj";
                 else if (sTitle.includes("altyazı") || sTitle.includes("altyazi")) detailInfo = "Türkçe Altyazılı";
 
-                console.error(`[${PROVIDER_NAME}] Hedef: ${result.siteTitle}`);
+                console.error(`[${PROVIDER_NAME}] Hedef Veri: ${result.siteTitle}`);
 
                 var targetUrl = result.url;
                 if (!isMovie) {
                     targetUrl = targetUrl.replace(/\/$/, "") + "-sezon-" + seasonNum + "-bolum-" + episodeNum;
                 }
 
-                return fetch(targetUrl, { headers: WORKING_HEADERS }).then(res => res.text()).then(html => {
-                    var $page = cheerio.load(html);
-                    var iframes = [];
-                    $page("iframe").each(function() {
-                        var s = $page(this).attr("data-vsrc") || $page(this).attr("src") || "";
-                        if (s) iframes.push(s);
-                    });
+                return fetch(targetUrl, { headers: WORKING_HEADERS })
+                    .then(res => res.text())
+                    .then(html => {
+                        var $page = cheerio.load(html);
+                        var iframes = [];
+                        $page("iframe").each(function() {
+                            var s = $page(this).attr("data-vsrc") || $page(this).attr("src") || "";
+                            if (s) iframes.push(s);
+                        });
 
-                    if (iframes.length > 0 && iframes.every(s => s.includes("youtube") || s.includes("fragman"))) {
-                        var currentUrl = $page("link[rel='canonical']").attr("href") || "";
-                        var altUrl = currentUrl.endsWith("/") ? currentUrl + "2/" : currentUrl + "/2/";
-                        return fetch(altUrl, { headers: WORKING_HEADERS }).then(r => r.text());
-                    }
-                    return html;
-                }).then(finalHtml => {
-                    var $final = cheerio.load(finalHtml);
-                    var iframeUrl = "";
-                    $final("iframe").each(function() {
-                        var src = $final(this).attr("data-vsrc") || $final(this).attr("src") || "";
-                        if (src.includes("player.filmizle.in")) {
-                            iframeUrl = src.split("?img=")[0];
-                            return false;
+                        if (iframes.length > 0 && iframes.every(s => s.includes("youtube") || s.includes("fragman"))) {
+                            var currentUrl = $page("link[rel='canonical']").attr("href") || "";
+                            var altUrl = currentUrl.endsWith("/") ? currentUrl + "2/" : currentUrl + "/2/";
+                            return fetch(altUrl, { headers: WORKING_HEADERS }).then(r => r.text());
                         }
-                    });
+                        return html;
+                    })
+                    .then(finalHtml => {
+                        var $final = cheerio.load(finalHtml);
+                        var iframeUrl = "";
+                        $final("iframe").each(function() {
+                            var src = $final(this).attr("data-vsrc") || $final(this).attr("src") || "";
+                            if (src.includes("player.filmizle.in")) {
+                                iframeUrl = src.split("?img=")[0];
+                                return false;
+                            }
+                        });
 
-                    if (!iframeUrl) return resolve(EMPTY_RESULT);
+                        if (!iframeUrl) return resolve(EMPTY_RESULT);
 
-                    var videoId = iframeUrl.split("/").pop();
-                    return fetch("https://player.filmizle.in/player/index.php?data=" + videoId + "&do=getVideo", {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/x-www-form-urlencoded',
-                            'X-Requested-With': 'XMLHttpRequest',
-                            'Referer': iframeUrl
-                        },
-                        body: "data=" + videoId + "&do=getVideo"
-                    }).then(r => r.json()).then(json => {
-                        if (json && json.securedLink) {
-                            resolve([{
-                                name: displayTitle + " (" + detailInfo + " - " + PROVIDER_NAME + ")",
-                                url: json.securedLink,
-                                quality: "1080p",
-                                headers: { 'Referer': 'https://player.filmizle.in/' }
-                            }]);
-                        } else { resolve(EMPTY_RESULT); }
+                        var videoId = iframeUrl.split("/").pop();
+                        return fetch("https://player.filmizle.in/player/index.php?data=" + videoId + "&do=getVideo", {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/x-www-form-urlencoded',
+                                'X-Requested-With': 'XMLHttpRequest',
+                                'Referer': iframeUrl
+                            },
+                            body: "data=" + videoId + "&do=getVideo"
+                        }).then(r => r.json()).then(json => {
+                            if (json && json.securedLink) {
+                                resolve([{
+                                    name: displayTitle + " (" + detailInfo + " - " + PROVIDER_NAME + ")",
+                                    url: json.securedLink,
+                                    quality: "1080p",
+                                    headers: { 'Referer': 'https://player.filmizle.in/' }
+                                }]);
+                            } else { resolve(EMPTY_RESULT); }
+                        });
                     });
-                });
             })
             .catch(err => {
                 console.error(`[${PROVIDER_NAME}] SİSTEM HATASI: ${err.message}`);
@@ -137,7 +141,7 @@ function searchOnSite(query) {
 
             if (results.length > 0) {
                 results.sort((a, b) => b.score - a.score);
-                console.error(`[${PROVIDER_NAME}] Eşleşme Skoru: ${results[0].score} / ${queryWords.length}`);
+                console.error(`[${PROVIDER_NAME}] Skor: ${results[0].score}/${queryWords.length} -> ${results[0].siteTitle}`);
                 return results[0];
             }
             return null;
