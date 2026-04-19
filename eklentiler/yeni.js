@@ -1,5 +1,5 @@
 /**
- * Nuvio Local Scraper - SinemaCX (V35 - Akıllı Arama & Nokta Atışı)
+ * Nuvio Local Scraper - SinemaCX (V36 - Fix: $ is not defined)
  */
 
 var cheerio = require("cheerio-without-node-native");
@@ -26,19 +26,18 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
             .then(data => {
                 var trTitle = (data.title || data.name || "").toLowerCase().trim();
                 var orgTitle = (data.original_title || data.original_name || "").toLowerCase().trim();
-                displayTitle = (data.title || data.name || PROVIDer_NAME);
+                displayTitle = (data.title || data.name || PROVIDER_NAME);
                 releaseYear = (data.release_date || data.first_air_date || "").split("-")[0];
 
                 console.error(`[${PROVIDER_NAME}] Arama Başlatıldı: ${trTitle} / ${orgTitle}`);
 
-                // Önce TR isimle, olmazsa ORG isimle ara
+                // Çift aşamalı arama: Önce TR, sonuç zayıfsa ORG isim
                 return searchOnSite(trTitle, releaseYear).then(res1 => {
                     if (res1 && res1.score >= 2) return res1;
                     return searchOnSite(orgTitle, releaseYear);
                 });
             })
             .then(result => {
-                // Eğer hala sonuç yoksa, anahtar kelime daraltması yap (Örn: Resident Evil 5 -> Resident Evil)
                 if (!result) {
                     console.error(`[${PROVIDER_NAME}] Sonuç bulunamadı.`);
                     return resolve(EMPTY_RESULT);
@@ -59,7 +58,7 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                         if (s) iframes.push(s);
                     });
 
-                    // Eğer sadece fragman varsa '2' nolu sayfaya/parta bak
+                    // Fragman koruması
                     if (iframes.length > 0 && iframes.every(s => s.includes("youtube") || s.includes("fragman"))) {
                         var currentUrl = $page("link[rel='canonical']").attr("href") || "";
                         var altUrl = currentUrl.endsWith("/") ? currentUrl + "2/" : currentUrl + "/2/";
@@ -91,7 +90,7 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                     }).then(r => r.json()).then(json => {
                         if (json && json.securedLink) {
                             var sTitle = result.siteTitle.toLowerCase();
-                            var info = sTitle.includes("dublaj") ? "TR Dublaj" : (sTitle.includes("altyazı") ? "TR Altyazı" : "HD");
+                            var info = sTitle.includes("dublaj") ? "Dublaj" : (sTitle.includes("altyazı") ? "Altyazı" : "HD");
                             
                             resolve([{
                                 name: displayTitle + " (" + info + " - SinemaCX)",
@@ -104,21 +103,21 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                 });
             })
             .catch(err => {
-                console.error(`[${PROVIDER_NAME}] Hata: ${err.message}`);
+                console.error(`[${PROVIDER_NAME}] HATA: ${err.message}`);
                 resolve(EMPTY_RESULT);
             });
     });
 }
 
 function searchOnSite(query, year) {
-    // Sitenin kafasını karıştırmamak için özel karakterleri temizle
     var cleanQuery = query.replace(/[:.,\-]/g, ' ').replace(/\s+/g, ' ').trim();
     var searchUrl = `${BASE_URL}/?s=` + encodeURIComponent(cleanQuery);
     
     return fetch(searchUrl, { headers: WORKING_HEADERS })
         .then(res => res.text())
         .then(html => {
-            var $search = cheerio.load(html);
+            // HATA BURADAYDI: $ işaretini cheerio.load(html) ile tanımladık
+            var $ = cheerio.load(html);
             var results = [];
             var queryWords = cleanQuery.toLowerCase().split(' ').filter(w => w.length > 2);
 
@@ -126,13 +125,13 @@ function searchOnSite(query, year) {
                 var url = $(this).attr("href") || "";
                 var title = $(this).text().toLowerCase().trim();
 
-                // Filtreleme: Gereksiz linkleri ele (Kategori, Haber vs.)
-                if (!url.startsWith(BASE_URL) || url.includes("/izle/") || url.includes("/category/") || title.length < 3) return;
+                // Filtre: Sadece film linklerine odaklan (kategorileri loglardaki gibi eliyoruz)
+                if (!url.startsWith(BASE_URL) || url.includes("/izle/") || url.includes("/category/") || title.length < 5) return;
 
                 var score = 0;
                 queryWords.forEach(word => { if (title.includes(word)) score++; });
                 
-                // Yıl eşleşmesi varsa büyük avantaj sağla
+                // Yıl eşleşmesi varsa +3 puan
                 if (year && title.includes(year)) score += 3;
 
                 if (score > 0) {
