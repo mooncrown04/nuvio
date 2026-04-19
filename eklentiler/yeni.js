@@ -1,5 +1,5 @@
 /**
- * Nuvio Local Scraper - SinemaCX (V41 - UI Fix)
+ * Nuvio Local Scraper - SinemaCX (V42 - Hatalı Bilgi Fix)
  */
 
 var cheerio = require("cheerio-without-node-native");
@@ -29,7 +29,6 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                 displayTitle = (data.title || data.name || "Film");
                 releaseYear = (data.release_date || data.first_air_date || "").split("-")[0];
 
-                // Arama stratejisi (V38-V40 standartı)
                 var query1 = trTitle.replace(/[:.,\-]/g, ' ').split(" ").slice(0, 3).join(" ");
                 var query2 = orgTitle.replace(/[:.,\-]/g, ' ').split(" ").slice(0, 3).join(" ");
 
@@ -47,18 +46,18 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                 return fetch(result.url, { headers: WORKING_HEADERS }).then(res => res.text()).then(html => {
                     var $page = cheerio.load(html);
                     
-                    // Dil Analizi
+                    // --- DİL ANALİZİ (GÜNCELLENDİ) ---
                     var pageText = $page("body").text().toLowerCase();
                     var siteTitleLower = result.siteTitle.toLowerCase();
                     
-                    var langLabel = ""; 
+                    var langInfo = "HD"; // Varsayılan artık sadece HD
+                    
                     if (pageText.includes("dublaj") || siteTitleLower.includes("dublaj")) {
-                        langLabel = "Türkçe Dublaj";
-                    } else if (pageText.includes("altyazı") || siteTitleLower.includes("altyazı") || pageText.includes("subbed")) {
-                        langLabel = "Türkçe Altyazı";
-                    } else {
-                        langLabel = "HD / Tek Dil";
+                        langInfo = "Türkçe Dublaj";
+                    } else if (pageText.includes("altyazı") || siteTitleLower.includes("altyazı")) {
+                        langInfo = "Türkçe Altyazı";
                     }
+                    // "Else" durumunda yani bir şey bulamazsa HD olarak kalacak.
 
                     var iframeUrl = "";
                     $page("iframe").each(function() {
@@ -82,10 +81,9 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                         body: "data=" + videoId + "&do=getVideo"
                     }).then(r => r.json()).then(json => {
                         if (json && json.securedLink) {
-                            // --- BURASI KRİTİK: NUVIO GÖRSEL EŞLEŞTİRME ---
                             resolve([{
-                                name: displayTitle,  // Üstteki KALIN yazı (Sadece Film İsmi)
-                                title: langLabel,    // Alttaki İNCE yazı (Sadece Dil Bilgisi)
+                                name: displayTitle,  // Üstte Film İsmi
+                                title: langInfo,     // Altta Dil veya sadece "HD"
                                 url: json.securedLink,
                                 quality: "1080p",
                                 headers: { 'Referer': 'https://player.filmizle.in/' }
