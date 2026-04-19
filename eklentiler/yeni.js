@@ -5,15 +5,22 @@ var HEADERS = {
   'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:137.0) Gecko/20100101 Firefox/137.0',
   'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
   'Accept-Language': 'tr-TR,tr;q=0.9,en;q=0.8',
-  'Referer': BASE_URL + '/',
-  'Origin': BASE_URL
+  'Referer': BASE_URL + '/'
 };
 
+// ── TMDB ──────────────────────────────────────────────────────
 function fetchTmdbInfo(tmdbId, mediaType) {
   var endpoint = (mediaType === 'tv') ? 'tv' : 'movie';
   return fetch('https://api.themoviedb.org/3/' + endpoint + '/' + tmdbId + '?api_key=' + TMDB_API_KEY + '&language=tr-TR')
     .then(function(r) { return r.json(); })
-    .catch(function(e) { console.error("TMDB_ERROR: " + e.message); throw e; });
+    .then(function(d) {
+      return {
+        originalTitle: d.title || d.name || 'İçerik',
+        titleTr: d.title  || d.name  || '',
+        titleEn: d.original_title || d.original_name || '',
+        year: (d.release_date || d.first_air_date || '').slice(0, 4)
+      };
+    }).catch(function(e) { console.error("TMDB_ERROR: " + e.message); throw e; });
 }
 
 function titleToSlug(title) {
@@ -23,6 +30,7 @@ function titleToSlug(title) {
     .replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'');
 }
 
+// ── Film sayfası bul ──────────────────────────────────────────
 function findFilmPage(titleTr, titleEn) {
   var slugTr = titleToSlug(titleTr);
   var slugEn = titleToSlug(titleEn);
@@ -34,7 +42,119 @@ function findFilmPage(titleTr, titleEn) {
     if (i >= candidates.length) return searchFallback(titleTr, titleEn);
     var url = candidates[i];
     return fetch(url, { headers: HEADERS }).then(function(r) {
-      if (!r.ok) return tryNext(i + 1);
+      if (!r.ok) { console.error("CANDIDATE_STATUS_ERROR: " + url + " (" + r.status + ")"); return tryNext(i + 1); }
+      return r.text().then(function(html) {
+        if (html.indexOf('data-id') === -1) { console.error("NO_DATA_ID_IN_PAGE: " + url); return tryNext(i + 1); }
+        return { url: url, html: html };
+      });
+    }).catch(function(e) { console.error("CANDIDATE_FETCH_ERROR: " + e.message); return tryNext(i + 1); });
+  }
+  return tryNext(0);
+}
+
+function searchFallback(titleTr, titleEn) {
+  var query = titleTr || titleEn;
+  return fetch(BASE_URL + '/ajax/arama.asp', {
+    method: 'POST',
+    headers: Object.assign({}, HEADERS, { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8', 'X-Requested-With': 'XMLHttpRequest' }),
+    body: 'q=' + encodeURIComponent(query)
+  })
+  .then(function(r) { return r.json(); })
+  .then(function(data) {
+    var items = (data.results && data.results.filmler && data.results.filmler.results) || [];
+    if (!items.length) { console.error("SEARCH_FALLBACK_EMPTY: " + query); throw new Error('Film bulunamadi'); }
+    var pageUrl = items[0].url.startsWith('http') ? items[0].url : BASE_URL + items[0].url;
+    return fetch(pageUrl, { headers: HEADERS }).then(function(r) { return r.text().then(function(html) { return { url: pageUrl, html: html }; }); });
+  }).catch(function(e) { console.error("SEARCH_FALLBACK_ERROR: " + e.message); throw e; });
+}
+
+// ── Embed İşleme ────────────────────────────────────────────────
+function processEmbed(embedData, dilAd, originalTitle) {
+  var providerName = embedData.baslik || "Kaynak";
+  if (['pixel', 'netu'].includes(providerName.toLowerCase())) return Promise.resolve(null);
+
+  // URL kontrolü (Başına BASE_URL ekleyerek scheme hatasını önlüyoruz)
+  return fetch(BASE_URL + '/ajax/dataEmbed.asp', {
+    method: 'POST',
+    headers: Object.assign({}, HEADERS, { 'Content-Type': 'application/x-www-form-urlencoded', 'X-Requested-With': 'XMLHttpRequest', 'Origin': BASE_URL }),
+    body: 'id=' + embedData.id
+  })
+  .then(function(r) { return r.text(); })
+  .then(function(html) {
+    if(html.indexOf('reCAPTCHADATA') !== -1) { console.error("RECAPTCHA_HIT: " + embedData.id); return null; }
+
+    var src = (html.match(/<iframe[^>]+src="([^"]+)"/i) || [])[1];
+    if (!src) {
+        var sm = html.match(/(vidmoly|filemoon)\s*\(\s*'([^']+)'/i);
+        if (sm) {
+            if (sm[1] === 'vidmoly') src = 'https://vidmoly.to/embed-' + sm[2] + '.html';
+            if (sm[1] === 'filemoon') src = 'https://filemoon.sx/e/' + sm[2];
+        }
+    }
+    if (!src) return null;
+
+    var p = providerName;
+    if (src.indexOf('vidmoly') !== -1) p = "VidMoly";
+    else if (src.indexOf('sibnet') !== -1) p = "Sibnet";
+    else if (src.indexOf('filemoon') !== -1) p = "FileMoon";
+
+    var flag = dilAd === 'TR Dublaj' ? '🇹🇷 ' : '🌐 ';
+
+    return fetch(src, { headers: Object.assign({}, HEADERS, { 'Referer': BASE_URL + '/' }) })
+      .then(function(r) { return r.text(); })
+      .then(function(innerHtml) {
+        var m = innerHtml.match(/file\s*:\s*['"]?(https?:\/\/[^\s"'<>]+\.m3u8[^\s"'<>]*)/i);
+        if (!m) { console.error("M3U8_NOT_FOUND_IN_SRC: " + src); return null; }
+
+        return {
+          name: originalTitle, // Üstte Film İsmi
+          title: '⌜ WEBTEIZLE ⌟ | ' + p + ' | ' + flag + dilAd, // Altta Sağlayıcı ve Dil
+          url: m[1],
+          quality: 'Auto',
+          type: 'hls',
+          headers: { 'Referer': src }
+        };
+      });
+  })
+  .catch(function(e) { console.error("EMBED_ERROR: " + e.message); return null; });
+}
+
+// ── getStreams ────────────────────────────────────────────────
+function getStreams(tmdbId, mediaType, season, episode) {
+  return fetchTmdbInfo(tmdbId, mediaType)
+    .then(function(info) {
+      return findFilmPage(info.titleTr, info.titleEn).then(function(result) {
+        var filmId = (result.html.match(/data-id="(\d+)"/) || [])[1];
+        if (!filmId) { console.error("FILM_ID_NOT_FOUND"); throw new Error('ID Yok'); }
+
+        var diller = [];
+        if (result.html.includes('/izle/dublaj/') || result.url.includes('/izle/dublaj/')) diller.push({ dil: '0', ad: 'TR Dublaj' });
+        if (result.html.includes('/izle/altyazi/') || result.url.includes('/izle/altyazi/')) diller.push({ dil: '1', ad: 'TR Altyazı' });
+        if (diller.length === 0) diller.push({ dil: '0', ad: 'TR Dublaj' }, { dil: '1', ad: 'TR Altyazı' });
+
+        var streams = [];
+        return Promise.all(diller.map(function(d) {
+          var body = 'filmid=' + filmId + '&dil=' + d.dil + '&s=' + (season || '') + '&b=' + (episode || '') + '&bot=0';
+          return fetch(BASE_URL + '/ajax/dataAlternatif3.asp', {
+            method: 'POST',
+            headers: Object.assign({}, HEADERS, { 'Content-Type': 'application/x-www-form-urlencoded', 'X-Requested-With': 'XMLHttpRequest' }),
+            body: body
+          })
+          .then(function(r) { return r.json(); })
+          .then(function(res) {
+            var list = (res.status === 'success' && Array.isArray(res.data)) ? res.data : [];
+            return Promise.all(list.map(function(e) { return processEmbed(e, d.ad, info.originalTitle); }));
+          })
+          .then(function(results) {
+            results.forEach(function(s) { if (s) streams.push(s); });
+          });
+        })).then(function() { return streams; });
+      }).catch(function(e) { console.error("GET_STREAMS_STEP_ERROR: " + e.message); return []; });
+    })
+    .catch(function(err) { console.error("GET_STREAMS_CRITICAL: " + err.message); return []; });
+}
+
+module.exports = { getStreams: getStreams };      if (!r.ok) return tryNext(i + 1);
       return r.text().then(function(html) {
         if (html.indexOf('data-id') === -1) return tryNext(i + 1);
         return { url: url, html: html };
