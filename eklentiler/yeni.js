@@ -1,78 +1,80 @@
 /**
- * SineWix_v25_Precision_Matcher
- * Arama motoru için düşük harf ve temiz sorgu optimizasyonu.
+ * SineWix_v26_Header_Strict
+ * Arama motoru bot korumasını geçmek için Header iyileştirmesi.
  */
 
 var API_BASE = 'https://ydfvfdizipanel.ru/public/api';
 var API_KEY = '9iQNC5HQwPlaFuJDkhncJ5XTJ8feGXOJatAA';
 
+// Headerları zenginleştirdik (Gerçek uygulama gibi görünmesi için)
 var API_HEADERS = {
     'hash256': '711bff4afeb47f07ab08a0b07e85d3835e739295e8a6361db77eebd93d96306b',
     'User-Agent': 'EasyPlex (Android 14; SM-A546B; Samsung Galaxy A54 5G; tr)',
-    'Accept': 'application/json'
+    'Accept': 'application/json',
+    'Connection': 'Keep-Alive',
+    'Accept-Language': 'tr-TR',
+    'X-Requested-With': 'com.easyplex.official' // Kritik: Uygulama kimliği
 };
 
 async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
-    console.error(`[SineWix DEBUG] Başlatıldı. ID: ${tmdbId} | Tip: ${mediaType}`);
+    console.error(`[SineWix DEBUG] İşlem Başladı: ID ${tmdbId}`);
     
     try {
-        const tmdbType = mediaType === 'movie' ? 'movie' : 'tv';
+        const tmdbType = (mediaType === 'movie') ? 'movie' : 'tv';
         const tmdbUrl = `https://api.themoviedb.org/3/${tmdbType}/${tmdbId}?language=tr-TR&api_key=4ef0d7355d9ffb5151e987764708ce96`;
 
         const tmdbRes = await fetch(tmdbUrl);
         const data = await tmdbRes.json();
         
+        // Sadece ana ismi al (Örn: "The Matrix Resurrections" yerine sadece "Matrix")
         let title = (data.title || data.name || '').trim();
         let originalTitle = (data.original_title || data.original_name || '').trim();
-        let releaseYear = (data.release_date || data.first_air_date || '').substring(0, 4);
-        
+
         if (!title) return [];
 
-        // Arama stratejileri: 1. Küçük harf isim, 2. Orijinal isim
-        let searchQueries = [title.toLowerCase()];
-        if (originalTitle && originalTitle.toLowerCase() !== title.toLowerCase()) {
-            searchQueries.push(originalTitle.toLowerCase());
-        }
+        // Arama dizisi (En basit halleriyle)
+        let searchList = [title];
+        if (originalTitle && originalTitle !== title) searchList.push(originalTitle);
 
         let finalResults = [];
 
-        for (let query of searchQueries) {
-            console.error(`[SineWix DEBUG] Arama deneniyor: ${query}`);
-            const searchUrl = `${API_BASE}/search/${encodeURIComponent(query)}/${API_KEY}`;
+        for (let query of searchList) {
+            // Sorguyu temizle: Sadece harf ve rakam kalsın (Boşlukları %20 yerine + yapmayı deneyebiliriz)
+            let safeQuery = encodeURIComponent(query);
+            const searchUrl = `${API_BASE}/search/${safeQuery}/${API_KEY}`;
             
+            console.error(`[SineWix DEBUG] İstek: ${searchUrl}`);
+
             const sRes = await fetch(searchUrl, { headers: API_HEADERS });
             const sData = await sRes.json();
             
-            // API bazen 'search' key'ini boş veya null dönebilir
             const results = sData.search || [];
-            console.error(`[SineWix DEBUG] API yanıt verdi. Sonuç sayısı: ${results.length}`);
+            console.error(`[SineWix DEBUG] Sorgu: ${query} | Sonuç: ${results.length}`);
 
             if (results.length > 0) {
-                // TMDB ID veya isim benzerliği kontrolü yaparak en yakın sonucu seç
-                let bestMatch = results[0]; 
-
+                // Eşleşme bulundu, detayları çek
+                let bestMatch = results[0];
                 const genre = (mediaType === 'movie') ? 'media' : 'series';
                 const endpoint = (mediaType === 'movie') ? 'detail' : 'show';
                 const detailUrl = `${API_BASE}/${genre}/${endpoint}/${bestMatch.id}/${API_KEY}`;
 
-                console.error(`[SineWix DEBUG] Detaylar çekiliyor: ${bestMatch.title}`);
                 const dRes = await fetch(detailUrl, { headers: API_HEADERS });
                 const item = await dRes.json();
 
-                let videoLinks = [];
+                let links = [];
                 if (mediaType === 'movie') {
-                    videoLinks = (item.videos || []).map(v => v.link).filter(Boolean);
+                    links = (item.videos || []).map(v => v.link).filter(Boolean);
                 } else {
-                    const targetSeason = (item.seasons || []).find(s => parseInt(s.season_number) === parseInt(seasonNum));
-                    if (targetSeason) {
-                        const targetEp = (targetSeason.episodes || []).find(e => parseInt(e.episode_number) === parseInt(episodeNum));
-                        if (targetEp) {
-                            videoLinks = (targetEp.videos || []).map(v => v.link).filter(Boolean);
-                        }
+                    const sNo = parseInt(seasonNum);
+                    const eNo = parseInt(episodeNum);
+                    const season = (item.seasons || []).find(s => parseInt(s.season_number) === sNo);
+                    if (season) {
+                        const episode = (season.episodes || []).find(e => parseInt(e.episode_number) === eNo);
+                        if (episode) links = (episode.videos || []).map(v => v.link).filter(Boolean);
                     }
                 }
 
-                videoLinks.forEach((link, idx) => {
+                links.forEach((link, idx) => {
                     finalResults.push({
                         name: title,
                         title: `⌜ SINEWIX ⌟ | Kaynak ${idx + 1} | 🇹🇷 Dublaj`,
@@ -82,15 +84,15 @@ async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                     });
                 });
 
-                if (finalResults.length > 0) break; // Sonuç bulunduysa döngüden çık
+                if (finalResults.length > 0) break;
             }
         }
 
-        console.error(`[SineWix DEBUG] İşlem tamamlandı. Bulunan kaynak: ${finalResults.length}`);
+        console.error(`[SineWix DEBUG] Bitti. Kaynak: ${finalResults.length}`);
         return finalResults;
 
     } catch (err) {
-        console.error(`[SineWix DEBUG] KRİTİK HATA: ${err.message}`);
+        console.error(`[SineWix DEBUG] Hata: ${err.message}`);
         return [];
     }
 }
