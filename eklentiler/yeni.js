@@ -1,5 +1,5 @@
 /**
- * Nuvio Local Scraper - SinemaCX (V14 - Fetch & Çift İsimli Arama)
+ * Nuvio Local Scraper - SinemaCX (V15 - $ Hatası Düzeltildi)
  */
 
 var cheerio = require("cheerio-without-node-native");
@@ -22,7 +22,6 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
         var isMovie = mediaType === 'movie';
         var tmdbUrl = 'https://api.themoviedb.org/3/' + (isMovie ? 'movie' : 'tv') + '/' + tmdbId + '?language=tr-TR&api_key=4ef0d7355d9ffb5151e987764708ce96';
 
-        // 1. TMDB'den Verileri Al
         fetch(tmdbUrl)
             .then(function(res) { return res.json(); })
             .then(function(data) {
@@ -31,10 +30,8 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                 
                 console.error(`[${PROVIDER_NAME}] TR: ${trTitle} | ORG: ${orgTitle}`);
 
-                // Önce Türkçe İsimle Ara
                 return searchOnSite(trTitle).then(function(url) {
                     if (url) return url;
-                    // Bulamazsa Orijinal İsimle Ara
                     if (trTitle !== orgTitle) {
                         console.error(`[${PROVIDER_NAME}] TR bulunamadı, ORG deneniyor...`);
                         return searchOnSite(orgTitle);
@@ -58,12 +55,19 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
             .then(function(res) { return res ? res.text() : null; })
             .then(function(html) {
                 if (!html) return resolve(EMPTY_RESULT);
+                
+                // BURADA $ TANIMLANDI
                 var $ = cheerio.load(html);
-
-                // Fragman Atlatma (/2/ kontrolü)
                 var iframes = [];
-                $("iframe").each(function() { iframes.push($(this).attr("data-vsrc") || ""); });
-                if (iframes.every(s => s.includes("youtube") || s.includes("fragman"))) {
+
+                $("iframe").each(function() { 
+                    iframes.push($(this).attr("data-vsrc") || $(this).attr("src") || ""); 
+                });
+
+                var isTrailer = iframes.length > 0 && iframes.every(s => s.includes("youtube") || s.includes("fragman") || s.includes("trailer"));
+                
+                if (isTrailer) {
+                    console.error(`[${PROVIDER_NAME}] Fragman atlanıyor, /2/ deneniyor.`);
                     var currentUrl = $("link[rel='canonical']").attr("href") || "";
                     var altUrl = currentUrl.endsWith("/") ? currentUrl + "2/" : currentUrl + "/2/";
                     return fetch(altUrl, { headers: WORKING_HEADERS }).then(r => r.text());
@@ -71,6 +75,9 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                 return html;
             })
             .then(function(finalHtml) {
+                if (!finalHtml) return resolve(EMPTY_RESULT);
+                
+                // BURADA $ TEKRAR TANIMLANDI (Farklı bir HTML gelmiş olabilir)
                 var $final = cheerio.load(finalHtml);
                 var iframeUrl = "";
 
@@ -82,9 +89,11 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                     }
                 });
 
-                if (!iframeUrl) return resolve(EMPTY_RESULT);
+                if (!iframeUrl) {
+                    console.error(`[${PROVIDER_NAME}] HATA: player.filmizle.in bulunamadı.`);
+                    return resolve(EMPTY_RESULT);
+                }
 
-                // getVideo API Çağrısı (Fetch POST)
                 var videoId = iframeUrl.split("/").pop();
                 return fetch("https://player.filmizle.in/player/index.php?data=" + videoId + "&do=getVideo", {
                     method: 'POST',
@@ -98,7 +107,6 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
             })
             .then(function(json) {
                 if (json && json.securedLink) {
-                    console.error(`[${PROVIDER_NAME}] Başarılı Link.`);
                     resolve([{
                         name: PROVIDER_NAME,
                         url: json.securedLink,
@@ -116,17 +124,18 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
     });
 }
 
-// Yardımcı Arama Fonksiyonu (V10 Mantığı)
 function searchOnSite(query) {
     return fetch(`${BASE_URL}/?s=` + encodeURIComponent(query), { headers: WORKING_HEADERS })
         .then(function(res) { return res.text(); })
         .then(function(html) {
             var $search = cheerio.load(html);
             var foundUrl = null;
-            $search("div.icerik div.frag-k").each(function() {
-                var siteTitle = $search(this).find("div.yanac a").text().toLowerCase().trim();
+            
+            // Seçiciyi hem SinemaCX hem SinemaLA yapısına göre kontrol ediyoruz
+            $search("div.icerik div.frag-k, div.video-content").each(function() {
+                var siteTitle = $search(this).find("div.yanac a, h2 a").text().toLowerCase().trim();
                 if (siteTitle.includes(query.toLowerCase().trim())) {
-                    foundUrl = $search(this).find("div.yanac a").attr("href");
+                    foundUrl = $search(this).find("div.yanac a, h2 a").attr("href");
                     return false;
                 }
             });
