@@ -1,7 +1,7 @@
 /**
  * NUVIO ŞABLON NOTU:
- * Üstte (name): TMDB Film/Dizi İsmi
- * Altta (title): ⌜ WEBTEIZLE ⌟ | Kaynak | Dil Bilgisi
+ * name: Üstte görünen içerik ismi
+ * title: Altta görünen ⌜ WEBTEIZLE ⌟ | Kaynak | Dil
  */
 
 var BASE_URL     = 'https://webteizle3.xyz';
@@ -21,7 +21,7 @@ function fetchTmdbInfo(tmdbId, mediaType) {
     .then(function(r) { return r.json(); })
     .then(function(d) {
       return {
-        title: d.title || d.name || 'İçerik',
+        originalTitle: d.title || d.name || 'İçerik', // Üstte görünecek isim için
         titleTr: d.title  || d.name  || '',
         titleEn: d.original_title || d.original_name || '',
         year: (d.release_date || d.first_air_date || '').slice(0, 4)
@@ -66,9 +66,8 @@ function searchFallback(titleTr, titleEn) {
   .then(function(r) { return r.json(); })
   .then(function(data) {
     var items = (data.results && data.results.filmler && data.results.filmler.results) || [];
-    if (!items.length) throw new Error('Film bulunamadı');
-    var best = items[0];
-    var pageUrl = best.url.startsWith('http') ? best.url : BASE_URL + best.url;
+    if (!items.length) throw new Error('Film bulunamadi');
+    var pageUrl = items[0].url.startsWith('http') ? items[0].url : BASE_URL + items[0].url;
     return fetch(pageUrl, { headers: HEADERS }).then(function(r) { return r.text().then(function(html) { return { url: pageUrl, html: html }; }); });
   });
 }
@@ -81,14 +80,13 @@ function fetchAlternatifler(filmId, dil, seasonNum, episodeNum) {
     body: body
   })
   .then(function(r) { return r.json(); })
-  .then(function(data) { return (data.status === 'success' && Array.isArray(data.data)) ? data.data : []; })
-  .catch(function() { return []; });
+  .then(function(data) { return (data.status === 'success' && Array.isArray(data.data)) ? data.data : []; });
 }
 
 function fetchEmbedIframe(embedId) {
   return fetch(BASE_URL + '/ajax/dataEmbed.asp', {
     method: 'POST',
-    headers: Object.assign({}, HEADERS, { 'Content-Type': 'application/x-www-form-urlencoded', 'X-Requested-With': 'XMLHttpRequest' }),
+    headers: Object.assign({}, HEADERS, { 'Content-Type': 'application/x-www-form-urlencoded', 'X-Requested-With': 'XMLHttpRequest', 'Origin': BASE_URL }),
     body: 'id=' + embedId
   })
   .then(function(r) { return r.text(); })
@@ -105,54 +103,62 @@ function fetchEmbedIframe(embedId) {
   });
 }
 
-function processEmbed(embedData, dilTag, diziIsmi) {
+// ── Extractors (Özetlendi - Çalışan Mantık) ──────────────────
+function processEmbed(embedData, dilTag, originalTitle) {
   if (['pixel', 'netu'].includes((embedData.baslik || '').toLowerCase())) return Promise.resolve(null);
 
   return fetchEmbedIframe(embedData.id).then(function(src) {
     if (!src) return null;
+    
+    // Kaynak tespiti
     var provider = embedData.baslik || "Video";
     if (src.indexOf('vidmoly') !== -1) provider = "VidMoly";
     else if (src.indexOf('sibnet.ru') !== -1) provider = "Sibnet";
     else if (src.indexOf('dzen.ru') !== -1) provider = "Dzen";
     else if (src.indexOf('filemoon') !== -1) provider = "FileMoon";
 
-    var streamBase = {
-        name: diziIsmi,
-        title: '⌜ WEBTEIZLE ⌟ | ' + provider + ' | ' + dilTag,
-        quality: 'Auto',
-        headers: { 'Referer': src }
-    };
+    // Dil Etiketi Güzelleştirme
+    var dilLabel = dilTag === 'TR Dublaj' ? '🇹🇷 TR Dublaj' : '🌐 TR Altyazı';
 
-    // VidMoly, Sibnet vb. için m3u8 çekim mantığı (Basitleştirilmiş)
     return fetch(src, { headers: Object.assign({}, HEADERS, { 'Referer': BASE_URL + '/' }) })
-        .then(function(r) { return r.text(); })
-        .then(function(html) {
-            var m = html.match(/file\s*:\s*['"]?(https?:\/\/[^\s"'<>]+\.m3u8[^\s"'<>]*)/i);
-            if (!m) return null;
-            streamBase.url = m[1];
-            streamBase.type = 'hls';
-            return streamBase;
-        }).catch(function() { return null; });
+      .then(function(r) { return r.text(); })
+      .then(function(html) {
+        var m = html.match(/file\s*:\s*['"]?(https?:\/\/[^\s"'<>]+\.m3u8[^\s"'<>]*)/i);
+        if (!m) return null;
+        
+        return {
+          name: originalTitle, // Üst satır
+          title: '⌜ WEBTEIZLE ⌟ | ' + provider + ' | ' + dilLabel, // Alt satır
+          url: m[1],
+          quality: 'Auto',
+          type: 'hls',
+          headers: { 'Referer': src }
+        };
+      }).catch(function() { return null; });
   });
 }
 
+// ── getStreams ────────────────────────────────────────────────
 function getStreams(tmdbId, mediaType, season, episode) {
   return fetchTmdbInfo(tmdbId, mediaType)
     .then(function(info) {
       return findFilmPage(info.titleTr, info.titleEn).then(function(result) {
         var filmId = (result.html.match(/data-id="(\d+)"/) || [])[1];
-        if (!filmId) throw new Error('ID yok');
-        
-        var diller = [];
-        if (result.html.includes('/izle/dublaj/')) diller.push({ dil: '0', ad: '🇹🇷 Dublaj' });
-        if (result.html.includes('/izle/altyazi/')) diller.push({ dil: '🌐 Altyazı' });
+        if (!filmId) throw new Error('Film ID bulunamadi');
 
-        var allStreams = [];
+        var diller = [];
+        if (result.html.includes('/izle/dublaj/') || result.url.includes('/izle/dublaj/')) diller.push({ dil: '0', ad: 'TR Dublaj' });
+        if (result.html.includes('/izle/altyazi/') || result.url.includes('/izle/altyazi/')) diller.push({ dil: '1', ad: 'TR Altyazı' });
+        if (diller.length === 0) { diller.push({ dil: '0', ad: 'TR Dublaj' }, { dil: '1', ad: 'TR Altyazı' }); }
+
+        var streams = [];
         return Promise.all(diller.map(function(d) {
-          return fetchAlternatifler(filmId, d.dil, season, episode).then(function(list) {
-            return Promise.all(list.map(function(e) { return processEmbed(e, d.ad, info.title); }));
-          }).then(function(res) { res.forEach(function(s) { if(s) allStreams.push(s); }); });
-        })).then(function() { return allStreams; });
+          return fetchAlternatifler(filmId, d.dil, season, episode).then(function(embedList) {
+            return Promise.all(embedList.map(function(e) { return processEmbed(e, d.ad, info.originalTitle); }));
+          }).then(function(results) {
+            results.forEach(function(s) { if (s) streams.push(s); });
+          });
+        })).then(function() { return streams; });
       });
     }).catch(function() { return []; });
 }
