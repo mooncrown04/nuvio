@@ -1,5 +1,5 @@
 // ============================================================
-//  WebteIzle — Nuvio Provider (V29 Precision Layout)
+//  WebteIzle — Nuvio Provider (V30 Minimalist)
 // ============================================================
 
 var BASE_URL     = 'https://webteizle3.xyz';
@@ -85,12 +85,6 @@ function processEmbed(embedData, dilAd, originalTitle) {
     if (src.startsWith('//')) src = 'https:' + src;
     if (src.indexOf('vidmoly.to') !== -1) src = src.replace('vidmoly.to', 'vidmoly.net');
 
-    var flag = dilAd.includes('Dublaj') ? '🇹🇷 ' : '🌐 ';
-    var p = providerName;
-    if (src.indexOf('vidmoly') !== -1) p = "VidMoly";
-    else if (src.indexOf('sibnet') !== -1) p = "Sibnet";
-    else if (src.indexOf('filemoon') !== -1) p = "FileMoon";
-
     return fetch(src, { headers: Object.assign({}, HEADERS, { 'Referer': BASE_URL + '/' }) })
       .then(function(r) { return r.text(); })
       .then(function(innerHtml) {
@@ -98,8 +92,8 @@ function processEmbed(embedData, dilAd, originalTitle) {
         if (!m) return null;
 
         return {
-          name: originalTitle, // Üstte Film Adı
-          title: '⌜ WEBTEIZLE ⌟ | ' + p + ' | ' + flag + dilAd, // Altta Kaynak ve Dil
+          name: originalTitle, // Sadece Film İsmi
+          title: providerName, // Sadece Sağlayıcı İsmi
           url: m[1],
           quality: 'Auto',
           type: 'hls',
@@ -118,8 +112,8 @@ function getStreams(tmdbId, mediaType, season, episode) {
         if (!filmId) throw new Error('ID Yok');
 
         var diller = [];
-        if (result.html.includes('/izle/dublaj/') || result.url.includes('/izle/dublaj/')) diller.push({ dil: '0', ad: 'TR Dublaj' });
-        if (result.html.includes('/izle/altyazi/') || result.url.includes('/izle/altyazi/')) diller.push({ dil: '1', ad: 'TR Altyazı' });
+        if (result.html.indexOf('/izle/dublaj/') !== -1) diller.push({ dil: '0', ad: 'TR Dublaj' });
+        if (result.html.indexOf('/izle/altyazi/') !== -1) diller.push({ dil: '1', ad: 'TR Altyazı' });
         
         var streams = [];
         return Promise.all(diller.map(function(d) {
