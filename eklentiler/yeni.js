@@ -1,11 +1,11 @@
 // ============================================================
 // NUVIO PROVIDER: HDFilmCehennemi
-// VER: 2.7.0-FIX (JSON-HTML Response Handling)
+// VER: 2.8.0-FIX (ExoPlayer 404 & Referer Fix)
 // ============================================================
 
 const manifest = {
     id: 'org.nuvio.hdfc.precision',
-    version: '2.7.0',
+    version: '2.8.0',
     name: 'HDFC Precision',
     resources: ['stream'],
     types: ['movie', 'series'],
@@ -14,15 +14,21 @@ const manifest = {
 
 const CONFIG = {
     domain: 'https://www.hdfilmcehennemi.nl',
+    embedDomain: 'https://hdfilmcehennemi.mobi',
     headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        'X-Requested-With': 'fetch',
-        'Accept': 'application/json, text/plain, */*'
+        'X-Requested-With': 'fetch'
     }
 };
 
 async function getStreams(type, id) {
-    console.error(`[HDFC-DEBUG] İşlem Başladı -> Type: ${type}, ID: ${id}`);
+    // Loglarda gördüğümüz ID: tv veya ID: movie karmaşasını engellemek için kontrol
+    if (id === 'tv' || id === 'movie') {
+        console.error(`[HDFC-ERROR] Geçersiz ID parametresi geldi: ${id}. Arama yapılmadı.`);
+        return [];
+    }
+
+    console.error(`[HDFC-DEBUG] İşlem Başladı -> ID: ${id}`);
 
     try {
         // --- 1. ARAMA ADIMI ---
@@ -32,56 +38,34 @@ async function getStreams(type, id) {
         });
 
         const sRaw = await sRes.text();
-        let sData;
-        try {
-            sData = JSON.parse(sRaw);
-        } catch(e) {
-            console.error(`[HDFC-ERROR] Search yanıtı JSON değil! Ham Yanıt: ${sRaw.substring(0, 300)}`);
-            return [];
-        }
-
+        const sData = JSON.parse(sRaw);
         const results = sData.results || [];
-        // Hassas eşleşme: Gelen HTML bloğunun içinde aranan ID/İsim var mı?
-        const match = results.find(html => html.toLowerCase().includes(id.toLowerCase()));
         
+        // Hassas eşleşme: Gelen HTML bloğunun içinde aranan isim var mı?
+        const match = results.find(html => html.toLowerCase().includes(id.toLowerCase()));
         if (!match) {
-            console.error(`[HDFC-ERROR] Hassas eşleşme (ID: ${id}) bulunamadı. Mevcut sonuçlar: ${results.length}`);
+            console.error(`[HDFC-ERROR] Hassas eşleşme (ID: ${id}) bulunamadı.`);
             return [];
         }
 
-        // JSON içinden gelen kaçış karakterlerini temizle
-        const cleanMatch = match.replace(/\\\//g, '/');
-        const pageUrl = cleanMatch.match(/href="([^"]+)"/)?.[1];
-
-        if (!pageUrl) {
-            console.error(`[HDFC-ERROR] Sayfa linki bulunamadı. Temizlenmiş HTML: ${cleanMatch}`);
-            return [];
-        }
+        const pageUrl = match.replace(/\\\//g, '/').match(/href="([^"]+)"/)?.[1];
+        if (!pageUrl) return [];
 
         // --- 2. SAYFA VE EMBED ADIMI ---
         const pRes = await fetch(pageUrl, { headers: CONFIG.headers });
-        const pRaw = await pRes.text();
+        let pHtml = await pRes.text();
         
-        // Siteden gelen yanıt JSON içindeki HTML ise onu ayıkla
-        let pageHtml = pRaw;
-        if (pRaw.trim().startsWith('{')) {
-            try {
-                pageHtml = JSON.parse(pRaw).html || pRaw;
-            } catch(e) {}
-        }
+        if (pHtml.trim().startsWith('{')) pHtml = JSON.parse(pHtml).html || pHtml;
+        pHtml = pHtml.replace(/\\\//g, '/');
 
-        // Kaçış karakterlerini temizle (Regex'in çalışması için kritik)
-        pageHtml = pageHtml.replace(/\\\//g, '/');
-
-        const embedMatch = pageHtml.match(/data-src="(https:\/\/hdfilmcehennemi\.mobi\/video\/embed\/[^"]+)"/i);
-        
+        const embedMatch = pHtml.match(/data-src="(https:\/\/hdfilmcehennemi\.mobi\/video\/embed\/[^"]+)"/i);
         if (!embedMatch) {
-            console.error(`[HDFC-ERROR] Embed bulunamadı! Ayıklanan HTML: ${pageHtml.substring(0, 800)}`);
+            console.error(`[HDFC-ERROR] Embed bulunamadı! HTML Kesit: ${pHtml.substring(0, 500)}`);
             return [];
         }
 
         const embedUrl = embedMatch[1];
-        console.error(`[HDFC-DEBUG] Embed URL: ${embedUrl}`);
+        console.error(`[HDFC-DEBUG] Embed URL Yakalandı: ${embedUrl}`);
 
         // --- 3. M3U8 ADIMI ---
         const eRes = await fetch(embedUrl, { headers: { 'Referer': pageUrl } });
@@ -90,21 +74,28 @@ async function getStreams(type, id) {
         const m3u8 = eHtml.match(/["'](https?:\/\/[^"']+(?:master\.txt|\.m3u8)[^"']*)["']/i)?.[1];
 
         if (!m3u8) {
-            console.error(`[HDFC-ERROR] M3U8 yok! Embed HTML: ${eHtml.substring(0, 500)}`);
+            console.error(`[HDFC-ERROR] M3U8 Linki Yok! Embed HTML Kesit: ${eHtml.substring(0, 500)}`);
             return [];
         }
 
+        // --- 4. PLAYER İÇİN DÖNÜŞ (ExoPlayer Fix) ---
         return [{
             name: "HDFC",
-            title: "HLS - HD",
+            title: "1080p - HLS",
             url: m3u8,
             behaviorHints: {
-                proxyHeaders: { "Referer": "https://hdfilmcehennemi.mobi/" }
+                notWebReady: false,
+                proxyHeaders: {
+                    // ExoPlayer'ın 404 almaması için bu başlıklar KRİTİK
+                    "Referer": CONFIG.embedDomain + "/",
+                    "Origin": CONFIG.embedDomain,
+                    "User-Agent": CONFIG.headers['User-Agent']
+                }
             }
         }];
 
     } catch (e) {
-        console.error(`[HDFC-CRITICAL] Hata: ${e.message}\n${e.stack}`);
+        console.error(`[HDFC-CRITICAL] Hata: ${e.message}`);
         return [];
     }
 }
