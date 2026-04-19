@@ -1,5 +1,5 @@
 /**
- * Nuvio Local Scraper - SinemaCX (V22 - Stabil Çift Dilli Arama)
+ * Nuvio Local Scraper - SinemaCX (V18 - Kesin Eşleşme & Noktalama Temizleyici)
  */
 
 var cheerio = require("cheerio-without-node-native");
@@ -19,23 +19,20 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
     return new Promise(function(resolve) {
         var isMovie = mediaType === 'movie';
         var tmdbUrl = 'https://api.themoviedb.org/3/' + (isMovie ? 'movie' : 'tv') + '/' + tmdbId + '?language=tr-TR&api_key=4ef0d7355d9ffb5151e987764708ce96';
-        
-        var displayTitle = ""; 
 
         fetch(tmdbUrl)
             .then(function(res) { return res.json(); })
             .then(function(data) {
                 var trTitle = (data.title || data.name || "").toLowerCase().trim();
                 var orgTitle = (data.original_title || data.original_name || "").toLowerCase().trim();
-                displayTitle = (data.title || data.name || PROVIDER_NAME);
-
+                
                 console.error(`[${PROVIDER_NAME}] Sorgu: ${trTitle}`);
 
-                // Önce Türkçe ara, bulamazsan İngilizce ara
+                // Önce Türkçe isimle ara, sonuç yoksa Orijinal isimle dene
                 return searchOnSite(trTitle).then(function(url) {
                     if (url) return url;
                     if (trTitle !== orgTitle) {
-                        console.error(`[${PROVIDER_NAME}] TR bulunamadı, ORG deneniyor: ${orgTitle}`);
+                        console.error(`[${PROVIDER_NAME}] TR sonuç vermedi, ORG deneniyor: ${orgTitle}`);
                         return searchOnSite(orgTitle);
                     }
                     return null;
@@ -43,7 +40,7 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
             })
             .then(function(targetUrl) {
                 if (!targetUrl) {
-                    console.error(`[${PROVIDER_NAME}] HATA: Sonuç bulunamadı.`);
+                    console.error(`[${PROVIDER_NAME}] HATA: Hiçbir sonuç eşleşmedi.`);
                     return resolve(EMPTY_RESULT);
                 }
 
@@ -51,7 +48,7 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                     targetUrl = targetUrl.replace(/\/$/, "") + "-sezon-" + seasonNum + "-bolum-" + episodeNum;
                 }
 
-                console.error(`[${PROVIDER_NAME}] Hedef: ${targetUrl}`);
+                console.error(`[${PROVIDER_NAME}] Hedef Sayfa: ${targetUrl}`);
                 return fetch(targetUrl, { headers: WORKING_HEADERS });
             })
             .then(function(res) { return res ? res.text() : null; })
@@ -65,10 +62,12 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                     if (s) iframes.push(s);
                 });
 
-                if (iframes.length > 0 && iframes.every(s => s.includes("youtube") || s.includes("fragman"))) {
+                // Fragman/Film ayrımı
+                if (iframes.every(function(s) { return s.includes("youtube") || s.includes("fragman"); })) {
+                    console.error(`[${PROVIDER_NAME}] Fragman atlanıyor, 2. sayfaya geçiliyor.`);
                     var currentUrl = $page("link[rel='canonical']").attr("href") || "";
                     var altUrl = currentUrl.endsWith("/") ? currentUrl + "2/" : currentUrl + "/2/";
-                    return fetch(altUrl, { headers: WORKING_HEADERS }).then(r => r.text());
+                    return fetch(altUrl, { headers: WORKING_HEADERS }).then(function(r) { return r.text(); });
                 }
                 return html;
             })
@@ -96,12 +95,12 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                         'Referer': iframeUrl
                     },
                     body: "data=" + videoId + "&do=getVideo"
-                }).then(r => r.json());
+                }).then(function(r) { return r.json(); });
             })
             .then(function(json) {
                 if (json && json.securedLink) {
                     resolve([{
-                        name: displayTitle + " - " + PROVIDER_NAME,
+                        name: PROVIDER_NAME,
                         url: json.securedLink,
                         quality: "1080p",
                         headers: { 'Referer': 'https://player.filmizle.in/' }
@@ -115,22 +114,29 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
     });
 }
 
+/**
+ * Akıllı Arama Fonksiyonu - Noktalama ve Boşluk Temizleyici
+ */
 function searchOnSite(query) {
-    // Arama terimini ve noktalamaları temizle
+    // TMDB'den gelen ismi temizle (Örn: "Resident Evil: Retribution" -> "resident evil retribution")
     var cleanQuery = query.replace(/[:.,\-]/g, ' ').replace(/\s+/g, ' ').trim();
     var searchUrl = `${BASE_URL}/?s=` + encodeURIComponent(cleanQuery);
     
     return fetch(searchUrl, { headers: WORKING_HEADERS })
-        .then(res => res.text())
-        .then(html => {
+        .then(function(res) { return res.text(); })
+        .then(function(html) {
             var $search = cheerio.load(html);
             var foundUrl = null;
 
+            // Sitedeki tüm muhtemel başlık alanlarını tara
             $search("div.icerik div.frag-k, div.video-content, article").each(function() {
                 var anchor = $search(this).find("div.yanac a, h2 a, a").first();
                 var siteTitle = anchor.text().toLowerCase().trim();
+                
+                // Site başlığını da aynı şekilde temizle
                 var cleanSiteTitle = siteTitle.replace(/[:.,\-]/g, ' ').replace(/\s+/g, ' ').trim();
                 
+                // Esnek Karşılaştırma
                 if (cleanSiteTitle.includes(cleanQuery) || cleanQuery.includes(cleanSiteTitle)) {
                     foundUrl = anchor.attr("href");
                     if (foundUrl) return false;
