@@ -1,220 +1,158 @@
 /**
  * NUVIO ŞABLON NOTU:
- * Üstte (name): TMDB Dizi İsmi
- * Altta (title): ⌜ SEZONLUKDIZI ⌟ | Kaynak | Dil Bilgisi
+ * Üstte (name): TMDB Film/Dizi İsmi
+ * Altta (title): ⌜ WEBTEIZLE ⌟ | Kaynak | Dil Bilgisi
  */
 
-var BASE_URL     = 'https://sezonlukdizi8.com';
+var BASE_URL     = 'https://webteizle3.xyz';
 var TMDB_API_KEY = '500330721680edb6d5f7f12ba7cd9023';
 
 var HEADERS = {
-  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36',
+  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:137.0) Gecko/20100101 Firefox/137.0',
   'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
   'Accept-Language': 'tr-TR,tr;q=0.9,en;q=0.8',
   'Referer': BASE_URL + '/'
 };
 
-// ── Yardımcılar ───────────────────────────────────────────────
-
-function fetchTmdbInfo(tmdbId) {
-  return fetch('https://api.themoviedb.org/3/tv/' + tmdbId + '?api_key=' + TMDB_API_KEY + '&language=tr-TR')
+// ── TMDB ──────────────────────────────────────────────────────
+function fetchTmdbInfo(tmdbId, mediaType) {
+  var endpoint = (mediaType === 'tv') ? 'tv' : 'movie';
+  return fetch('https://api.themoviedb.org/3/' + endpoint + '/' + tmdbId + '?api_key=' + TMDB_API_KEY + '&language=tr-TR')
     .then(function(r) { return r.json(); })
     .then(function(d) {
       return {
-        title: d.name || d.original_name || 'Dizi',
-        titleEn: d.original_name || '',
-        titleTr: d.name || '',
-        year: (d.first_air_date || '').slice(0, 4)
+        title: d.title || d.name || 'İçerik',
+        titleTr: d.title  || d.name  || '',
+        titleEn: d.original_title || d.original_name || '',
+        year: (d.release_date || d.first_air_date || '').slice(0, 4)
       };
     });
 }
 
-function fetchSessionCookie() {
-  return fetch(BASE_URL + '/', { headers: HEADERS })
-    .then(function(r) {
-      var sc = r.headers.get('set-cookie');
-      if (!sc) return '';
-      return sc.split(',').map(function(c) { return c.trim().split(';')[0]; }).join('; ');
-    })
-    .catch(function() { return ''; });
-}
-
-function fetchAspData() {
-  return fetch(BASE_URL + '/js/site.min.js', { headers: HEADERS })
-    .then(function(r) { return r.text(); })
-    .then(function(js) {
-      var altM   = js.match(/dataAlternatif(.*?)\.asp/);
-      var embedM = js.match(/dataEmbed(.*?)\.asp/);
-      return { alternatif: altM ? altM[1] : '', embed: embedM ? embedM[1] : '' };
-    })
-    .catch(function() { return { alternatif: '', embed: '' }; });
-}
-
-function titleToSlug(t) {
-  if(!t) return "";
-  return t.toLowerCase()
-    .replace(/ğ/g,'g').replace(/ü/g,'u').replace(/ş/g,'s')
-    .replace(/ı/g,'i').replace(/İ/g,'i').replace(/ö/g,'o').replace(/ç/g,'c')
+function titleToSlug(title) {
+  return (title || '').toLowerCase()
+    .replace(/\u011f/g,'g').replace(/\u00fc/g,'u').replace(/\u015f/g,'s')
+    .replace(/\u0131/g,'i').replace(/\u0130/g,'i').replace(/\u00f6/g,'o').replace(/\u00e7/g,'c')
     .replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'');
 }
 
-function validateShowPage(slug) {
-  var url = BASE_URL + '/diziler/' + slug + '.html';
-  return fetch(url, { headers: HEADERS })
-    .then(function(r) {
-      if (r.status === 404) return null;
+function findFilmPage(titleTr, titleEn) {
+  var slugTr = titleToSlug(titleTr);
+  var slugEn = titleToSlug(titleEn);
+  var candidates = [];
+  if (slugTr) { candidates.push(BASE_URL + '/izle/dublaj/' + slugTr); candidates.push(BASE_URL + '/izle/altyazi/' + slugTr); }
+  if (slugEn && slugEn !== slugTr) { candidates.push(BASE_URL + '/izle/dublaj/' + slugEn); candidates.push(BASE_URL + '/izle/altyazi/' + slugEn); }
+
+  function tryNext(i) {
+    if (i >= candidates.length) return searchFallback(titleTr, titleEn);
+    return fetch(candidates[i], { headers: HEADERS }).then(function(r) {
+      if (!r.ok) return tryNext(i + 1);
       return r.text().then(function(html) {
-        if (html.indexOf('Sayfa Bulunamad') !== -1 || html.indexOf('Haydaaa') !== -1) return null;
-        var m = html.match(/href="\/([^\/]+)\/\d+-sezon-\d+-bolum\.html"/i);
-        return m ? m[1] : slug;
+        if (html.indexOf('data-id') === -1) return tryNext(i + 1);
+        return { url: candidates[i], html: html };
       });
-    })
-    .catch(function() { return null; });
+    }).catch(function() { return tryNext(i + 1); });
+  }
+  return tryNext(0);
 }
 
-function findShowSlug(slugEn, slugTr) {
-  var candidates = [slugEn];
-  if (slugTr && slugTr !== slugEn) candidates.push(slugTr);
-  return new Promise(function(resolve) {
-    var settled = false, done = 0;
-    candidates.forEach(function(slug) {
-      validateShowPage(slug).then(function(result) {
-        done++;
-        if (settled) return;
-        if (result) { settled = true; resolve(result); }
-        else if (done === candidates.length) resolve(null);
-      });
-    });
-  });
-}
-
-function fetchBid(episodeUrl, cookie) {
-  var hdrs = Object.assign({}, HEADERS);
-  if (cookie) hdrs['Cookie'] = cookie;
-  return fetch(episodeUrl, { headers: hdrs })
-    .then(function(r) {
-      var sc = r.headers.get('set-cookie'), newCookie = cookie || '';
-      if (sc) {
-        var extra = sc.split(',').map(function(c) { return c.trim().split(';')[0]; }).join('; ');
-        newCookie = newCookie ? newCookie + '; ' + extra : extra;
-      }
-      return r.text().then(function(html) {
-        var m = html.match(/data-id="([^"]+)"/);
-        return { bid: m ? m[1] : null, cookies: newCookie };
-      });
-    });
-}
-
-function fetchAlternatifler(bid, dil, aspData, cookies, referer) {
-  var hdrs = Object.assign({}, HEADERS, {
-    'X-Requested-With': 'XMLHttpRequest',
-    'Content-Type': 'application/x-www-form-urlencoded',
-    'Origin': BASE_URL,
-    'Referer': referer || BASE_URL + '/'
-  });
-  if (cookies) hdrs['Cookie'] = cookies;
-  return fetch(BASE_URL + '/ajax/dataAlternatif' + aspData.alternatif + '.asp', {
+function searchFallback(titleTr, titleEn) {
+  var query = titleTr || titleEn;
+  return fetch(BASE_URL + '/ajax/arama.asp', {
     method: 'POST',
-    headers: hdrs,
-    body: 'bid=' + encodeURIComponent(bid) + '&dil=' + dil
+    headers: Object.assign({}, HEADERS, { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8', 'X-Requested-With': 'XMLHttpRequest' }),
+    body: 'q=' + encodeURIComponent(query)
   })
-  .then(function(r) { return r.text(); })
-  .then(function(text) {
-    try {
-      var j = JSON.parse(text);
-      return (j.status === 'success' && Array.isArray(j.data)) ? j.data : (Array.isArray(j) ? j : []);
-    } catch(e) { return []; }
-  }).catch(function() { return []; });
+  .then(function(r) { return r.json(); })
+  .then(function(data) {
+    var items = (data.results && data.results.filmler && data.results.filmler.results) || [];
+    if (!items.length) throw new Error('Film bulunamadı');
+    var best = items[0];
+    var pageUrl = best.url.startsWith('http') ? best.url : BASE_URL + best.url;
+    return fetch(pageUrl, { headers: HEADERS }).then(function(r) { return r.text().then(function(html) { return { url: pageUrl, html: html }; }); });
+  });
 }
 
-function fetchEmbedIframe(embedId, aspData) {
-  return fetch(BASE_URL + '/ajax/dataEmbed' + aspData.embed + '.asp', {
+function fetchAlternatifler(filmId, dil, seasonNum, episodeNum) {
+  var body = 'filmid=' + filmId + '&dil=' + dil + '&s=' + (seasonNum || '') + '&b=' + (episodeNum || '') + '&bot=0';
+  return fetch(BASE_URL + '/ajax/dataAlternatif3.asp', {
     method: 'POST',
-    headers: Object.assign({}, HEADERS, { 'X-Requested-With': 'XMLHttpRequest', 'Content-Type': 'application/x-www-form-urlencoded' }),
+    headers: Object.assign({}, HEADERS, { 'Content-Type': 'application/x-www-form-urlencoded', 'X-Requested-With': 'XMLHttpRequest', 'Origin': BASE_URL }),
+    body: body
+  })
+  .then(function(r) { return r.json(); })
+  .then(function(data) { return (data.status === 'success' && Array.isArray(data.data)) ? data.data : []; })
+  .catch(function() { return []; });
+}
+
+function fetchEmbedIframe(embedId) {
+  return fetch(BASE_URL + '/ajax/dataEmbed.asp', {
+    method: 'POST',
+    headers: Object.assign({}, HEADERS, { 'Content-Type': 'application/x-www-form-urlencoded', 'X-Requested-With': 'XMLHttpRequest' }),
     body: 'id=' + embedId
   })
   .then(function(r) { return r.text(); })
   .then(function(html) {
     var m = html.match(/<iframe[^>]+src="([^"]+)"/i);
-    return m ? m[1] : null;
-  }).catch(function() { return null; });
-}
-
-function processVeri(veri, dilTag, aspData) {
-  var name = (veri.baslik || '').toLowerCase();
-  if (name === 'pixel' || name === 'netu') return Promise.resolve(null);
-
-  return fetchEmbedIframe(veri.id, aspData).then(function(src) {
-    if (!src) return null;
-    var provider = "Video";
-    if (src.indexOf('sibnet.ru') !== -1) provider = "Sibnet";
-    if (src.indexOf('vidmoly') !== -1) provider = "VidMoly";
-
-    var streamData = { provider: provider, dil: dilTag, url: src, type: 'hls', headers: { 'Referer': src } };
-
-    if (provider === "Sibnet") {
-        var id = (src.match(/videoid=(\d+)/) || src.match(/video(\d+)/) || [])[1];
-        if (!id) return null;
-        var shell = 'https://video.sibnet.ru/shell.php?videoid=' + id;
-        return fetch(shell, { headers: Object.assign({}, HEADERS, { 'Referer': 'https://video.sibnet.ru/' }) })
-            .then(function(r) { return r.text(); })
-            .then(function(html) {
-                var m = html.match(/src\s*:\s*"(\/v\/[^"]+\.mp4[^"]*)"/i);
-                if (!m) return null;
-                streamData.url = 'https://video.sibnet.ru' + m[1];
-                streamData.type = 'direct';
-                streamData.headers = { 'Referer': shell };
-                return streamData;
-            });
-    }
-
-    if (provider === "VidMoly") {
-        var full = src.startsWith('//') ? 'https:' + src : src;
-        return fetch(full, { headers: Object.assign({}, HEADERS, { 'Referer': BASE_URL + '/' }) })
-            .then(function(r) { return r.text(); })
-            .then(function(html) {
-                var m = html.match(/(https?:\/\/[^\s"'<>]+\.m3u8[^\s"'<>]*)/i);
-                if (!m) return null;
-                streamData.url = m[1];
-                streamData.headers = { 'Referer': full };
-                return streamData;
-            });
+    if (m) return m[1];
+    var sm = html.match(/(vidmoly|okru|filemoon|dzen)\s*\(\s*'([^']+)'/i);
+    if (sm) {
+        var p = sm[1].toLowerCase(), vid = sm[2];
+        if (p === 'vidmoly') return 'https://vidmoly.to/embed-' + vid + '.html';
+        if (p === 'filemoon') return 'https://filemoon.sx/e/' + vid;
     }
     return null;
-  }).catch(function() { return null; });
+  });
+}
+
+function processEmbed(embedData, dilTag, diziIsmi) {
+  if (['pixel', 'netu'].includes((embedData.baslik || '').toLowerCase())) return Promise.resolve(null);
+
+  return fetchEmbedIframe(embedData.id).then(function(src) {
+    if (!src) return null;
+    var provider = embedData.baslik || "Video";
+    if (src.indexOf('vidmoly') !== -1) provider = "VidMoly";
+    else if (src.indexOf('sibnet.ru') !== -1) provider = "Sibnet";
+    else if (src.indexOf('dzen.ru') !== -1) provider = "Dzen";
+    else if (src.indexOf('filemoon') !== -1) provider = "FileMoon";
+
+    var streamBase = {
+        name: diziIsmi,
+        title: '⌜ WEBTEIZLE ⌟ | ' + provider + ' | ' + dilTag,
+        quality: 'Auto',
+        headers: { 'Referer': src }
+    };
+
+    // VidMoly, Sibnet vb. için m3u8 çekim mantığı (Basitleştirilmiş)
+    return fetch(src, { headers: Object.assign({}, HEADERS, { 'Referer': BASE_URL + '/' }) })
+        .then(function(r) { return r.text(); })
+        .then(function(html) {
+            var m = html.match(/file\s*:\s*['"]?(https?:\/\/[^\s"'<>]+\.m3u8[^\s"'<>]*)/i);
+            if (!m) return null;
+            streamBase.url = m[1];
+            streamBase.type = 'hls';
+            return streamBase;
+        }).catch(function() { return null; });
+  });
 }
 
 function getStreams(tmdbId, mediaType, season, episode) {
-  if (mediaType !== 'tv') return Promise.resolve([]);
+  return fetchTmdbInfo(tmdbId, mediaType)
+    .then(function(info) {
+      return findFilmPage(info.titleTr, info.titleEn).then(function(result) {
+        var filmId = (result.html.match(/data-id="(\d+)"/) || [])[1];
+        if (!filmId) throw new Error('ID yok');
+        
+        var diller = [];
+        if (result.html.includes('/izle/dublaj/')) diller.push({ dil: '0', ad: '🇹🇷 Dublaj' });
+        if (result.html.includes('/izle/altyazi/')) diller.push({ dil: '🌐 Altyazı' });
 
-  return Promise.all([fetchTmdbInfo(tmdbId), fetchSessionCookie(), fetchAspData()])
-    .then(function(init) {
-      var info = init[0], cookie = init[1], aspData = init[2];
-      return findShowSlug(titleToSlug(info.titleEn), titleToSlug(info.titleTr)).then(function(slug) {
-        if (!slug) throw new Error('Dizi bulunamadı');
-        var epUrl = BASE_URL + '/' + slug + '/' + season + '-sezon-' + episode + '-bolum.html';
-        return fetchBid(epUrl, cookie).then(function(bd) {
-            return Promise.all([
-                fetchAlternatifler(bd.bid, '0', aspData, bd.cookies, epUrl),
-                fetchAlternatifler(bd.bid, '1', aspData, bd.cookies, epUrl)
-            ]).then(function(lists) {
-                var prom = [];
-                lists[0].forEach(function(v) { prom.push(processVeri(v, '🇹🇷 TR Dublaj', aspData)); });
-                lists[1].forEach(function(v) { prom.push(processVeri(v, '🌐 TR Altyazı', aspData)); });
-                return Promise.all(prom).then(function(results) {
-                    return results.filter(Boolean).map(function(s) {
-                        return {
-                            name: info.title,
-                            title: '⌜ SEZONLUKDIZI ⌟ | ' + s.provider + ' | ' + s.dil,
-                            url: s.url,
-                            quality: '1080p',
-                            type: s.type,
-                            headers: s.headers
-                        };
-                    });
-                });
-            });
-        });
+        var allStreams = [];
+        return Promise.all(diller.map(function(d) {
+          return fetchAlternatifler(filmId, d.dil, season, episode).then(function(list) {
+            return Promise.all(list.map(function(e) { return processEmbed(e, d.ad, info.title); }));
+          }).then(function(res) { res.forEach(function(s) { if(s) allStreams.push(s); }); });
+        })).then(function() { return allStreams; });
       });
     }).catch(function() { return []; });
 }
