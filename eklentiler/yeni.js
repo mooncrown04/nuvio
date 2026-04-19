@@ -1,7 +1,6 @@
 /**
- * RecTV_v21_Smart_Match
- * Resident Evil gibi serileri bulur, The Boys/From gibi kısa isimlerde yan ürünleri eler.
- * UI Standart: ⌜ RECTV ⌟ | Kaynak | Dil
+ * RecTV_v18_Final_Fix
+ * UI Standartlaştırması ve Auto Kalite Güncellemesi
  */
 
 var cheerio = require("cheerio-without-node-native");
@@ -33,12 +32,19 @@ async function getAuthToken() {
 function analyzeStream(url, index, itemLabel) {
     const lowUrl = url.toLowerCase();
     const lowLabel = (itemLabel || "").toLowerCase();
-    
-    // Dublaj kontrolü: Etiket veya URL "dublaj", "tr-dub" veya "tr" (parametre olarak) içeriyor mu?
-    if (lowLabel.includes("dublaj") || lowUrl.includes("dublaj") || lowLabel.includes("tr-dub")) {
-        return { icon: "🇹🇷", text: "Dublaj" };
-    } 
-    return { icon: "🌐", text: "Altyazı" };
+    let info = { icon: "🌐", text: "Altyazı" };
+
+    if (lowLabel.includes("dublaj") || lowUrl.includes("dublaj")) {
+        // Eğer etiket hem dublaj hem altyazı içeriyorsa (bazı hatalı etiketler için index kontrolü)
+        if (lowLabel.includes("altyazı") && index === 1) {
+            info.icon = "🌐";
+            info.text = "Altyazı";
+        } else {
+            info.icon = "🇹🇷";
+            info.text = "Dublaj";
+        }
+    }
+    return info;
 }
 
 async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
@@ -50,6 +56,7 @@ async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
         
         const trTitle = (tmdbData.title || tmdbData.name || "").trim();
         const orgTitle = (tmdbData.original_title || tmdbData.original_name || "").trim();
+        
         if (!trTitle) return [];
 
         const token = await getAuthToken();
@@ -64,31 +71,29 @@ async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
             const sRes = await fetch(searchUrl, { headers: searchHeaders });
             const sData = await sRes.json();
             const found = (sData.series || []).concat(sData.posters || []);
-            if (found.length > 0) allItems = allItems.concat(found);
+            if (found.length > 0) {
+                allItems = allItems.concat(found);
+                if (isMovie) break; 
+            }
         }
 
         let finalResults = [];
-        const searchLower = trTitle.toLowerCase().trim();
+        const searchTitleLower = trTitle.toLowerCase().trim();
+        const orgTitleLower = orgTitle.toLowerCase().trim();
 
         for (let target of allItems) {
-            const targetLower = target.title.toLowerCase().trim();
+            const targetTitleLower = target.title.toLowerCase().trim();
+            
+            // --- KESİN EŞLEŞME FİLTRESİ ---
             let isMatch = false;
-
-            // --- AKILLI FİLTRELEME ---
-            // 1. Kısa isimli dizilerde yan ürünleri (spin-off) engelle
-            if (searchLower === "the boys" && (targetLower.includes("diabolical") || targetLower.includes("gen v"))) {
-                isMatch = false;
-            } else if (searchLower === "from" && targetLower.includes("inside")) {
-                isMatch = false;
-            }
-            // 2. Genel arama: "Resident Evil" gibi serileri yakalamak için includes kullanıyoruz
-            else if (targetLower.includes(searchLower) || (orgTitle && targetLower.includes(orgTitle.toLowerCase()))) {
-                isMatch = true;
+            if (searchTitleLower === "from") {
+                isMatch = (targetTitleLower === "from" || targetTitleLower === "from dizi");
+            } else {
+                isMatch = targetTitleLower.includes(searchTitleLower) || targetTitleLower.includes(orgTitleLower);
             }
 
             if (!isMatch) continue;
 
-            // Tip Kontrolü
             const isActuallySerie = target.type === "serie" || (target.label && target.label.toLowerCase().includes("dizi"));
             if (isMovie && isActuallySerie) continue;
             if (!isMovie && !isActuallySerie) continue;
@@ -97,17 +102,19 @@ async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                 const seasonRes = await fetch(`${BASE_URL}/api/season/by/serie/${target.id}/${SW_KEY}/`, { headers: searchHeaders });
                 const seasons = await seasonRes.json();
                 for (let s of seasons) {
-                    if (parseInt(s.title.match(/\d+/) || 0) == seasonNum) {
+                    let sNumber = parseInt(s.title.match(/\d+/) || 0);
+                    if (sNumber == seasonNum) {
                         for (let ep of s.episodes) {
-                            if (parseInt(ep.title.match(/\d+/) || 0) == episodeNum) {
+                            let epNumber = parseInt(ep.title.match(/\d+/) || 0);
+                            if (epNumber == episodeNum) {
                                 (ep.sources || []).forEach((src, idx) => {
-                                    const streamInfo = analyzeStream(src.url, idx, ep.label || target.label);
+                                    const streamInfo = analyzeStream(src.url, idx, ep.label || s.title || target.label);
                                     finalResults.push({
                                         name: trTitle, 
                                         title: `⌜ RECTV ⌟ | Kaynak ${idx + 1} | ${streamInfo.icon} ${streamInfo.text}`,
                                         url: src.url,
-                                        quality: "Auto",
-                                        headers: { 'User-Agent': 'googleusercontent', 'Referer': 'https://twitter.com/' }
+                                        quality: "Auto", // Gerçek veri gelmediği için Auto sabitlendi
+                                        headers: { 'User-Agent': 'googleusercontent', 'Referer': 'https://twitter.com/', 'Accept-Encoding': 'identity' }
                                     });
                                 });
                             }
@@ -121,6 +128,7 @@ async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                     const detData = await detRes.json();
                     movieSources = detData.sources || [];
                 }
+                
                 movieSources.forEach((src, idx) => {
                     const streamInfo = analyzeStream(src.url, idx, target.label);
                     finalResults.push({
@@ -128,14 +136,15 @@ async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                         title: `⌜ RECTV ⌟ | Kaynak ${idx + 1} | ${streamInfo.icon} ${streamInfo.text}`,
                         url: src.url,
                         quality: "Auto",
-                        headers: { 'User-Agent': 'googleusercontent', 'Referer': 'https://twitter.com/' }
+                        headers: { 'User-Agent': 'googleusercontent', 'Referer': 'https://twitter.com/', 'Accept-Encoding': 'identity' }
                     });
                 });
             }
         }
 
-        // Tekrarlanan URL'leri temizle
+        // URL Tekilleştirme
         return finalResults.filter((v, i, a) => a.findIndex(t => (t.url === v.url)) === i);
+
     } catch (err) { 
         return []; 
     }
