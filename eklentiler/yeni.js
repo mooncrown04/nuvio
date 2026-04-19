@@ -1,5 +1,5 @@
 /**
- * Nuvio Local Scraper - SinemaCX (V40 - Clean UI)
+ * Nuvio Local Scraper - SinemaCX (V41 - UI Fix)
  */
 
 var cheerio = require("cheerio-without-node-native");
@@ -9,7 +9,7 @@ const BASE_URL = "https://www.sinema.la";
 const EMPTY_RESULT = [];
 
 const WORKING_HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     'Referer': 'https://www.sinema.la/'
 };
 
@@ -29,6 +29,7 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                 displayTitle = (data.title || data.name || "Film");
                 releaseYear = (data.release_date || data.first_air_date || "").split("-")[0];
 
+                // Arama stratejisi (V38-V40 standartı)
                 var query1 = trTitle.replace(/[:.,\-]/g, ' ').split(" ").slice(0, 3).join(" ");
                 var query2 = orgTitle.replace(/[:.,\-]/g, ' ').split(" ").slice(0, 3).join(" ");
 
@@ -46,17 +47,17 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                 return fetch(result.url, { headers: WORKING_HEADERS }).then(res => res.text()).then(html => {
                     var $page = cheerio.load(html);
                     
-                    // --- SADECE DİL BİLGİSİ ANALİZİ ---
+                    // Dil Analizi
                     var pageText = $page("body").text().toLowerCase();
                     var siteTitleLower = result.siteTitle.toLowerCase();
                     
-                    var langInfo = ""; // Alt kısım için sadece dil
+                    var langLabel = ""; 
                     if (pageText.includes("dublaj") || siteTitleLower.includes("dublaj")) {
-                        langInfo = "Türkçe Dublaj";
+                        langLabel = "Türkçe Dublaj";
                     } else if (pageText.includes("altyazı") || siteTitleLower.includes("altyazı") || pageText.includes("subbed")) {
-                        langInfo = "Türkçe Altyazı";
+                        langLabel = "Türkçe Altyazı";
                     } else {
-                        langInfo = "HD Seçeneği"; // Dil bulunamazsa genel bir bilgi
+                        langLabel = "HD / Tek Dil";
                     }
 
                     var iframeUrl = "";
@@ -81,10 +82,10 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                         body: "data=" + videoId + "&do=getVideo"
                     }).then(r => r.json()).then(json => {
                         if (json && json.securedLink) {
-                            // --- İSTEDİĞİN DÜZENLEME ---
+                            // --- BURASI KRİTİK: NUVIO GÖRSEL EŞLEŞTİRME ---
                             resolve([{
-                                name: displayTitle,  // Üstte sadece film ismi
-                                info: langInfo,      // Altta sadece "Türkçe Dublaj" veya "Türkçe Altyazı"
+                                name: displayTitle,  // Üstteki KALIN yazı (Sadece Film İsmi)
+                                title: langLabel,    // Alttaki İNCE yazı (Sadece Dil Bilgisi)
                                 url: json.securedLink,
                                 quality: "1080p",
                                 headers: { 'Referer': 'https://player.filmizle.in/' }
