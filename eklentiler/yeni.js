@@ -1,6 +1,7 @@
 /**
- * RecTV_v19_Precision_Match
- * "The Boys" gibi kısa isimli dizilerde yan sonuçları (Diabolical vb.) eleme filtresi eklendi.
+ * RecTV_v21_Smart_Match
+ * Resident Evil gibi serileri bulur, The Boys/From gibi kısa isimlerde yan ürünleri eler.
+ * UI Standart: ⌜ RECTV ⌟ | Kaynak | Dil
  */
 
 var cheerio = require("cheerio-without-node-native");
@@ -32,13 +33,12 @@ async function getAuthToken() {
 function analyzeStream(url, index, itemLabel) {
     const lowUrl = url.toLowerCase();
     const lowLabel = (itemLabel || "").toLowerCase();
-    let info = { icon: "🌐", text: "Altyazı" };
-
-    if (lowLabel.includes("dublaj") || lowUrl.includes("dublaj")) {
-        info.icon = "🇹🇷";
-        info.text = "Dublaj";
-    }
-    return info;
+    
+    // Dublaj kontrolü: Etiket veya URL "dublaj", "tr-dub" veya "tr" (parametre olarak) içeriyor mu?
+    if (lowLabel.includes("dublaj") || lowUrl.includes("dublaj") || lowLabel.includes("tr-dub")) {
+        return { icon: "🇹🇷", text: "Dublaj" };
+    } 
+    return { icon: "🌐", text: "Altyazı" };
 }
 
 async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
@@ -50,7 +50,6 @@ async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
         
         const trTitle = (tmdbData.title || tmdbData.name || "").trim();
         const orgTitle = (tmdbData.original_title || tmdbData.original_name || "").trim();
-        
         if (!trTitle) return [];
 
         const token = await getAuthToken();
@@ -65,36 +64,26 @@ async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
             const sRes = await fetch(searchUrl, { headers: searchHeaders });
             const sData = await sRes.json();
             const found = (sData.series || []).concat(sData.posters || []);
-            if (found.length > 0) {
-                allItems = allItems.concat(found);
-            }
+            if (found.length > 0) allItems = allItems.concat(found);
         }
 
         let finalResults = [];
-        const searchTitleLower = trTitle.toLowerCase().trim();
+        const searchLower = trTitle.toLowerCase().trim();
 
         for (let target of allItems) {
-            const targetTitleLower = target.title.toLowerCase().trim();
-            
-            // --- HASSAS EŞLEŞME FİLTRESİ ---
+            const targetLower = target.title.toLowerCase().trim();
             let isMatch = false;
 
-            // "The Boys" için özel temizlik
-            if (searchTitleLower === "the boys") {
-                // İçinde "diabolical" veya "gen v" geçenleri direkt eliyoruz
-                if (targetTitleLower.includes("diabolical") || targetTitleLower.includes("gen v")) {
-                    isMatch = false;
-                } else if (targetTitleLower === "the boys" || targetTitleLower === "the boys dizi") {
-                    isMatch = true;
-                }
-            } 
-            // "From" için özel temizlik
-            else if (searchTitleLower === "from") {
-                isMatch = (targetTitleLower === "from" || targetTitleLower === "from dizi");
+            // --- AKILLI FİLTRELEME ---
+            // 1. Kısa isimli dizilerde yan ürünleri (spin-off) engelle
+            if (searchLower === "the boys" && (targetLower.includes("diabolical") || targetLower.includes("gen v"))) {
+                isMatch = false;
+            } else if (searchLower === "from" && targetLower.includes("inside")) {
+                isMatch = false;
             }
-            // Genel eşleşme
-            else {
-                isMatch = (targetTitleLower === searchTitleLower || targetTitleLower.includes(searchTitleLower));
+            // 2. Genel arama: "Resident Evil" gibi serileri yakalamak için includes kullanıyoruz
+            else if (targetLower.includes(searchLower) || (orgTitle && targetLower.includes(orgTitle.toLowerCase()))) {
+                isMatch = true;
             }
 
             if (!isMatch) continue;
@@ -108,13 +97,11 @@ async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                 const seasonRes = await fetch(`${BASE_URL}/api/season/by/serie/${target.id}/${SW_KEY}/`, { headers: searchHeaders });
                 const seasons = await seasonRes.json();
                 for (let s of seasons) {
-                    let sNumber = parseInt(s.title.match(/\d+/) || 0);
-                    if (sNumber == seasonNum) {
+                    if (parseInt(s.title.match(/\d+/) || 0) == seasonNum) {
                         for (let ep of s.episodes) {
-                            let epNumber = parseInt(ep.title.match(/\d+/) || 0);
-                            if (epNumber == episodeNum) {
+                            if (parseInt(ep.title.match(/\d+/) || 0) == episodeNum) {
                                 (ep.sources || []).forEach((src, idx) => {
-                                    const streamInfo = analyzeStream(src.url, idx, ep.label);
+                                    const streamInfo = analyzeStream(src.url, idx, ep.label || target.label);
                                     finalResults.push({
                                         name: trTitle, 
                                         title: `⌜ RECTV ⌟ | Kaynak ${idx + 1} | ${streamInfo.icon} ${streamInfo.text}`,
@@ -128,7 +115,6 @@ async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                     }
                 }
             } else {
-                // Film mantığı aynı kalıyor...
                 let movieSources = target.sources || [];
                 if (!movieSources || movieSources.length === 0) {
                     const detRes = await fetch(`${BASE_URL}/api/movie/${target.id}/${SW_KEY}/`, { headers: searchHeaders });
@@ -148,8 +134,8 @@ async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
             }
         }
 
+        // Tekrarlanan URL'leri temizle
         return finalResults.filter((v, i, a) => a.findIndex(t => (t.url === v.url)) === i);
-
     } catch (err) { 
         return []; 
     }
