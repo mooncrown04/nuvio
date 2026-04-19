@@ -1,5 +1,5 @@
 /**
- * Nuvio Local Scraper - SinemaCX (V26 - V17 Hibrit Versiyon)
+ * Nuvio Local Scraper - SinemaCX (V27 - Feed Fix & Stabil Arama)
  */
 
 var cheerio = require("cheerio-without-node-native");
@@ -30,13 +30,12 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                 var orgTitle = (data.original_title || data.original_name || "").toLowerCase().trim();
                 displayTitle = (data.title || data.name || PROVIDER_NAME);
 
-                console.error(`[${PROVIDER_NAME}] TMDB: ${trTitle} / ${orgTitle}`);
+                console.error(`[${PROVIDER_NAME}] Sorgu: ${trTitle}`);
 
-                // V17 Mantığı: Önce TR, sonra ORG ara
                 return searchOnSite(trTitle).then(function(res1) {
                     if (res1) return res1;
                     if (trTitle !== orgTitle) {
-                        console.error(`[${PROVIDER_NAME}] TR bulunamadı, ORG deneniyor...`);
+                        console.error(`[${PROVIDER_NAME}] TR bulunamadı, ORG deneniyor: ${orgTitle}`);
                         return searchOnSite(orgTitle);
                     }
                     return null;
@@ -44,16 +43,16 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
             })
             .then(function(result) {
                 if (!result || !result.url) {
-                    console.error(`[${PROVIDER_NAME}] HATA: Site eşleşmesi sağlanamadı.`);
+                    console.error(`[${PROVIDER_NAME}] HATA: Hiçbir sonuç eşleşmedi.`);
                     return resolve(EMPTY_RESULT);
                 }
 
-                // Sitedeki başlıktan dil tespiti
+                // Dil Tespiti
                 var sTitle = result.siteTitle.toLowerCase();
                 if (sTitle.includes("dublaj")) extraInfo = "Türkçe Dublaj";
                 else if (sTitle.includes("altyazı") || sTitle.includes("altyazi")) extraInfo = "Türkçe Altyazılı";
 
-                console.error(`[${PROVIDER_NAME}] Eşleşme: ${result.siteTitle} -> ${result.url}`);
+                console.error(`[${PROVIDER_NAME}] Eşleşme Başarılı: ${result.siteTitle}`);
 
                 var targetUrl = result.url;
                 if (!isMovie) {
@@ -72,7 +71,7 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                 });
 
                 if (iframes.length > 0 && iframes.every(s => s.includes("youtube") || s.includes("fragman"))) {
-                    console.error(`[${PROVIDER_NAME}] Fragman sayfası, sayfa 2'ye gidiliyor.`);
+                    console.error(`[${PROVIDER_NAME}] Fragman sayfası, 2. sayfaya geçiliyor.`);
                     var currentUrl = $page("link[rel='canonical']").attr("href") || "";
                     var altUrl = currentUrl.endsWith("/") ? currentUrl + "2/" : currentUrl + "/2/";
                     return fetch(altUrl, { headers: WORKING_HEADERS }).then(r => r.text());
@@ -110,7 +109,6 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
             })
             .then(function(json) {
                 if (json && json.securedLink) {
-                    console.error(`[${PROVIDER_NAME}] BAŞARILI: Link üretildi.`);
                     resolve([{
                         name: displayTitle + " (" + extraInfo + " - " + PROVIDER_NAME + ")",
                         url: json.securedLink,
@@ -120,37 +118,39 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                 } else { resolve(EMPTY_RESULT); }
             })
             .catch(function(err) {
-                console.error(`[${PROVIDER_NAME}] SİSTEM HATASI: ${err.message}`);
+                console.error(`[${PROVIDER_NAME}] KRİTİK HATA: ${err.message}`);
                 resolve(EMPTY_RESULT);
             });
     });
 }
 
 function searchOnSite(query) {
-    // V17 gibi temiz arama terimi, ama Resident Evil için noktalamaları boşluğa çevirir
+    // Arama terimini temizle ama siteye gönderilecek hale getir
     var cleanQuery = query.replace(/[:.,\-]/g, ' ').replace(/\s+/g, ' ').trim();
     var searchUrl = `${BASE_URL}/?s=` + encodeURIComponent(cleanQuery);
     
-    console.error(`[${PROVIDER_NAME}] Arama: ${searchUrl}`);
-
     return fetch(searchUrl, { headers: WORKING_HEADERS })
         .then(res => res.text())
         .then(html => {
             var $search = cheerio.load(html);
             var match = null;
 
-            // V17 Seçicileri
-            var links = $search("div.icerik div.frag-k div.yanac a, div.video-content h2 a, article h2 a, a");
-            
-            links.each(function() {
-                var anchor = $search(this);
+            // ÖNEMLİ: Sadece ana içerik alanındaki linkleri tara (Feed linklerini dışla)
+            // .icerik, .video-content veya article içindeki h2 a yapılarına odaklan
+            $search("div.icerik div.frag-k, div.video-content, article").each(function() {
+                var anchor = $search(this).find("div.yanac a, h2 a, a").first();
+                var url = anchor.attr("href") || "";
                 var siteTitle = anchor.text().toLowerCase().trim();
-                var cleanSiteTitle = siteTitle.replace(/[:.,\-]/g, ' ').replace(/\s+/g, ' ').trim();
-                
-                // Hem tam içeriyor mu bak, hem de kelime bazlı küçük bir kontrol yap
-                if (cleanSiteTitle.includes(cleanQuery) || cleanQuery.includes(cleanSiteTitle)) {
-                    match = { url: anchor.attr("href"), siteTitle: siteTitle };
-                    return false;
+
+                // 1. KURAL: Link boş olmamalı ve "feed" içermemeli
+                if (url && !url.includes("/feed/")) {
+                    var cleanSiteTitle = siteTitle.replace(/[:.,\-]/g, ' ').replace(/\s+/g, ' ').trim();
+                    
+                    // 2. KURAL: Başlık eşleşmeli
+                    if (cleanSiteTitle.includes(cleanQuery) || cleanQuery.includes(cleanSiteTitle)) {
+                        match = { url: url, siteTitle: anchor.text() };
+                        return false; // Döngüden çık
+                    }
                 }
             });
             return match;
