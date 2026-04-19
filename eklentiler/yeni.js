@@ -1,11 +1,11 @@
 // ============================================================
 // NUVIO PROVIDER: HDFilmCehennemi
-// VER: 3.2.0-STABLE (TMDB Turkish Recovery & JSON Fix)
+// VER: 3.3.0-FINAL (Parse Safety & Global Compatibility)
 // ============================================================
 
 const manifest = {
     id: 'org.nuvio.hdfc.precision',
-    version: '3.2.0',
+    version: '3.3.0',
     name: 'HDFC Precision',
     resources: ['stream'],
     types: ['movie', 'series'],
@@ -15,76 +15,80 @@ const manifest = {
 const CONFIG = {
     domain: 'https://www.hdfilmcehennemi.nl',
     embed: 'https://hdfilmcehennemi.mobi',
-    // Senin paylaştığın API anahtarı ve URL yapısı
     tmdbBase: 'https://api.themoviedb.org/3/movie/',
     tmdbSuffix: '?language=tr-TR&api_key=4ef0d7355d9ffb5151e987764708ce96',
-    headers: { 'User-Agent': 'Mozilla/5.0', 'X-Requested-With': 'fetch' }
+    headers: { 
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'X-Requested-With': 'fetch',
+        'Accept': 'application/json, text/plain, */*'
+    }
 };
 
 async function getStreams(type, id, meta) {
-    // Loglardaki kaymayı (Type: 1159559, ID: movie) yakalamak için döküm
     console.error(`[HDFC-DUMP] T:${type} | I:${id}`);
 
     let searchTitle = "";
 
-    // 1. ADIM: TMDB ÜZERİNDEN İSİM KURTARMA
+    // 1. TMDB RECOVERY (HDFC-DEBUG: Çığlık 7 yakalandı!)
     const tmdbId = (!isNaN(type)) ? type : ((!isNaN(id)) ? id : null);
-
     if (tmdbId) {
         try {
-            const tmdbUrl = CONFIG.tmdbBase + tmdbId + CONFIG.tmdbSuffix;
-            const tRes = await fetch(tmdbUrl);
+            const tRes = await fetch(CONFIG.tmdbBase + tmdbId + CONFIG.tmdbSuffix);
             const tData = await tRes.json();
             searchTitle = tData.title || tData.original_title;
-            console.error(`[HDFC-DEBUG] TMDB'den çekilen isim: ${searchTitle}`);
-        } catch (e) {
-            console.error(`[HDFC-ERROR] TMDB Hatası: ${e.message}`);
-        }
+        } catch (e) { console.error(`[HDFC-TMDB-ERR] ${e.message}`); }
     }
 
-    // Yedek: Eğer TMDB'den gelmezse meta'ya bak
     if (!searchTitle) searchTitle = (meta && (meta.name || meta.title)) ? (meta.name || meta.title) : "";
-
-    if (!searchTitle) {
-        console.error(`[HDFC-ERROR] Arama durduruldu: Başlık bulunamadı.`);
-        return [];
-    }
+    if (!searchTitle) return [];
 
     try {
-        // --- 2. HDFC ARAMA (JSON YANIT) ---
+        // --- 2. ARAMA (GÜVENLİ PARSE) ---
         const sRes = await fetch(`${CONFIG.domain}/search?q=${encodeURIComponent(searchTitle)}`, { 
             headers: Object.assign({}, CONFIG.headers, { 'Referer': CONFIG.domain + '/' }) 
         });
         
-        const sData = await sRes.json();
-        const results = sData.results || [];
-        
-        // Hassas Eşleşme (ID veya İsim içeren ilk HTML bloğunu yakala)
-        const match = results.find(html => html.toLowerCase().includes(searchTitle.toLowerCase()));
-        if (!match) {
-            console.error(`[HDFC-ERROR] Sitede bulunamadı: ${searchTitle}`);
+        const sRaw = await sRes.text();
+        let results = [];
+
+        // Eğer yanıt JSON ise ayrıştır, değilse ham HTML içinde link ara
+        if (sRaw.trim().startsWith('{') || sRaw.trim().startsWith('[')) {
+            try {
+                const sData = JSON.parse(sRaw);
+                results = sData.results || [];
+            } catch(e) { console.error("[HDFC-JSON-ERR] JSON Parse edilemedi."); }
+        }
+
+        let pageUrl = "";
+        if (results.length > 0) {
+            const match = results.find(html => html.toLowerCase().includes(searchTitle.toLowerCase()));
+            if (match) pageUrl = match.replace(/\\\//g, '/').match(/href="([^"]+)"/)?.[1];
+        } else {
+            // Eğer JSON gelmediyse doğrudan HTML içinde ara (B Planı)
+            const fallbackMatch = sRaw.match(new RegExp(`href="([^"]+)"[^>]*>[^<]*${searchTitle}`, 'i'));
+            pageUrl = fallbackMatch ? fallbackMatch[1] : "";
+        }
+
+        if (!pageUrl) {
+            console.error(`[HDFC-ERROR] Sayfa linki bulunamadı: ${searchTitle}`);
             return [];
         }
 
-        // JSON Kaçışlarını (\/) temizle ve Linki al
-        const pageUrl = match.replace(/\\\//g, '/').match(/href="([^"]+)"/)?.[1];
-        if (!pageUrl) return [];
-
-        // --- 3. EMBED AYIKLAMA ---
+        // --- 3. SAYFA & EMBED ---
         const pRes = await fetch(pageUrl, { headers: CONFIG.headers });
         let pHtml = await pRes.text();
         
-        // Sayfa JSON içindeyse ayıkla
-        if (pHtml.trim().startsWith('{')) pHtml = JSON.parse(pHtml).html || pHtml;
+        if (pHtml.trim().startsWith('{')) {
+            try { pHtml = JSON.parse(pHtml).html || pHtml; } catch(e) {}
+        }
         pHtml = pHtml.replace(/\\\//g, '/');
 
-        const embedUrl = pHtml.match(/data-src="(https:\/\/hdfilmcehennemi\.mobi\/video\/embed\/[^"]+)"/i)?.[1];
-        if (!embedUrl) {
-            console.error(`[HDFC-ERROR] Embed Bulunamadı! Kesit: ${pHtml.substring(0, 400)}`);
-            return [];
-        }
+        const embedMatch = pHtml.match(/data-src="(https:\/\/hdfilmcehennemi\.mobi\/video\/embed\/[^"]+)"/i);
+        if (!embedMatch) return [];
 
-        // --- 4. M3U8 VE REFERER FIX ---
+        const embedUrl = embedMatch[1];
+
+        // --- 4. M3U8 (REFERER ŞART) ---
         const eRes = await fetch(embedUrl, { headers: { 'Referer': pageUrl } });
         const eHtml = await eRes.text();
         const m3u8 = eHtml.match(/["'](https?:\/\/[^"']+(?:master\.txt|\.m3u8)[^"']*)["']/i)?.[1];
@@ -105,7 +109,7 @@ async function getStreams(type, id, meta) {
         }];
 
     } catch (e) {
-        console.error(`[HDFC-CRITICAL] ${e.message}`);
+        console.error(`[HDFC-CRITICAL] Hata: ${e.message}`);
         return [];
     }
 }
