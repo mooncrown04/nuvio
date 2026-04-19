@@ -1,5 +1,5 @@
 // ============================================================
-//  WebteIzle — Nuvio Provider (Fixed Display Version)
+//  WebteIzle — Nuvio Provider (V31 Visual Update)
 // ============================================================
 
 var BASE_URL     = 'https://webteizle3.xyz';
@@ -145,17 +145,37 @@ function processEmbed(embedData, dilAd, movieTitle) {
 
   return fetchEmbedIframe(embedData.id).then(function(src) {
     if (!src) return null;
+    
+    // Görsel Ayarlar
+    var flag = dilAd.includes('Dublaj') ? '🇹🇷 ' : '🌐 ';
+    var pName = (embedData.baslik || 'Kaynak');
+    if (src.indexOf('vidmoly') !== -1) pName = "VidMoly";
+    else if (src.indexOf('sibnet') !== -1) pName = "Sibnet";
+    else if (src.indexOf('filemoon') !== -1) pName = "FileMoon";
+
     var streamPromise;
     if (src.indexOf('vidmoly') !== -1) {
       streamPromise = fetchVidMolyStream(src).then(function(s) {
-        return s ? { url: s.url, name: movieTitle, title: 'VidMoly - ' + dilAd, type: 'hls', headers: { 'Referer': s.referer } } : null;
+        return s ? { 
+          url: s.url, 
+          name: movieTitle, 
+          title: '⌜ WEBTEIZLE ⌟ | ' + pName + ' | ' + flag + dilAd, 
+          type: 'hls', 
+          headers: { 'Referer': s.referer } 
+        } : null;
       });
     } else {
       streamPromise = fetch(src, { headers: Object.assign({}, HEADERS, { 'Referer': BASE_URL + '/' }) })
         .then(function(r) { return r.text(); })
         .then(function(html) {
           var m = html.match(/file\s*:\s*['"]?(https?:\/\/[^\s"'<>]+\.m3u8[^\s"'<>]*)/i);
-          return m ? { url: m[1], name: movieTitle, title: (embedData.baslik || 'Kaynak') + ' - ' + dilAd, type: 'hls', headers: { 'Referer': src } } : null;
+          return m ? { 
+            url: m[1], 
+            name: movieTitle, 
+            title: '⌜ WEBTEIZLE ⌟ | ' + pName + ' | ' + flag + dilAd, 
+            type: 'hls', 
+            headers: { 'Referer': src } 
+          } : null;
         });
     }
     return streamPromise;
