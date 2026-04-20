@@ -1,11 +1,12 @@
-// Version: 6.7 (Enhanced Selectors & Kotlin Headers)
-// FIXED: ID_NOT_FOUND_IN_PAGE by broadening the search area.
+// Version: 6.8 (Cloudstream Native App Lib)
+// FIXED: 'not a function' error by switching fetch -> app.get
 
 var cheerio = require("cheerio-without-node-native");
 
 const PROVIDER_NAME = "HDFilmCehennemi";
 const STATIC_URL = "https://www.hdfilmcehennemi.nl/project-hail-mary-3/";
 
+// Kotlin unmix algoritması
 function unmix(byteArray) {
     let result = "";
     for (let i = 0; i < byteArray.length; i++) {
@@ -16,86 +17,75 @@ function unmix(byteArray) {
     return result;
 }
 
-function dcHello(base64Parts) {
-    try {
-        let combinedBase64 = base64Parts.join("");
-        let binary = Buffer.from(combinedBase64, 'base64');
-        return unmix(binary);
-    } catch (e) { return ""; }
-}
-
 async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
-    console.error("[" + PROVIDER_NAME + "] v6.7 STARTING...");
+    console.error("[" + PROVIDER_NAME + "] v6.8 NATIVE START");
     
     try {
-        // Kotlin kodundaki tam header seti
         const HEADERS = { 
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:137.0) Gecko/20100101 Firefox/137.0",
-            "Accept": "*/*",
             "X-Requested-With": "fetch"
         };
 
-        const response = await fetch(STATIC_URL, { headers: HEADERS });
-        const html = await response.text();
+        // 1. Film Sayfası
+        const response = await app.get(STATIC_URL, { headers: HEADERS });
+        const html = response.text;
         const $ = cheerio.load(html);
 
-        // Kotlin'deki hiyerarşiyi tek tek deneyelim
-        let videoID = "";
-        
-        // 1. Seçenek: Kotlin'deki tam yol
-        videoID = $("div.alternative-links button.alternative-link").attr("data-video") || 
-                  $("button.alternative-link").attr("data-video") ||
-                  $(".alternative-link").first().data("video");
-
-        // 2. Seçenek: Ham HTML içinde Regex (Eğer Cheerio render edemezse)
+        // 2. Video ID Bulma (data-video)
+        let videoID = $("button.alternative-link").attr("data-video");
         if (!videoID) {
-            let regexMatch = html.match(/data-video=["'](\d+)["']/);
-            if (regexMatch) videoID = regexMatch[1];
+            let match = html.match(/data-video=["'](\d+)["']/);
+            if (match) videoID = match[1];
         }
 
-        if (!videoID) {
-            console.error("[" + PROVIDER_NAME + "] HTML SAMPLE: " + html.substring(html.indexOf('alternative'), html.indexOf('alternative') + 300));
-            throw new Error("ID_STILL_NOT_FOUND");
-        }
+        if (!videoID) throw new Error("ID_MISSING");
+        console.error("[" + PROVIDER_NAME + "] VIDEO_ID: " + videoID);
 
-        console.error("[" + PROVIDER_NAME + "] SUCCESS! ID: " + videoID);
-
-        const apiResponse = await fetch(`https://www.hdfilmcehennemi.nl/video/${videoID}/`, {
-            headers: { ...HEADERS, "Referer": STATIC_URL }
+        // 3. API'den Iframe URL'yi alma
+        const apiRes = await app.get(`https://www.hdfilmcehennemi.nl/video/${videoID}/`, {
+            headers: HEADERS,
+            referer: STATIC_URL
         });
-        const apiHtml = await apiResponse.text();
-
-        let iframeMatch = apiHtml.match(/data-src=\\?"([^"\\]+)/);
-        let iframeUrl = iframeMatch ? iframeMatch[1].replace(/\\/g, "") : "";
         
+        let iframeMatch = apiRes.text.match(/data-src=\\?"([^"\\]+)/);
+        let iframeUrl = iframeMatch ? iframeMatch[1].replace(/\\/g, "") : "";
+        if (!iframeUrl) throw new Error("IFRAME_MISSING");
+
         if (iframeUrl.includes("rapidrame")) {
             iframeUrl = "https://www.hdfilmcehennemi.nl/rplayer/" + iframeUrl.split("?rapidrame_id=")[1];
         }
 
-        const playerResponse = await fetch(iframeUrl, { headers: { "Referer": "https://www.hdfilmcehennemi.nl/" } });
-        const playerHtml = await playerResponse.text();
+        // 4. Player sayfasından şifreli linki çekme
+        const playerRes = await app.get(iframeUrl, { referer: "https://www.hdfilmcehennemi.nl/" });
+        const playerHtml = playerRes.text;
 
-        // Kotlin: file_link="([...])"
-        let base64InputMatch = playerHtml.match(/file_link\s*=\s*["']\(\[(.*?)\]\)["']/);
-        if (!base64InputMatch) {
-            // Alternatif: tırnaksız veya farklı boşluklarla olabilir
-            base64InputMatch = playerHtml.match(/file_link\s*=\s*.*?\((.*?)\)/);
+        // Kotlin: file_link="([...])" içindeki tırnaklı base64 parçalarını yakala
+        let base64Match = playerHtml.match(/file_link\s*=\s*"\(\[(.*?)\]\)"/);
+        if (base64Match) {
+            // Parçaları diziye çevir
+            let parts = base64Match[1].match(/"(.*?)"/g).map(p => p.replace(/"/g, ""));
+            let combined = parts.join("");
+            
+            // Base64 Decode -> Unmix
+            let binary = Buffer.from(combined, 'base64');
+            let decoded = unmix(binary);
+            
+            let finalUrl = decoded.includes("https") ? "https" + decoded.split("https").pop() : "";
+
+            if (finalUrl) {
+                return [{
+                    name: PROVIDER_NAME,
+                    url: finalUrl,
+                    quality: "1080p",
+                    headers: { 
+                        "User-Agent": HEADERS["User-Agent"],
+                        "Referer": "https://www.hdfilmcehennemi.nl/"
+                    }
+                }];
+            }
         }
 
-        if (base64InputMatch) {
-            let parts = base64InputMatch[1].match(/"(.*?)"/g).map(p => p.replace(/"/g, ""));
-            let finalUrl = dcHello(parts);
-            if (finalUrl.includes("https")) finalUrl = "https" + finalUrl.split("https").pop();
-
-            return [{
-                name: PROVIDER_NAME,
-                url: finalUrl,
-                quality: "1080p",
-                headers: { "User-Agent": HEADERS["User-Agent"], "Referer": "https://www.hdfilmcehennemi.nl/" }
-            }];
-        }
-
-        throw new Error("FINAL_DECRYPTION_FAILED");
+        throw new Error("DECRYPTION_FAILED");
 
     } catch (err) {
         console.error("[" + PROVIDER_NAME + "] ERROR: " + err.message);
@@ -103,7 +93,5 @@ async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
     }
 }
 
-globalThis.getStreams = getStreams;
-if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { getStreams: getStreams };
-}
+// Cloudstream için doğru dışa aktarma
+module.exports = { getStreams };
