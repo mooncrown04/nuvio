@@ -1,6 +1,6 @@
 /**
  * FilmCennetim - Nuvio Provider
- * JetFilmizle paralel arama ve TMDB Bridge mantığı tam entegre edildi.
+ * TMDB hatası durumunda orijinal başlıkla aramaya devam eden güvenli versiyon.
  */
 
 var BASE_URL     = 'https://stream.watchbuddy.tv';
@@ -12,24 +12,23 @@ var HEADERS = {
     'Referer': BASE_URL + '/'
 };
 
-// 1. TMDB Bilgi Çekme (Düzeltildi)
 function fetchTmdbInfo(tmdbId) {
     var url = 'https://api.themoviedb.org/3/movie/' + tmdbId + '?api_key=' + TMDB_API_KEY + '&language=tr-TR';
     return fetch(url)
         .then(function(r) { return r.json(); })
         .then(function(d) {
-            if (!d.title) throw new Error('TMDB Verisi Boş');
+            if (!d || !d.title) return null; // Hata fırlatmak yerine null dönüyoruz
             return {
                 titleTr: d.title || '',
                 titleEn: d.original_title || '',
                 year: (d.release_date || '').slice(0, 4)
             };
-        });
+        })
+        .catch(function() { return null; });
 }
 
-// 2. Arama Motoru Fonksiyonu (Daha Esnek)
 function searchFilm(query) {
-    // Sadece film adını gönderiyoruz, yılları temizliyoruz
+    if (!query) return Promise.resolve([]);
     var cleanQuery = query.replace(/\([0-9]{4}\)/g, '').trim();
     var searchUrl = BASE_URL + '/ara/FilmCennetim?lang=tr&sorgu=' + encodeURIComponent(cleanQuery);
     
@@ -46,28 +45,34 @@ function searchFilm(query) {
         .catch(function() { return []; });
 }
 
-function getStreams(id, mediaType) {
+function getStreams(id, mediaType, extra) {
     var tmdbId = id.toString().replace(/[^0-9]/g, '');
+    var originalTitle = (extra && extra.title) ? extra.title : ""; // Nuvio'dan gelen orijinal başlık
+    
     console.error('[Nuvio-Debug] İşlem Başladı: ' + tmdbId);
 
     return fetchTmdbInfo(tmdbId)
         .then(function(info) {
-            console.error('[Nuvio-Debug] TMDB Match: ' + info.titleTr);
+            var searchTasks = [];
             
-            // JetFilmizle'deki gibi hem TR hem EN isimle paralel arama yapıyoruz
-            var searchTasks = [searchFilm(info.titleTr)];
-            if (info.titleEn && info.titleEn !== info.titleTr) {
-                searchTasks.push(searchFilm(info.titleEn));
+            if (info) {
+                console.error('[Nuvio-Debug] TMDB Başarılı: ' + info.titleTr);
+                searchTasks.push(searchFilm(info.titleTr));
+                if (info.titleEn && info.titleEn !== info.titleTr) {
+                    searchTasks.push(searchFilm(info.titleEn));
+                }
+            } else {
+                // TMDB Boşsa JetFilmizle mantığı: Orijinal başlıkla dene
+                console.error('[Nuvio-Debug] TMDB Boş, Orijinal Başlıkla Deneniyor: ' + originalTitle);
+                if (originalTitle) searchTasks.push(searchFilm(originalTitle));
             }
 
             return Promise.all(searchTasks);
         })
         .then(function(results) {
-            // Sonuçları birleştir ve boş olmayanları al
             var allLinks = [].concat.apply([], results);
             if (allLinks.length === 0) throw new Error('Providerda bulunamadı.');
 
-            // İlk bulduğumuz linke gidelim
             var targetUrl = BASE_URL + allLinks[0];
             console.error('[Nuvio-Debug] Sayfa Açılıyor: ' + targetUrl);
 
@@ -80,7 +85,6 @@ function getStreams(id, mediaType) {
             var m;
             while ((m = iframeRe.exec(html)) !== null) {
                 var src = m[1];
-                // Geçersiz veya reklam kaynaklarını ele
                 if (src.indexOf('http') !== -1 && src.indexOf('google') === -1) {
                     streams.push({
                         title: 'Kaynak ' + (streams.length + 1),
