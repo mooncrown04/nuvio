@@ -1,54 +1,77 @@
-// Nuvio Provider Yapısı
+const PROVIDER_NAME = "WatchBuddy_Nuvio_V46";
 const BASE_URL = "https://stream.watchbuddy.tv";
 
 async function getStreams(args) {
-    // Nuvio'dan gelen TMDB veya IMDB ID'sini yakala
-    var mediaId = args.tmdbId || args.imdbId || args.id;
-    if (!mediaId) return [];
+    // [LOG 1] Eklenti tetiklendi mi?
+    console.error(`[${PROVIDER_NAME}] >>> Eklenti Baslatildi. Gelen Argumanlar:`, JSON.stringify(args));
 
-    // Nuvio'nun Player'da 422 almaması için gereken standart Header seti
-    var requestHeaders = {
+    var mediaId = (typeof args === 'object') ? (args.tmdbId || args.id) : args;
+    
+    // [LOG 2] ID Kontrolü
+    if (!mediaId) {
+        console.error(`[${PROVIDER_NAME}] !!! HATA: Media ID bulunamadi. Akis durduruluyor.`);
+        return [];
+    }
+    console.error(`[${PROVIDER_NAME}] İşlenen Media ID: ${mediaId}`);
+
+    var playerHeaders = {
         "User-Agent": "Mozilla/5.0 (Linux; Android 11; Fire TV)",
         "Referer": BASE_URL + "/",
-        "X-Requested-With": "XMLHttpRequest"
+        "X-Requested-With": "com.nuvio.android"
     };
 
     try {
-        // 1. KekikStreamAPI Arama Endpoint'ine İstek At
+        // [LOG 3] Arama Başlatılıyor
         var searchUrl = `${BASE_URL}/api/v1/search?q=${mediaId}&type=movie`;
+        console.error(`[${PROVIDER_NAME}] Sunucuya istek atiliyor: ${searchUrl}`);
+
+        var response = await fetch(searchUrl, { headers: playerHeaders });
         
-        var response = await fetch(searchUrl, { headers: requestHeaders });
+        // [LOG 4] Sunucu Yanıt Durumu
+        console.error(`[${PROVIDER_NAME}] Sunucu Yanit Kodu: ${response.status} ${response.statusText}`);
+
         var data = await response.json();
-        
-        // Sunucudan dönen sonuçları (Dizipal, SineWix vb.) ayıkla
-        var results = data.result || data.results || [];
+        var items = data.result || data.results || [];
 
-        // 2. Nuvio'nun anlayacağı formatta objeleri dönüştür
-        if (results.length > 0) {
-            return results.map(item => ({
-                name: item.provider || "WatchBuddy",
-                title: `${item.title} (${item.provider})`,
-                // Proxy üzerinden geçecek final link
-                url: `${BASE_URL}/proxy/video?url=${encodeURIComponent(item.url || item.path)}&force_proxy=1`,
-                headers: requestHeaders, // Nuvio bu header'ı doğrudan Player'a iletir
-                is_hls: true
-            }));
+        // [LOG 5] Arama Sonucu Verisi
+        console.error(`[${PROVIDER_NAME}] Sunucudan donen ham veri adedi: ${items ? items.length : 0}`);
+
+        if (items && items.length > 0) {
+            return items.map(function(item, index) {
+                var finalUrl = `${BASE_URL}/proxy/video?url=${encodeURIComponent(item.url || item.path)}&force_proxy=1`;
+                
+                // [LOG 6] Link Paketleme
+                console.error(`[${PROVIDER_NAME}] [${index}] Kaynak Hazir: ${item.provider} -> ${finalUrl}`);
+
+                return {
+                    name: item.provider || "WatchBuddy",
+                    title: `${item.title} [Dahili]`,
+                    url: finalUrl,
+                    headers: playerHeaders,
+                    is_hls: true
+                };
+            });
         }
-
-        // 3. Fallback: Eğer arama sonuç vermezse Tünel linkini gönder
-        return [{
-            name: "WatchBuddy Direct",
-            title: "Otomatik Kaynak (SineWix)",
-            url: `${BASE_URL}/izle/SineWix?url=${encodeURIComponent("http://px-webservisler:2585/sinewix/movie/" + mediaId)}&force_proxy=1`,
-            headers: requestHeaders,
-            is_hls: true
-        }];
+        
+        throw new Error("Sunucu bos dondu");
 
     } catch (e) {
-        console.error("Nuvio Entegrasyon Hatası: ", e);
-        return [];
+        // [LOG 7] Catch Bloğu - Neden Tünele Girdik?
+        console.error(`[${PROVIDER_NAME}] Arama sekteye ugradi veya sonuc yok. Sebebi: ${e.message}`);
+        
+        var tunnelUrl = `${BASE_URL}/izle/SineWix?url=${encodeURIComponent("http://px-webservisler:2585/sinewix/movie/" + mediaId)}&force_proxy=1`;
+        
+        // [LOG 8] Tünel Linki Oluşturuldu
+        console.error(`[${PROVIDER_NAME}] TUNEL DEVREDE: ${tunnelUrl}`);
+
+        return [{
+            name: "WatchBuddy Direct",
+            title: "Otomatik Kaynak (Yedek)",
+            url: tunnelUrl,
+            headers: playerHeaders,
+            is_hls: true
+        }];
     }
 }
 
-// Nuvio'nun fonksiyonu tanıyabilmesi için dışa aktar
 globalThis.getStreams = getStreams;
