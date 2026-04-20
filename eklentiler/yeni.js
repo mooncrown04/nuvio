@@ -6,7 +6,7 @@
  */
 
 var BASE_URL     = 'https://stream.watchbuddy.tv';
-var TMDB_API_KEY = '65166299966144e590059e7987771746';
+var TMDB_API_KEY = '500330721680edb6d5f7f12ba7cd9023';
 
 // JetFilmizle şablonundaki headers yapısı
 var HEADERS = {
