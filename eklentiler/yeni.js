@@ -1,4 +1,4 @@
-const PROVIDER_NAME = "WatchBuddy_V19";
+const PROVIDER_NAME = "WatchBuddy_V20";
 const BASE_URL = "https://stream.watchbuddy.tv";
 
 function getStreams(args) {
@@ -11,54 +11,53 @@ function getStreams(args) {
         .then(res => res.json())
         .then(data => {
             var title = data.title || data.original_title;
-            console.error("[" + PROVIDER_NAME + "] HTML Araması Başlatıldı: " + title);
-            
-            // API yerine doğrudan HTML arama sayfasına gidiyoruz
+            console.error("[" + PROVIDER_NAME + "] Derin Tarama Başladı: " + title);
             return fetch(BASE_URL + "/search?q=" + encodeURIComponent(title));
         })
         .then(res => res.text())
         .then(html => {
             var results = [];
             
-            // SENİN PAYLAŞTIĞIN ÖRNEKLERİ YAKALAYAN ÖZEL REGEX
-            // Bu regex, "/icerik/HDFilmCehennemi?url=..." gibi yapıları yakalar
-            var pattern = /\/icerik\/([^?]+)\?url=([^"&'\s>]+)/g;
+            // STRATEJİ: JSON veya HTML fark etmeksizin içindeki URL yapılarını cımbızla çekiyoruz
+            // "url": "http..." veya href="/icerik/..." olan her şeyi bulur
+            var urlPattern = /(?:url|path|href)["']?\s*[:=]\s*["']([^"'\s>]+)/g;
             var match;
 
-            while ((match = pattern.exec(html)) !== null) {
-                var provider = match[1]; // SineWix, HDFilmCehennemi vb.
-                var rawUrl = match[2];    // Kodlanmış site linki
-                
-                // Senin verdiğin izle şablonunu oluşturuyoruz
-                var watchUrl = BASE_URL + "/izle/" + provider + "?url=" + rawUrl + "&baslik=Video";
+            while ((match = urlPattern.exec(html)) !== null) {
+                var foundPath = match[1].replace(/\\/g, ""); // Kaçış karakterlerini temizle
 
-                results.push({
-                    name: provider,
-                    title: "Kaynak: " + provider,
-                    url: watchUrl,
-                    quality: "1080p"
-                });
-            }
+                // Eğer bulduğumuz şey bir SineWix, HDFilmCehennemi veya içerik linkiyse
+                if (foundPath.includes("icerik") || foundPath.includes("movie") || foundPath.includes("sinewix")) {
+                    
+                    // Linkin içinden sağlayıcı adını ayıklayalım (SineWix, HDFilmCehennemi vb.)
+                    var providerMatch = foundPath.match(/icerik\/([^/?]+)/) || foundPath.match(/([a-zA-Z]+)(?=\/movie)/);
+                    var provider = providerMatch ? providerMatch[1] : "Kaynak";
 
-            // Alternatif: Eğer yukarıdaki yakalayamazsa, ham linkleri ara
-            if (results.length === 0) {
-                console.error("[" + PROVIDER_NAME + "] RegEx 1 başarısız, Alternatif deneniyor...");
-                var altPattern = /"provider"\s*:\s*"([^"]+)"\s*,\s*"url"\s*:\s*"([^"]+)"/g;
-                while ((match = altPattern.exec(html)) !== null) {
+                    // Senin verdiğin izle formatına dönüştür
+                    // Eğer link zaten tam bir URL ise (http...), onu temizle ve parametre yap
+                    var cleanUrl = foundPath.includes("http") ? foundPath : "https://stream.watchbuddy.tv" + foundPath;
+                    
+                    var watchUrl = BASE_URL + "/izle/" + provider + "?url=" + encodeURIComponent(cleanUrl) + "&baslik=Video";
+
                     results.push({
-                        name: match[1],
-                        title: "Kaynak: " + match[1],
-                        url: BASE_URL + "/izle/" + match[1] + "?url=" + encodeURIComponent(match[2].replace(/\\/g, '')),
+                        name: provider,
+                        title: "İzle: " + provider,
+                        url: watchUrl,
                         quality: "1080p"
                     });
                 }
             }
 
-            console.error("[" + PROVIDER_NAME + "] Sökülen Link Sayısı: " + results.length);
-            resolve(results);
+            // Mükerrer (aynı) linkleri temizleyelim
+            var uniqueResults = results.filter((v, i, a) => a.findIndex(t => (t.url === v.url)) === i);
+
+            console.error("[" + PROVIDER_NAME + "] Bulunan Ham Veri: " + results.length);
+            console.error("[" + PROVIDER_NAME + "] Temizlenmiş Benzersiz Link: " + uniqueResults.length);
+            
+            resolve(uniqueResults);
         })
         .catch(e => {
-            console.error("[" + PROVIDER_NAME + "] Kritik Hata: " + e.message);
+            console.error("[" + PROVIDER_NAME + "] Tarama Hatası: " + e.message);
             resolve([]);
         });
     });
