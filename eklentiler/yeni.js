@@ -1,34 +1,34 @@
 /**
- * Nuvio Local Scraper - v4.6 (No-Axios / Pure Fetch Edition)
- * Kural 1: console.log YASAK -> console.error kullanılacak.
- * Kural 2: async/await YASAK -> Promise kullanılacak.
- * Kural 3: Axios YASAK -> Fetch kullanılacak.
+ * Nuvio Local Scraper - v4.7
+ * Kural: args içindeki URL'yi her türlü ihtimale karşı yakala.
  */
 
 const PROVIDER_NAME = "HDFilmCehennemi";
 
 function getStreams(args) {
-    console.error(`[${PROVIDER_NAME}] Başlatıldı (Fetch Mode) -> URL: ${args.url}`);
+    // Nuvio'nun hangi anahtarı kullandığını bulmak için tüm args'ı logluyoruz
+    console.error(`[${PROVIDER_NAME}] Gelen Veri: ${JSON.stringify(args)}`);
 
     return new Promise(function(resolve) {
-        var sourceUrl = args.url || "";
-        if (!sourceUrl) {
-            console.error(`[${PROVIDER_NAME}] HATA: URL boş.`);
+        // Nuvio versiyonuna göre URL farklı yerlerde olabilir, hepsini dene:
+        var sourceUrl = args.url || args.source || args.link || (typeof args === 'string' ? args : "");
+        
+        if (!sourceUrl || sourceUrl === "undefined") {
+            console.error(`[${PROVIDER_NAME}] HATA: URL bulunamadı. Gelen args: ${typeof args}`);
             return resolve([]);
         }
 
+        console.error(`[${PROVIDER_NAME}] Çözülüyor -> ${sourceUrl}`);
+
         var bridgeUrl = "https://stream.watchbuddy.tv/izle/HDFilmCehennemi?url=" + encodeURIComponent(sourceUrl);
 
-        // Axios yerine doğrudan fetch kullanıyoruz
         fetch(bridgeUrl, {
             headers: {
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
                 "Referer": "https://stream.watchbuddy.tv/"
             }
         })
-        .then(function(response) {
-            return response.text();
-        })
+        .then(function(response) { return response.text(); })
         .then(function(html) {
             var streamUrlMatch = html.match(/file["']?\s*:\s*["'](http[^"']+)["']/);
 
@@ -47,7 +47,7 @@ function getStreams(args) {
                     }
                 }]);
             } else {
-                console.error(`[${PROVIDER_NAME}] HATA: Sayfada video linki yok.`);
+                console.error(`[${PROVIDER_NAME}] HATA: Video ayıklanamadı.`);
                 resolve([]);
             }
         })
@@ -58,7 +58,6 @@ function getStreams(args) {
     });
 }
 
-// Global tanımlamalar
 globalThis.getStreams = getStreams;
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = { getStreams: getStreams };
