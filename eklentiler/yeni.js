@@ -1,4 +1,4 @@
-const PROVIDER_NAME = "WatchBuddy_API";
+const PROVIDER_NAME = "WatchBuddy_Debug";
 const BASE_URL = "https://stream.watchbuddy.tv";
 
 function getStreams(args) {
@@ -7,62 +7,56 @@ function getStreams(args) {
     return new Promise(function(resolve) {
         if (!tmdbId) return resolve([]);
 
-        // 1. Önce film ismini TMDB'den alıyoruz
-        fetch("https://api.themoviedb.org/3/movie/" + tmdbId + "?api_key=4ef0d7355d9ffb5151e987764708ce96&language=tr-TR")
+        // 1. TMDB Aşaması
+        var tmdbUrl = "https://api.themoviedb.org/3/movie/" + tmdbId + "?api_key=4ef0d7355d9ffb5151e987764708ce96&language=tr-TR";
+        console.error("[" + PROVIDER_NAME + "] 1. TMDB İsteği Atılıyor: " + tmdbUrl);
+
+        fetch(tmdbUrl)
         .then(res => res.json())
         .then(data => {
             var title = data.title || data.original_title;
-            console.error("[" + PROVIDER_NAME + "] Sorgulanıyor: " + title);
-
-            // 2. Senin paylaştığın JSON yapısını sağlayan API endpoint'ine gidiyoruz
-            // NOT: Buradaki URL, KekikStream API'sinin gerçek arama adresidir.
-            // Örnek olarak WatchBuddy üzerindeki genel arama tetikleyicisini kullanıyoruz.
-            var apiUrl = BASE_URL + "/search?q=" + encodeURIComponent(title);
+            var searchUrl = BASE_URL + "/search?q=" + encodeURIComponent(title);
             
-            return fetch(apiUrl, { headers: { "Accept": "application/json" } });
+            console.error("[" + PROVIDER_NAME + "] 2. Film Bulundu: " + title);
+            console.error("[" + PROVIDER_NAME + "] 3. Siteye Atılan Sorgu: " + searchUrl);
+
+            // 2. WatchBuddy Arama Sayfası İsteği
+            return fetch(searchUrl, {
+                headers: { "User-Agent": "Mozilla/5.0", "Accept": "text/html,application/json" }
+            });
         })
         .then(res => {
-            // Eğer WatchBuddy JSON dönmüyorsa, senin paylaştığın API örneğindeki veriyi 
-            // simüle eden bir parser çalıştırıyoruz.
-            return res.text(); 
+            console.error("[" + PROVIDER_NAME + "] 4. Site Yanıt Kodu: " + res.status);
+            return res.text();
         })
-        .then(text => {
-            // Paylaştığın JSON yapısı içinde URL "decode" edilmeli
-            // Örnek: "url":"https%3A%2F%2Ffilmmakinesi.to..." -> "https://filmmakinesi.to..."
+        .then(body => {
+            // SİTENİN GÖNDERDİĞİ HAM VERİNİN İLK 500 KARAKTERİNİ GÖRÜYORUZ
+            console.error("[" + PROVIDER_NAME + "] 5. Ham İçerik (Kısa): " + body.substring(0, 500));
             
-            var results = [];
-            // Regex ile JSON içindeki 'result' objelerini yakalıyoruz
-            var urlPattern = /"url"\s*:\s*"([^"]+)"/g;
-            var titlePattern = /"title"\s*:\s*"([^"]+)"/;
-            var match;
-
-            while ((match = urlPattern.exec(text)) !== null) {
-                var rawUrl = match[1];
-                var finalUrl = decodeURIComponent(rawUrl);
+            // Eğer paylaştığın o JSON yapısı buradaysa logda görünmesi lazım
+            if (body.includes("result") || body.includes("url")) {
+                console.error("[" + PROVIDER_NAME + "] BULDUM: Ham veri içinde 'url' veya 'result' anahtar kelimesi var!");
                 
-                // Eğer bu bir film makinesi veya selcukflix linkiyse
-                if (finalUrl.includes("filmmakinesi") || finalUrl.includes("selcukflix")) {
-                    results.push({
-                        name: finalUrl.includes("filmmakinesi") ? "Film Makinesi" : "SelcukFlix",
-                        title: titlePattern.exec(text)?.[1] || "Kaynak",
-                        url: finalUrl, // Bu linki Nuvio Player doğrudan açacaktır
+                // Link sökme denemesi
+                var urlMatch = body.match(/"url"\s*:\s*"([^"]+)"/);
+                if (urlMatch) {
+                    var decoded = decodeURIComponent(urlMatch[1]);
+                    console.error("[" + PROVIDER_NAME + "] Çözülen Link: " + decoded);
+                    
+                    resolve([{
+                        name: "Debug_Found",
+                        title: "Bulunan Kaynak",
+                        url: decoded,
                         quality: "1080p"
-                    });
+                    }]);
                 }
-            }
-
-            // Eğer sonuç varsa döndür, yoksa statik bir enjeksiyon dene
-            if (results.length > 0) {
-                console.error("[" + PROVIDER_NAME + "] " + results.length + " API kaynağı bulundu.");
-                resolve(results);
             } else {
-                // Hiçbir şey bulunamazsa boş dönme, senin paylaştığın linki manuel oluşturmayı dene
-                console.error("[" + PROVIDER_NAME + "] API boş döndü, manuel parse deneniyor...");
+                console.error("[" + PROVIDER_NAME + "] HATA: Gelen sayfa boş veya aranan link yapısı bulunamadı.");
                 resolve([]);
             }
         })
         .catch(e => {
-            console.error("[" + PROVIDER_NAME + "] Hata: " + e.message);
+            console.error("[" + PROVIDER_NAME + "] KRİTİK HATA: " + e.message);
             resolve([]);
         });
     });
