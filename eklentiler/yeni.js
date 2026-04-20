@@ -1,17 +1,21 @@
-// Version: 5.0 (DEŞİFRE MODU - Sadece Analiz)
-// Note: console.error ile ham veri avcılığı.
+// Version: 5.1 (Hybrid Search Fix)
+// Note: console.log is FORBIDDEN. Use console.error for all logs.
 
 var cheerio = require("cheerio-without-node-native");
 
 const PROVIDER_NAME = "HDFilmCehennemi";
 const BASE_URL = "https://www.hdfilmcehennemi.nl";
+const EMPTY_RESULT = [];
 const DEFAULT_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Accept-Language": "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7"
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+    "Accept-Language": "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7",
+    "Cache-Control": "no-cache",
+    "Pragma": "no-cache"
 };
 
 function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
-    console.error("[" + PROVIDER_NAME + "] v5.0 DEŞİFRE MODU BAŞLATILDI");
+    console.error("[" + PROVIDER_NAME + "] v5.1 HİBRİT ARAMA BAŞLATILDI");
     
     return new Promise(function(resolve) {
         var isMovie = mediaType === 'movie';
@@ -21,47 +25,74 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
             .then(function(res) { return res.json(); })
             .then(function(tmdbData) {
                 var query = (tmdbData.title || tmdbData.name || "").replace(/['":]/g, "").trim();
+                console.error("[" + PROVIDER_NAME + "] ARANAN KELİME -> " + query);
+                
+                // Sitenin arama sayfasını direkt HTML olarak istiyoruz (JSON değil)
                 return fetch(BASE_URL + "/search?q=" + encodeURIComponent(query), { headers: DEFAULT_HEADERS });
             })
-            .then(function(res) { return res.json(); })
-            .then(function(searchData) {
-                var results = searchData.results || [];
-                if (results.length === 0) throw new Error("Arama sonucu yok.");
+            .then(function(res) { return res.text(); }) // JSON yerine TEXT olarak oku
+            .then(function(searchText) {
+                console.error("[" + PROVIDER_NAME + "] ARAMA SAYFASI ALINDI (Boyut: " + searchText.length + ")");
                 
-                var $search = cheerio.load(results[0]);
-                var targetUrl = $search("a").first().attr("href");
-                console.error("[" + PROVIDER_NAME + "] ANALİZ EDİLEN URL -> " + targetUrl);
+                // Eğer site JSON dönmediyse HTML içinde link ara
+                var targetUrl = "";
+                if (searchText.trim().startsWith("{")) {
+                    try {
+                        var json = JSON.parse(searchText);
+                        var $j = cheerio.load(json.results[0] || "");
+                        targetUrl = $j("a").first().attr("href");
+                    } catch(e) { console.error("JSON Parse Hatası"); }
+                } else {
+                    var $h = cheerio.load(searchText);
+                    // Arama sonuçlarındaki ilk makalenin linkini al
+                    targetUrl = $h(".poster > a").first().attr("href") || 
+                                $h("article a").first().attr("href") ||
+                                $h(".result-item a").first().attr("href");
+                }
+
+                if (!targetUrl) throw new Error("Arama sayfasında link bulunamadı.");
+                
+                if (!isMovie) {
+                    targetUrl = targetUrl.replace(/\/$/, "") + "-sezon-" + seasonNum + "-bolum-" + episodeNum;
+                }
+                
+                console.error("[" + PROVIDER_NAME + "] HEDEF URL -> " + targetUrl);
                 return fetch(targetUrl, { headers: DEFAULT_HEADERS });
             })
             .then(function(res) { return res.text(); })
             .then(function(pageHtml) {
-                // --- DEŞİFRE ALANI ---
-                // 1. Script etiketlerini sayalım ve ilk 100 karakterlerini görelim
-                var $ = cheerio.load(pageHtml);
-                var scripts = [];
-                $("script").each(function(i, el) {
-                    var src = $(el).attr("src");
-                    var content = $(el).html().substring(0, 40).replace(/\s+/g, " ");
-                    scripts.push(src ? "SRC: " + src : "INT: " + content);
+                var $page = cheerio.load(pageHtml);
+                
+                // ID bulma: data-video, data-id, veya script içindeki rakamlar
+                var videoID = $page("[data-video]").attr("data-video") || 
+                              $page("[data-id]").attr("data-id") ||
+                              (pageHtml.match(/data-video=["'](\d+)["']/) || [])[1];
+
+                console.error("[" + PROVIDER_NAME + "] TESPİT EDİLEN ID -> " + videoID);
+                if (!videoID) throw new Error("Video ID bulunamadı.");
+
+                return fetch(BASE_URL + "/video/" + videoID + "/", { 
+                    headers: Object.assign({}, DEFAULT_HEADERS, { "Referer": BASE_URL + "/" }) 
                 });
-                console.error("[" + PROVIDER_NAME + "] SCRIPT HARİTASI -> " + JSON.stringify(scripts.slice(0, 5)));
+            })
+            .then(function(res) { return res.text(); })
+            .then(function(apiHtml) {
+                var iframeMatch = apiHtml.match(/data-src=\\"([^"]+)/);
+                var iframeUrl = iframeMatch ? iframeMatch[1].replace(/\\/g, "") : "";
+                
+                if (!iframeUrl) throw new Error("Iframe yok.");
 
-                // 2. Video container'ın içini olduğu gibi basalım
-                var playerArea = $(".player-container").html() || "PLAYER_CONTAINER_YOK";
-                console.error("[" + PROVIDER_NAME + "] PLAYER ALANI (HAM) -> " + playerArea.substring(0, 200));
-
-                // 3. ID olabilecek gizli inputlar
-                var inputs = [];
-                $("input[type='hidden']").each(function(i, el) {
-                    inputs.push($(el).attr("id") + "=" + $(el).val());
-                });
-                console.error("[" + PROVIDER_NAME + "] GİZLİ INPUTLAR -> " + JSON.stringify(inputs));
-
-                throw new Error("ANALİZ TAMAMLANDI - LOGLARI KONTROL ET");
+                resolve([{
+                    name: PROVIDER_NAME,
+                    title: "HDFC - Fix",
+                    url: iframeUrl,
+                    quality: "1080p",
+                    headers: { "User-Agent": DEFAULT_HEADERS["User-Agent"] }
+                }]);
             })
             .catch(function(err) {
-                console.error("[" + PROVIDER_NAME + "] DURUM -> " + err.message);
-                resolve([]);
+                console.error("[" + PROVIDER_NAME + "] HATA: " + err.message);
+                resolve(EMPTY_RESULT);
             });
     });
 }
