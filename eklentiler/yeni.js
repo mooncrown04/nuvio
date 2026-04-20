@@ -1,13 +1,13 @@
 /**
- * Nuvio Scraper - FilmCennetim (Stabil TMDB Versiyonu)
- * GitHub mooncrown04/nuviotr şablonuna göre güncellendi.
+ * Nuvio Scraper - FilmCennetim
+ * Sabit TMDB Entegrasyonu ve URL Sayı Temizleyici
  */
 
 const BASE_URL = "https://stream.watchbuddy.tv";
 const TMDB_KEY = "65166299966144e590059e7987771746";
 
 const Scraper = {
-    // 1. Arama: Linkleri yakalar ve Nuvio'ya iletir
+    // 1. Arama: Site üzerindeki linkleri yakalar
     search: function(query) {
         const searchUrl = BASE_URL + "/ara/FilmCennetim?lang=tr&sorgu=" + encodeURIComponent(query);
         console.error("[Nuvio-Debug] Arama URL: " + searchUrl);
@@ -36,12 +36,12 @@ const Scraper = {
             });
     },
 
-    // 2. Meta: Linke basıldığında TMDB API'sini devreye sokan "sabit" kısım
+    // 2. Meta: Linke basıldığında TMDB API'sini çağıran SABİT KOD
     getMeta: function(id) {
         const params = new URLSearchParams(id.split('?')[1]);
         const baslik = params.get('baslik') || "";
         
-        // TMDB için isim temizleme (Sabit Nuvio Mantığı)
+        // TMDB için isim temizleme (Nuvio Standart)
         const cleanTitle = baslik
             .replace(/[0-9]{4}/g, '')
             .replace(/İzle|Full|HD|4K|Türkçe|Dublaj|Altyazılı/gi, '')
@@ -66,7 +66,6 @@ const Scraper = {
                         type: 'movie'
                     };
                 }
-                // TMDB bulunamazsa linkteki orijinal veriyi dön
                 return {
                     id: id,
                     name: baslik,
@@ -75,36 +74,35 @@ const Scraper = {
                 };
             })
             .catch(err => {
-                console.error("[Nuvio-Critical] getMeta TMDB Hatası: " + err.message);
+                console.error("[Nuvio-Critical] Meta TMDB Hatası: " + err.message);
                 return null;
             });
     },
 
-    // 3. Stream: Hostname hatasını (tv567609) temizleyen ve kaynak çeken kısım
+    // 3. Stream: URL sonuna gelen sayıları regex ile KESİN temizleme
     getStreams: function(id) {
-        // KRİTİK DÜZELTME: Loglardaki tv286217 gibi bozulmaları temizliyoruz
-        // id içindeki path'i al ve BASE_URL ile temiz bir şekilde birleştir
-        const path = id.split(' ')[0]; // Boşluktan sonrasını at
-        const cleanUrl = BASE_URL + (path.startsWith('/') ? path : '/' + path);
-        
-        console.error("[Nuvio-Debug] Stream Çekiliyor (Temiz): " + cleanUrl);
+        // Logda görülen "/7555" veya "/1265609" gibi sayıları regex ile uçuruyoruz
+        // Sadece /izle/... ile başlayan gerçek path'i koruyoruz
+        let pathMatch = id.match(/\/izle\/FilmCennetim\?[^ ]+/);
+        let cleanPath = pathMatch ? pathMatch[0] : id.split(' ')[0];
 
-        return fetch(cleanUrl)
+        const streamUrl = BASE_URL + cleanPath;
+        console.error("[Nuvio-Debug] Stream Çekiliyor (Temiz): " + streamUrl);
+
+        return fetch(streamUrl)
             .then(res => {
-                if (!res.ok) throw new Error("Yayın sayfası yüklenemedi: " + res.status);
+                if (!res.ok) throw new Error("Sayfa bulunamadı: " + res.status);
                 return res.text();
             })
             .then(html => {
                 const streams = [];
                 const iframeRegex = /<iframe[^>]+src="([^"]+)"/g;
                 let match;
-                let counter = 1;
-
                 while ((match = iframeRegex.exec(html)) !== null) {
                     const src = match[1];
                     if (src.includes('http') && !src.includes('ads')) {
                         streams.push({
-                            title: "Kaynak " + (counter++),
+                            title: "Kaynak " + (streams.length + 1),
                             url: src,
                             type: 'embed'
                         });
