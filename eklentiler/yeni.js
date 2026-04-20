@@ -14,7 +14,6 @@ var HEADERS = {
     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
 };
 
-// ── Yardımcılar ──────────────────────────────────────────────
 function titleToSlug(t) {
     return (t || '').toLowerCase()
         .replace(/ğ/g,'g').replace(/ü/g,'u').replace(/ş/g,'s')
@@ -27,101 +26,88 @@ function fetchTmdbInfo(tmdbId, mediaType) {
     var type = (mediaType === 'tv') ? 'tv' : 'movie';
     return fetch('https://api.themoviedb.org/3/' + type + '/' + tmdbId + '?api_key=' + TMDB_API_KEY + '&language=tr-TR')
         .then(function(r) { return r.json(); })
-        .then(function(d) { return { title: d.name || d.title }; });
+        .then(function(d) { return { title: d.name || d.title }; })
+        .catch(function() { return { title: '' }; });
 }
 
-// ── Ana İşlem (Nuvio Hibrit Yapı) ─────────────────────────────
 function getStreams(id, mediaType, season, episode) {
     var tmdbId = id.toString().replace(/[^0-9]/g, '');
     
     return fetchTmdbInfo(tmdbId, mediaType)
         .then(function(info) {
+            if (!info.title) return [];
             var slug = titleToSlug(info.title);
-            // Nuvio'da seçilen bölüme göre dinamik URL oluşturma
+            
+            // 1. ADIM: Direkt URL oluştur (Nuvio Bölüm Seçimi Uyumu)
             var targetUrl = (mediaType === 'tv') 
                 ? BASE_URL + '/dizi/' + slug + '/sezon-' + (season || 1) + '/bolum-' + (episode || 1)
                 : BASE_URL + '/film/' + slug;
 
-            console.error('[JetFilm-Debug] Hedef URL Deneniyor: ' + targetUrl);
+            console.error('[JetFilm-Debug] İstek: ' + targetUrl);
 
             return fetch(targetUrl, { headers: HEADERS })
                 .then(function(r) {
                     if (r.ok) return r.text();
                     
-                    // Direkt link (Cobra Kai gibi) bulunamazsa arama yap
-                    console.error('[JetFilm-Debug] Direkt link bulunamadı, aramaya geçiliyor: ' + info.title);
+                    // 2. ADIM: Direkt link yoksa Arama yap
                     return fetch(BASE_URL + '/filmara.php', {
                         method: 'POST',
                         headers: Object.assign({}, HEADERS, { 'Content-Type': 'application/x-www-form-urlencoded' }),
                         body: 's=' + encodeURIComponent(info.title)
                     }).then(function(res) { return res.text(); })
                       .then(function(searchHtml) {
-                          // Arama sonuçlarında hem /film/ hem /dizi/ içeren ilk mantıklı sonucu yakala
                           var regex = new RegExp('href="(https?://jetfilmizle\\.net/(film|dizi)/([^"/]+))"', 'i');
                           var m = regex.exec(searchHtml);
                           if (m) {
-                              var foundSlug = m[3];
-                              var foundType = m[2];
-                              var finalLink = BASE_URL + '/' + foundType + '/' + foundSlug;
-                              
-                              if (mediaType === 'tv') {
-                                  finalLink += '/sezon-' + (season || 1) + '/bolum-' + (episode || 1);
-                              }
-                              
-                              console.error('[JetFilm-Debug] Arama ile eşleşen bulundu: ' + finalLink);
+                              var finalLink = BASE_URL + '/' + m[2] + '/' + m[3];
+                              if (mediaType === 'tv') finalLink += '/sezon-' + (season || 1) + '/bolum-' + (episode || 1);
                               return fetch(finalLink, { headers: HEADERS }).then(function(r) { return r.text(); });
                           }
-                          throw new Error('İçerik sitede bulunamadı');
+                          return '';
                       });
                 })
                 .then(function(html) {
-                    return { html: html, name: info.title };
+                    if (!html) return [];
+                    var streams = [];
+                    var lowHtml = html.toLowerCase();
+                    
+                    // Dil Etiketi Belirleme
+                    var dil = "Türkçe";
+                    if (lowHtml.indexOf('dublaj') !== -1 && (lowHtml.indexOf('altyazı') !== -1 || lowHtml.indexOf('altyazi') !== -1)) dil = "Dublaj & Altyazı";
+                    else if (lowHtml.indexOf('dublaj') !== -1) dil = "Dublaj";
+                    else if (lowHtml.indexOf('altyazı') !== -1 || lowHtml.indexOf('altyazi') !== -1) dil = "Altyazı";
+
+                    // Pixeldrain Fix
+                    var pdRe = /href="(https?:\/\/pixeldrain\.com\/u\/([^"]+))"/g;
+                    var m;
+                    while ((m = pdRe.exec(html)) !== null) {
+                        streams.push({
+                            name: info.title,
+                            title: '⌜ JetFilmizle ⌟ | 🇹🇷 ' + dil + ' (Pixeldrain)',
+                            url: 'https://pixeldrain.com/api/file/' + m[2] + '?download',
+                            type: 'video',
+                            quality: '1080p',
+                            language: 'tr',
+                            headers: { 'Referer': 'https://pixeldrain.com/' }
+                        });
+                    }
+                    
+                    // Iframe/Embed Kaynaklar
+                    var iframeRe = /<iframe[^>]+(?:src)="([^"]+)"/gi;
+                    while ((m = iframeRe.exec(html)) !== null) {
+                        var src = m[1];
+                        if (src.indexOf('jetv') !== -1 || src.indexOf('d2rs') !== -1) {
+                            streams.push({
+                                name: info.title,
+                                title: '⌜ JetFilmizle ⌟ | 🇹🇷 ' + dil + ' (Hızlı)',
+                                url: src.startsWith('//') ? 'https:' + src : src,
+                                type: 'embed',
+                                language: 'tr'
+                            });
+                        }
+                    }
+                    return streams;
                 });
-        })
-        .then(function(res) {
-            var streams = [];
-            var m;
-
-            // Dil Kontrolü
-            var lowHtml = res.html.toLowerCase();
-            var isDublaj = lowHtml.indexOf('dublaj') !== -1;
-            var isAltyazi = lowHtml.indexOf('altyazı') !== -1 || lowHtml.indexOf('altyazi') !== -1;
-            
-            var dilEtiketi = "Türkçe";
-            if (isDublaj && isAltyazi) dilEtiketi = "Dublaj & Altyazı";
-            else if (isDublaj) dilEtiketi = "Dublaj";
-            else if (isAltyazi) dilEtiketi = "Altyazı";
-
-            // 1. Pixeldrain (Video Fix)
-            var pdRe = /href="(https?:\/\/pixeldrain\.com\/u\/([^"]+))"/g;
-            while ((m = pdRe.exec(res.html)) !== null) {
-                streams.push({
-                    name: res.name,
-                    title: '⌜ JetFilmizle ⌟ | 🇹🇷 ' + dilEtiketi + ' (Pixeldrain)',
-                    url: 'https://pixeldrain.com/api/file/' + m[2] + '?download',
-                    type: 'video',
-                    quality: '1080p',
-                    language: 'tr',
-                    headers: { 'Referer': 'https://pixeldrain.com/' }
-                });
-            }
-            
-            // 2. Iframe / Alternatif Kaynaklar
-            var iframeRe = /<iframe[^>]+(?:src)="([^"]+)"/gi;
-            while ((m = iframeRe.exec(res.html)) !== null) {
-                var src = m[1];
-                if (src.indexOf('jetv') !== -1 || src.indexOf('d2rs') !== -1) {
-                    streams.push({
-                        name: res.name,
-                        title: '⌜ JetFilmizle ⌟ | 🇹🇷 ' + dilEtiketi + ' (Hızlı)',
-                        url: src.startsWith('//') ? 'https:' + src : src,
-                        type: 'embed',
-                        language: 'tr'
-                    });
-                }
-            }
-
-            return streams;
         })
         .catch(function(err) {
             console.error('[Nuvio-Critical]: ' + err.message);
