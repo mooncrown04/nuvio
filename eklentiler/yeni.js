@@ -1,47 +1,83 @@
-const PROVIDER_NAME = "WatchBuddy_V54_Debug";
+const axios = require('axios');
+const cheerio = require('cheerio');
+
 const BASE_URL = "https://stream.watchbuddy.tv";
 
-async function getStreams(args) {
-    // 1. ADIM: Başlangıç Logu
-    console.error(`[${PROVIDER_NAME}] >>> İŞLEM BAŞLADI`);
-    
-    try {
-        let mediaId = (typeof args === 'object') ? (args.tmdbId || args.id) : args;
-        let mediaTitle = (typeof args === 'object') ? (args.title || args.name || "Film") : "Film";
+const Scraper = {
+    // 1. ARAMA FONKSİYONU
+    search: function(query) {
+        return axios.get(`${BASE_URL}/ara/FilmCennetim?lang=tr&sorgu=${encodeURIComponent(query)}`)
+            .then(response => {
+                const $ = cheerio.load(response.data);
+                const results = [];
 
-        if (!mediaId) {
-            console.error(`[${PROVIDER_NAME}] HATA: MediaID bulunamadı!`);
-            return [];
-        }
+                // HTML içindeki tüm sonuç linklerini yakalıyoruz
+                $('a[href*="/izle/FilmCennetim"]').each((i, el) => {
+                    const href = $(el).attr('href'); // Örn: /izle/FilmCennetim?url=...
+                    const fullUrl = new URL(href, BASE_URL).href;
+                    const params = new URLSearchParams(href.split('?')[1]);
 
-        // 2. ADIM: URL Oluşturma ve Parametre Kontrolü
-        const targetApi = "http://px-webservisler:2585/sinewix/movie/" + mediaId;
-        const tunnelUrl = `${BASE_URL}/izle/SineWix?url=${encodeURIComponent(targetApi)}&baslik=${encodeURIComponent(mediaTitle)}&force_proxy=1`;
-        
-        console.error(`[${PROVIDER_NAME}] HEDEF: ${targetApi}`);
-        console.error(`[${PROVIDER_NAME}] TUNNEL URL: ${tunnelUrl}`);
+                    results.push({
+                        id: fullUrl,
+                        name: params.get('baslik') || "Bilinmeyen Film", // URL'den başlığı al
+                        poster: params.get('poster_url'), // URL'den posteri al
+                        type: 'movie',
+                        description: `${params.get('year')} - IMDb: ${params.get('rating')}` // Yıl ve Rating bilgisi
+                    });
+                });
 
-        // 3. ADIM: Oynatıcıya Gönderilecek Obje
-        const streamObject = {
-            name: "WatchBuddy Debug",
-            title: `SineWix: ${mediaTitle}`,
-            url: tunnelUrl,
-            headers: {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                "Referer": "https://stream.watchbuddy.tv/",
-                "Accept": "*/*"
-            }
-        };
+                return results;
+            })
+            .catch(err => {
+                console.error("Arama hatası:", err);
+                return [];
+            });
+    },
 
-        console.error(`[${PROVIDER_NAME}] >>> OYNATICIYA GÖNDERİLDİ. Lütfen ExoPlayer hatasını bekleyin...`);
-        return [streamObject];
+    // 2. DETAY (META) FONKSİYONU
+    getMeta: function(id) {
+        return axios.get(id)
+            .then(response => {
+                const $ = cheerio.load(response.data);
+                const params = new URLSearchParams(id.split('?')[1]);
 
-    } catch (error) {
-        // 4. ADIM: Yakalanamayan Hataları Loglama
-        console.error(`[${PROVIDER_NAME}] KRİTİK HATA: ${error.message}`);
-        console.error(`[${PROVIDER_NAME}] STACK: ${error.stack}`);
-        return [];
+                return {
+                    id: id,
+                    name: params.get('baslik'),
+                    type: 'movie',
+                    poster: params.get('poster_url'),
+                    background: params.get('poster_url'), // Arkaplan için de posteri kullanıyoruz
+                    description: $("meta[name='description']").attr('content'), // SEO meta tag'inden özeti al
+                    releaseInfo: params.get('year'),
+                    imdbRating: params.get('rating'),
+                    genres: ["Aksiyon", "Macera"] // Bu kısmı HTML'den dinamik de çekebiliriz
+                };
+            });
+    },
+
+    // 3. YAYIN (STREAM) FONKSİYONU
+    getStreams: function(id) {
+        return axios.get(id)
+            .then(response => {
+                const $ = cheerio.load(response.data);
+                const streams = [];
+
+                // HTML içindeki iframe veya video kaynaklarını bul
+                // KekikStream yapısında kaynaklar genellikle bir iframe içinde sunulur
+                $('iframe').each((i, el) => {
+                    const src = $(el).attr('src');
+                    if (src) {
+                        streams.push({
+                            title: `Kaynak ${i + 1}`,
+                            url: src,
+                            type: 'embed' // Nuvio iç oynatıcı veya harici için
+                        });
+                    }
+                });
+
+                return streams;
+            });
     }
-}
+};
 
-globalThis.getStreams = getStreams;
+module.exports = Scraper;
