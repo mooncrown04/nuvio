@@ -1,39 +1,35 @@
 /**
- * Nuvio Local Scraper Şablonu - v4.5 (WatchBuddy Resolver)
- * Kural 1: console.log YASAK, tüm loglar console.error olmalı.
- * Kural 2: async/await YASAK, Promise/axios.then kullanılmalı.
+ * Nuvio Local Scraper - v4.6 (No-Axios / Pure Fetch Edition)
+ * Kural 1: console.log YASAK -> console.error kullanılacak.
+ * Kural 2: async/await YASAK -> Promise kullanılacak.
+ * Kural 3: Axios YASAK -> Fetch kullanılacak.
  */
 
-var axios = require("axios");
 const PROVIDER_NAME = "HDFilmCehennemi";
-const DEFAULT_HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-    "X-Requested-With": "fetch"
-};
 
 function getStreams(args) {
-    // Nuvio'da loglar error kanalından akar
-    console.error(`[${PROVIDER_NAME}] Başlatıldı -> URL: ${args.url}`);
+    console.error(`[${PROVIDER_NAME}] Başlatıldı (Fetch Mode) -> URL: ${args.url}`);
 
     return new Promise(function(resolve) {
         var sourceUrl = args.url || "";
         if (!sourceUrl) {
-            console.error(`[${PROVIDER_NAME}] HATA: Kaynak URL boş.`);
+            console.error(`[${PROVIDER_NAME}] HATA: URL boş.`);
             return resolve([]);
         }
 
-        // WatchBuddy Köprüsü
         var bridgeUrl = "https://stream.watchbuddy.tv/izle/HDFilmCehennemi?url=" + encodeURIComponent(sourceUrl);
 
-        axios.get(bridgeUrl, { 
+        // Axios yerine doğrudan fetch kullanıyoruz
+        fetch(bridgeUrl, {
             headers: {
-                "User-Agent": DEFAULT_HEADERS["User-Agent"],
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
                 "Referer": "https://stream.watchbuddy.tv/"
-            } 
+            }
         })
         .then(function(response) {
-            var html = response.data;
-            // Sayfa içindeki gerçek video dosyasını (m3u8/mp4) çekiyoruz
+            return response.text();
+        })
+        .then(function(html) {
             var streamUrlMatch = html.match(/file["']?\s*:\s*["'](http[^"']+)["']/);
 
             if (streamUrlMatch && streamUrlMatch[1]) {
@@ -46,24 +42,24 @@ function getStreams(args) {
                     url: finalUrl,
                     quality: "1080p",
                     headers: {
-                        "User-Agent": DEFAULT_HEADERS["User-Agent"],
+                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
                         "Referer": "https://stream.watchbuddy.tv/"
                     }
                 }]);
             } else {
-                console.error(`[${PROVIDER_NAME}] HATA: Sayfa içinde video linki bulunamadı.`);
+                console.error(`[${PROVIDER_NAME}] HATA: Sayfada video linki yok.`);
                 resolve([]);
             }
         })
         .catch(function(err) {
-            console.error(`[${PROVIDER_NAME}] KRİTİK HATA: ${err.message}`);
+            console.error(`[${PROVIDER_NAME}] NETWORK HATASI: ${err.message}`);
             resolve([]);
         });
     });
 }
 
-// Nuvio'nun fonksiyonu bulabilmesi için global ve module tanımları
+// Global tanımlamalar
+globalThis.getStreams = getStreams;
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = { getStreams: getStreams };
 }
-globalThis.getStreams = getStreams;
