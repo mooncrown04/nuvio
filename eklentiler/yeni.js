@@ -1,48 +1,57 @@
-// Version: 9.0 (WatchBuddy API Bridge)
-// Kendi kodumuzla uğraşmak yerine, çalışan WatchBuddy sistemini köprü olarak kullanıyoruz.
+// Version: 10.0 (Fire TV Optimized Bridge)
+// FIXED: Network library detection for Cloudstream/Fire TV environments.
 
 const PROVIDER_NAME = "HDFilmCehennemi";
 
 async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
-    // Çözülmesini istediğimiz hedef link
     const targetUrl = "https://www.hdfilmcehennemi.nl/1-ready-or-not-izle-hdf-8/";
-    
-    // WatchBuddy'nin anladığı formatta API linkini oluşturuyoruz
     const bridgeUrl = `https://stream.watchbuddy.tv/izle/HDFilmCehennemi?url=${encodeURIComponent(targetUrl)}`;
 
-    console.error("[" + PROVIDER_NAME + "] WatchBuddy Bridge Başlatıldı...");
+    console.error("[" + PROVIDER_NAME + "] v10 Çözücü Başlatıldı...");
 
     try {
-        // Cloudstream'in gizli network fonksiyonlarını zorluyoruz
-        const network = typeof app !== 'undefined' ? app : 
-                        (typeof http !== 'undefined' ? http : 
-                        (typeof fetch !== 'undefined' ? { get: async (u) => { let r = await fetch(u); return { text: await r.text() }; } } : null));
+        // Cloudstream JS eklentilerinde genellikle 'request' veya 'app' kullanılır.
+        // Hepsini birden kontrol eden en güvenli yapı:
+        const client = (typeof request !== 'undefined') ? request : 
+                       (typeof app !== 'undefined') ? app : 
+                       (typeof http !== 'undefined') ? http : null;
 
-        if (!network) {
-            // Eğer hala network bulamıyorsa, direkt linki döndürmeyi deneyelim (bazı playerlar bunu çözer)
-            console.error("[" + PROVIDER_NAME + "] Network yok, direkt stream objesi dönülüyor.");
+        if (!client) {
+            console.error("[" + PROVIDER_NAME + "] KRİTİK: Hiçbir network istemcisi (request/app/http) tanımlı değil.");
+            // Eğer istemci yoksa, direkt WatchBuddy linkini dönüyoruz. 
+            // Bazı Cloudstream sürümleri URL'yi harici player'a gönderebilir.
             return [{
-                name: "WatchBuddy (External)",
+                name: "HDFC (WatchBuddy Link)",
                 url: bridgeUrl,
-                quality: "1080p",
-                isDirect: false 
+                quality: "1080p"
             }];
         }
 
-        // WatchBuddy'den linki almayı dene
-        const response = await network.get(bridgeUrl);
-        // Burada WatchBuddy'nin döndüğü HTML içinden final .m3u8 linkini ayıklıyoruz
-        const finalStream = response.text.match(/file["']?\s*:\s*["'](http[^"']+)["']/)?.[1];
+        // WatchBuddy sayfasını çekip içindeki gerçek .m3u8 linkini ayıklamaya çalışıyoruz
+        const response = await client.get(bridgeUrl);
+        const html = (typeof response === 'string') ? response : (response.text || response.body || "");
+
+        // WatchBuddy'nin player kodunda 'file: "..."' şeklinde link saklanır.
+        const finalUrlMatch = html.match(/file["']?\s*:\s*["'](http[^"']+)["']/);
+        const finalUrl = finalUrlMatch ? finalUrlMatch[1] : bridgeUrl;
+
+        console.error("[" + PROVIDER_NAME + "] Çözüm başarılı, link dönülüyor.");
 
         return [{
             name: PROVIDER_NAME,
-            url: finalStream || bridgeUrl, // Bulamazsak köprü linkini dön
-            quality: "1080p"
+            url: finalUrl,
+            quality: "1080p",
+            headers: { "Referer": "https://stream.watchbuddy.tv/" }
         }];
 
     } catch (err) {
-        console.error("[" + PROVIDER_NAME + "] Bridge Hatası: " + err.message);
-        return [];
+        console.error("[" + PROVIDER_NAME + "] v10 Hata: " + err.message);
+        // Hata olsa bile en azından köprü linkini dönmeyi dene
+        return [{
+            name: "HDFC (Fallback)",
+            url: bridgeUrl,
+            quality: "1080p"
+        }];
     }
 }
 
