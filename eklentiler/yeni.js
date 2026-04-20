@@ -1,117 +1,144 @@
-// ============================================================
-// NUVIO PROVIDER: HDFilmCehennemi
-// VER: 3.3.0-FINAL (Parse Safety & Global Compatibility)
-// ============================================================
+var cheerio = require("cheerio-without-node-native");
+var axios = require("axios");
 
-const manifest = {
-    id: 'org.nuvio.hdfc.precision',
-    version: '3.3.0',
-    name: 'HDFC Precision',
-    resources: ['stream'],
-    types: ['movie', 'series'],
-    idPrefixes: ['tt', '1', '2', '3', '4', '5', '6', '7', '8', '9']
+const PROVIDER_NAME = "HDFilmCehennemi";
+const BASE_URL = "https://www.hdfilmcehennemi.nl";
+const EMPTY_RESULT = [];
+const DEFAULT_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:137.0) Gecko/20100101 Firefox/137.0",
+    "X-Requested-With": "fetch"
 };
 
-const CONFIG = {
-    domain: 'https://www.hdfilmcehennemi.nl',
-    embed: 'https://hdfilmcehennemi.mobi',
-    tmdbBase: 'https://api.themoviedb.org/3/movie/',
-    tmdbSuffix: '?language=tr-TR&api_key=4ef0d7355d9ffb5151e987764708ce96',
-    headers: { 
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        'X-Requested-With': 'fetch',
-        'Accept': 'application/json, text/plain, */*'
-    }
-};
-
-async function getStreams(type, id, meta) {
-    console.error(`[HDFC-DUMP] T:${type} | I:${id}`);
-
-    let searchTitle = "";
-
-    // 1. TMDB RECOVERY (HDFC-DEBUG: Çığlık 7 yakalandı!)
-    const tmdbId = (!isNaN(type)) ? type : ((!isNaN(id)) ? id : null);
-    if (tmdbId) {
-        try {
-            const tRes = await fetch(CONFIG.tmdbBase + tmdbId + CONFIG.tmdbSuffix);
-            const tData = await tRes.json();
-            searchTitle = tData.title || tData.original_title;
-        } catch (e) { console.error(`[HDFC-TMDB-ERR] ${e.message}`); }
-    }
-
-    if (!searchTitle) searchTitle = (meta && (meta.name || meta.title)) ? (meta.name || meta.title) : "";
-    if (!searchTitle) return [];
-
+/**
+ * CS3'teki dcHello/unmix mantığının Nuvio uyarlaması
+ */
+function decodeSource(parts) {
     try {
-        // --- 2. ARAMA (GÜVENLİ PARSE) ---
-        const sRes = await fetch(`${CONFIG.domain}/search?q=${encodeURIComponent(searchTitle)}`, { 
-            headers: Object.assign({}, CONFIG.headers, { 'Referer': CONFIG.domain + '/' }) 
+        console.error(`[${PROVIDER_NAME}] Çözücü: ${parts.length} parça işleniyor...`);
+        let joined = parts.join("").split("").reverse().join("");
+        let rot13 = joined.replace(/[a-zA-Z]/g, function(c) {
+            return String.fromCharCode((c <= "Z" ? 90 : 122) >= (c = c.charCodeAt(0) + 13) ? c : c - 26);
         });
-        
-        const sRaw = await sRes.text();
-        let results = [];
-
-        // Eğer yanıt JSON ise ayrıştır, değilse ham HTML içinde link ara
-        if (sRaw.trim().startsWith('{') || sRaw.trim().startsWith('[')) {
-            try {
-                const sData = JSON.parse(sRaw);
-                results = sData.results || [];
-            } catch(e) { console.error("[HDFC-JSON-ERR] JSON Parse edilemedi."); }
+        let decodedBytes = Buffer.from(rot13, 'base64');
+        let unmixed = "";
+        for (let i = 0; i < decodedBytes.length; i++) {
+            let charCode = decodedBytes[i] & 0xFF;
+            let newChar = (charCode - (399756995 % (i + 5)) + 256) % 256;
+            unmixed += String.fromCharCode(newChar);
         }
-
-        let pageUrl = "";
-        if (results.length > 0) {
-            const match = results.find(html => html.toLowerCase().includes(searchTitle.toLowerCase()));
-            if (match) pageUrl = match.replace(/\\\//g, '/').match(/href="([^"]+)"/)?.[1];
-        } else {
-            // Eğer JSON gelmediyse doğrudan HTML içinde ara (B Planı)
-            const fallbackMatch = sRaw.match(new RegExp(`href="([^"]+)"[^>]*>[^<]*${searchTitle}`, 'i'));
-            pageUrl = fallbackMatch ? fallbackMatch[1] : "";
-        }
-
-        if (!pageUrl) {
-            console.error(`[HDFC-ERROR] Sayfa linki bulunamadı: ${searchTitle}`);
-            return [];
-        }
-
-        // --- 3. SAYFA & EMBED ---
-        const pRes = await fetch(pageUrl, { headers: CONFIG.headers });
-        let pHtml = await pRes.text();
-        
-        if (pHtml.trim().startsWith('{')) {
-            try { pHtml = JSON.parse(pHtml).html || pHtml; } catch(e) {}
-        }
-        pHtml = pHtml.replace(/\\\//g, '/');
-
-        const embedMatch = pHtml.match(/data-src="(https:\/\/hdfilmcehennemi\.mobi\/video\/embed\/[^"]+)"/i);
-        if (!embedMatch) return [];
-
-        const embedUrl = embedMatch[1];
-
-        // --- 4. M3U8 (REFERER ŞART) ---
-        const eRes = await fetch(embedUrl, { headers: { 'Referer': pageUrl } });
-        const eHtml = await eRes.text();
-        const m3u8 = eHtml.match(/["'](https?:\/\/[^"']+(?:master\.txt|\.m3u8)[^"']*)["']/i)?.[1];
-
-        if (!m3u8) return [];
-
-        return [{
-            name: "HDFC",
-            title: "1080p - HLS",
-            url: m3u8,
-            behaviorHints: {
-                proxyHeaders: {
-                    "Referer": CONFIG.embed + "/",
-                    "Origin": CONFIG.embed,
-                    "User-Agent": "Mozilla/5.0"
-                }
-            }
-        }];
-
+        const finalUrl = unmixed.includes("https") ? "https" + unmixed.split("https")[1] : unmixed;
+        console.error(`[${PROVIDER_NAME}] Çözülen URL Başarılı.`);
+        return finalUrl;
     } catch (e) {
-        console.error(`[HDFC-CRITICAL] Hata: ${e.message}`);
-        return [];
+        console.error(`[${PROVIDER_NAME}] Çözücü Hatası: ${e.message}`);
+        return null;
     }
 }
 
-if (typeof module !== 'undefined') module.exports = { manifest, getStreams };
+function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
+    console.error(`[${PROVIDER_NAME}] --- İŞLEM BAŞLATILDI ---`);
+    console.error(`[${PROVIDER_NAME}] Parametreler -> ID: ${tmdbId}, Tip: ${mediaType}, S:${seasonNum} E:${episodeNum}`);
+
+    return new Promise(function(resolve) {
+        var isMovie = mediaType === 'movie';
+        var tmdbUrl = 'https://api.themoviedb.org/3/' + (isMovie ? 'movie' : 'tv') + '/' + tmdbId + '?language=tr-TR&api_key=4ef0d7355d9ffb5151e987764708ce96';
+
+        axios.get(tmdbUrl, { headers: DEFAULT_HEADERS })
+            .then(function(response) {
+                var query = response.data.title || response.data.name;
+                console.error(`[${PROVIDER_NAME}] TMDB Başlık: ${query}`);
+                return axios.get(`${BASE_URL}/search?q=` + encodeURIComponent(query), { headers: DEFAULT_HEADERS });
+            })
+            .then(function(res) {
+                var searchData = res.data; 
+                console.error(`[${PROVIDER_NAME}] Arama Yanıtı Alındı. Sonuç Sayısı: ${searchData.results ? searchData.results.length : 0}`);
+                
+                var firstResultHtml = (searchData.results && searchData.results.length > 0) ? searchData.results[0] : null;
+                if (!firstResultHtml) {
+                    console.error(`[${PROVIDER_NAME}] HATA: Arama sonucu boş döndü (Site başlığı bulamadı).`);
+                    return resolve(EMPTY_RESULT);
+                }
+
+                var $search = cheerio.load(firstResultHtml);
+                var targetUrl = $search("a").first().attr("href");
+                if (!targetUrl) {
+                    console.error(`[${PROVIDER_NAME}] HATA: Sonuç HTML içinde href bulunamadı.`);
+                    return resolve(EMPTY_RESULT);
+                }
+
+                if (!isMovie) {
+                    targetUrl = targetUrl.replace(/\/$/, "") + "-sezon-" + seasonNum + "-bolum-" + episodeNum;
+                }
+                console.error(`[${PROVIDER_NAME}] Hedef Sayfa: ${targetUrl}`);
+                return axios.get(targetUrl, { headers: DEFAULT_HEADERS });
+            })
+            .then(function(pageRes) {
+                var $page = cheerio.load(pageRes.data);
+                var videoID = $page("button.alternative-link").first().attr("data-video");
+                
+                if (!videoID) {
+                    console.error(`[${PROVIDER_NAME}] HATA: Sayfada video ID (data-video) bulunamadı.`);
+                    return resolve(EMPTY_RESULT);
+                }
+                console.error(`[${PROVIDER_NAME}] Video ID Bulundu: ${videoID}`);
+                return axios.get(`${BASE_URL}/video/${videoID}/`, { 
+                    headers: DEFAULT_HEADERS, 
+                    referer: pageRes.config.url 
+                });
+            })
+            .then(function(apiRes) {
+                console.error(`[${PROVIDER_NAME}] Video API Yanıtı Alındı.`);
+                var iframeMatch = apiRes.data.match(/data-src=\\"([^"]+)/);
+                var iframeUrl = iframeMatch ? iframeMatch[1].replace(/\\/g, "") : "";
+
+                if (iframeUrl.includes("rapidrame")) {
+                    iframeUrl = BASE_URL + "/rplayer/" + iframeUrl.split("?rapidrame_id=")[1];
+                }
+                
+                if (!iframeUrl) {
+                    console.error(`[${PROVIDER_NAME}] HATA: Iframe URL ayıklanamadı.`);
+                    return resolve(EMPTY_RESULT);
+                }
+                console.error(`[${PROVIDER_NAME}] Çözülecek Iframe: ${iframeUrl}`);
+                return axios.get(iframeUrl, { headers: DEFAULT_HEADERS });
+            })
+            .then(function(playerRes) {
+                var fileLinkMatch = playerRes.data.match(/file_link=\"(.*?)\"/);
+                if (!fileLinkMatch) {
+                    console.error(`[${PROVIDER_NAME}] HATA: Player içinde file_link regex eşleşmedi.`);
+                    return resolve(EMPTY_RESULT);
+                }
+
+                var partsMatch = fileLinkMatch[1].match(/\"(.*?)\"/g);
+                var parts = partsMatch ? partsMatch.map(p => p.replace(/\"/g, "")) : [];
+                
+                console.error(`[${PROVIDER_NAME}] Şifreli Parçalar Yakalandı, dcHello Başlatılıyor...`);
+                var finalLink = decodeSource(parts);
+
+                if (finalLink) {
+                    console.error(`[${PROVIDER_NAME}] TAMAMLANDI: Yayın linki oluşturuldu.`);
+                    resolve([{
+                        name: PROVIDER_NAME,
+                        title: "HDFC - Full HD",
+                        url: finalLink,
+                        quality: "1080p",
+                        headers: { 
+                            "User-Agent": DEFAULT_HEADERS["User-Agent"], 
+                            "Referer": BASE_URL + "/" 
+                        }
+                    }]);
+                } else { 
+                    console.error(`[${PROVIDER_NAME}] HATA: Çözücüden boş link döndü.`);
+                    resolve(EMPTY_RESULT); 
+                }
+            })
+            .catch(function(err) {
+                console.error(`[${PROVIDER_NAME}] KRİTİK HATA: ${err.message}`);
+                resolve(EMPTY_RESULT);
+            });
+    });
+}
+
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = { getStreams: getStreams };
+}
