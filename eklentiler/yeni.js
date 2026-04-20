@@ -1,4 +1,4 @@
-const PROVIDER_NAME = "WatchBuddy_V32_FinalFix";
+const PROVIDER_NAME = "WatchBuddy_V37_Interceptor";
 const BASE_URL = "https://stream.watchbuddy.tv";
 
 async function getStreams(args) {
@@ -10,60 +10,50 @@ async function getStreams(args) {
         const data = await tmdbRes.json();
         const title = data.title;
 
-        // ADIM 1: Arama yaparken 422 almamak için tüm parametreleri veriyoruz
-        const searchUrl = `${BASE_URL}/api/v1/search?q=${encodeURIComponent(title)}&type=movie&id=${tmdbId}`;
-        
-        console.error(`[${PROVIDER_NAME}] Sorgulanıyor: ${searchUrl}`);
+        console.error(`[${PROVIDER_NAME}] Hedef Belirlendi: ${title}`);
 
-        const response = await fetch(searchUrl, {
-            headers: { "X-Requested-With": "XMLHttpRequest" }
-        });
+        // Paylaştığın JS kodundaki 'protectionParams' listesini tetiklememek için
+        // linklerimizi temiz ama kimlikli gönderiyoruz.
+        const headers = {
+            "User-Agent": "KekikStream/3.0",
+            "X-Requested-With": "XMLHttpRequest",
+            "Referer": BASE_URL + "/"
+        };
 
-        // HTML dönme ihtimaline karşı kontrol (JSON parse hatasını önler)
-        const contentType = response.headers.get("content-type");
-        if (!contentType || !contentType.includes("application/json")) {
-            console.error(`[${PROVIDER_NAME}] Sunucu JSON yerine HTML döndü! Bypass açılıyor.`);
-            return tunnelFallback(title, tmdbId);
-        }
-
+        const searchUrl = `${BASE_URL}/api/v1/search?q=${encodeURIComponent(title)}&type=movie`;
+        const response = await fetch(searchUrl, { headers });
         const json = await response.json();
         let items = json.result || json.results || [];
 
-        if (items.length === 0) return tunnelFallback(title, tmdbId);
-
         return items.map(item => {
-            // ADIM 2: ExoPlayer'ın 422 almasını önlemek için 'headers' ekliyoruz
+            // KRİTİK: Senin JS kodundaki 'detectFormat' ve 'suggestInitialMode' 
+            // fonksiyonlarını mutlu etmek için URL sonuna formatı zorla ekliyoruz.
+            let streamUrl = `${BASE_URL}/izle/${item.provider}?url=${encodeURIComponent(item.url || item.path)}&format=hls`;
+            
+            // FULL modunu tetiklemek için sunucuya 'force_proxy' sinyali gönderiyoruz
+            if (item.provider === 'SineWix' || item.provider === 'Dizipal') {
+                streamUrl += "&force_proxy=1";
+            }
+
             return {
                 name: item.provider,
-                title: `${item.title} [${item.provider}]`,
-                url: `${BASE_URL}/izle/${item.provider}?url=${encodeURIComponent(item.url || item.path)}`,
+                title: `${item.title} [${item.provider}] (Tünelli)`,
+                url: streamUrl,
                 quality: "1080p",
-                // BU KISIM EXO PLAYER İÇİN ŞART:
-                headers: {
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0",
-                    "Referer": BASE_URL + "/",
-                    "Origin": BASE_URL
-                }
+                headers: headers
             };
         });
 
     } catch (e) {
-        console.error(`[${PROVIDER_NAME}] Hata Yakalandı: ${e.message}`);
-        return tunnelFallback("Bypass", tmdbId);
+        console.error(`[${PROVIDER_NAME}] Hata: ${e.message}`);
+        // Fallback her zaman FULL modda çalışmalı
+        return [{
+            name: "WatchBuddy (Rescue Mode)",
+            url: `${BASE_URL}/izle/SineWix?url=http://px-webservisler:2585/sinewix/movie/${tmdbId}&force_proxy=1&format=hls`,
+            quality: "1080p",
+            headers: { "User-Agent": "KekikStream/3.0" }
+        }];
     }
-}
-
-function tunnelFallback(title, tmdbId) {
-    // Logdaki '<' hatasını aşmak için en güvenli liman
-    return [{
-        name: "SineWix (Security Bypass)",
-        url: `${BASE_URL}/izle/SineWix?url=http://px-webservisler:2585/sinewix/movie/${tmdbId}`,
-        quality: "1080p",
-        headers: {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0",
-            "Referer": BASE_URL + "/"
-        }
-    }];
 }
 
 globalThis.getStreams = getStreams;
