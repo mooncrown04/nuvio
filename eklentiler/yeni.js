@@ -1,64 +1,84 @@
 /**
- * Nuvio Local Scraper - v4.7
- * Kural: args içindeki URL'yi her türlü ihtimale karşı yakala.
+ * Nuvio HDFC Scraper - RecTV Logic v5.0
+ * TMDB ID'den film adını bulur, HDFC'de aratır ve WatchBuddy ile çözer.
  */
 
 const PROVIDER_NAME = "HDFilmCehennemi";
+const TMDB_API_KEY = "4ef0d7355d9ffb5151e987764708ce96";
 
 function getStreams(args) {
-    // Nuvio'nun hangi anahtarı kullandığını bulmak için tüm args'ı logluyoruz
-    console.error(`[${PROVIDER_NAME}] Gelen Veri: ${JSON.stringify(args)}`);
+    // Logda gördüğümüz "567609" gibi saf ID'yi veya obje içindeki id'yi yakala
+    var tmdbId = (typeof args === 'object') ? (args.tmdbId || args.id) : args;
+    
+    console.error(`[${PROVIDER_NAME}] Başlatıldı. TMDB ID: ${tmdbId}`);
 
     return new Promise(function(resolve) {
-        // Nuvio versiyonuna göre URL farklı yerlerde olabilir, hepsini dene:
-        var sourceUrl = args.url || args.source || args.link || (typeof args === 'string' ? args : "");
-        
-        if (!sourceUrl || sourceUrl === "undefined") {
-            console.error(`[${PROVIDER_NAME}] HATA: URL bulunamadı. Gelen args: ${typeof args}`);
+        if (!tmdbId) {
+            console.error(`[${PROVIDER_NAME}] HATA: TMDB ID gelmedi.`);
             return resolve([]);
         }
 
-        console.error(`[${PROVIDER_NAME}] Çözülüyor -> ${sourceUrl}`);
+        // 1. ADIM: TMDB'den Film Bilgisini Çek (RecTV'deki gibi)
+        var tmdbUrl = `https://api.themoviedb.org/3/movie/${tmdbId}?api_key=${TMDB_API_KEY}&language=tr-TR`;
 
-        var bridgeUrl = "https://stream.watchbuddy.tv/izle/HDFilmCehennemi?url=" + encodeURIComponent(sourceUrl);
+        fetch(tmdbUrl)
+            .then(function(res) { return res.json(); })
+            .then(function(tmdbData) {
+                var movieTitle = tmdbData.title || tmdbData.original_title;
+                console.error(`[${PROVIDER_NAME}] Film Bulundu: ${movieTitle}`);
 
-        fetch(bridgeUrl, {
-            headers: {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                "Referer": "https://stream.watchbuddy.tv/"
-            }
-        })
-        .then(function(response) { return response.text(); })
-        .then(function(html) {
-            var streamUrlMatch = html.match(/file["']?\s*:\s*["'](http[^"']+)["']/);
+                // 2. ADIM: HDFC Sitesinde bu isimle arama yap
+                var searchUrl = `https://www.hdfilmcehennemi.nl/search?q=${encodeURIComponent(movieTitle)}`;
+                return fetch(searchUrl);
+            })
+            .then(function(res) { return res.text(); })
+            .then(function(html) {
+                // Arama sonuçlarından ilk film linkini yakala
+                var linkMatch = html.match(/href="([^"]+)" title="[^"]+"/);
+                if (!linkMatch) {
+                    console.error(`[${PROVIDER_NAME}] Sitede film bulunamadı.`);
+                    return resolve([]);
+                }
 
-            if (streamUrlMatch && streamUrlMatch[1]) {
-                var finalUrl = streamUrlMatch[1];
-                console.error(`[${PROVIDER_NAME}] BAŞARILI LİNK: ${finalUrl}`);
+                var fullUrl = linkMatch[1].startsWith("http") ? linkMatch[1] : "https://www.hdfilmcehennemi.nl" + linkMatch[1];
+                console.error(`[${PROVIDER_NAME}] Site Linki Yakalandı: ${fullUrl}`);
 
-                resolve([{
-                    name: PROVIDER_NAME,
-                    title: "HDFC - 1080p",
-                    url: finalUrl,
-                    quality: "1080p",
-                    headers: {
-                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-                        "Referer": "https://stream.watchbuddy.tv/"
-                    }
-                }]);
-            } else {
-                console.error(`[${PROVIDER_NAME}] HATA: Video ayıklanamadı.`);
+                // 3. ADIM: WatchBuddy Köprüsü ile m3u8'e ulaş
+                var bridgeUrl = "https://stream.watchbuddy.tv/izle/HDFilmCehennemi?url=" + encodeURIComponent(fullUrl);
+                
+                return fetch(bridgeUrl, {
+                    headers: { "Referer": "https://stream.watchbuddy.tv/" }
+                });
+            })
+            .then(function(res) { return res.text(); })
+            .then(function(html) {
+                // WatchBuddy sayfasındaki final m3u8 linkini çek
+                var streamMatch = html.match(/file["']?\s*:\s*["'](http[^"']+)["']/);
+
+                if (streamMatch && streamMatch[1]) {
+                    console.error(`[${PROVIDER_NAME}] Başarılı! Akış: ${streamMatch[1]}`);
+                    
+                    resolve([{
+                        name: PROVIDER_NAME,
+                        title: "HDFC - 1080p (RecTV Logic)",
+                        url: streamMatch[1],
+                        quality: "1080p",
+                        headers: {
+                            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+                            "Referer": "https://stream.watchbuddy.tv/"
+                        }
+                    }]);
+                } else {
+                    console.error(`[${PROVIDER_NAME}] WatchBuddy linki çözemedi.`);
+                    resolve([]);
+                }
+            })
+            .catch(function(err) {
+                console.error(`[${PROVIDER_NAME}] HATA OLUŞTU: ${err.message}`);
                 resolve([]);
-            }
-        })
-        .catch(function(err) {
-            console.error(`[${PROVIDER_NAME}] NETWORK HATASI: ${err.message}`);
-            resolve([]);
-        });
+            });
     });
 }
 
+// Global tanımlama (Nuvio zorunluluğu)
 globalThis.getStreams = getStreams;
-if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { getStreams: getStreams };
-}
