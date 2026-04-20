@@ -1,4 +1,4 @@
-const PROVIDER_NAME = "WatchBuddy_API";
+const PROVIDER_NAME = "WatchBuddy_Core";
 const BASE_URL = "https://stream.watchbuddy.tv";
 
 function getStreams(args) {
@@ -7,50 +7,64 @@ function getStreams(args) {
     return new Promise(function(resolve) {
         if (!tmdbId) return resolve([]);
 
-        // 1. Önce TMDB'den temiz film ismini al
+        // 1. TMDB'den isim al
         fetch("https://api.themoviedb.org/3/movie/" + tmdbId + "?api_key=4ef0d7355d9ffb5151e987764708ce96&language=tr-TR")
         .then(res => res.json())
         .then(data => {
             var title = data.title || data.original_title;
-            // Sitenin arama motoruna (HTML sayfasına değil, API'sine) gidiyoruz
-            var apiUrl = BASE_URL + "/api/v1/search?q=" + encodeURIComponent(title);
             
-            console.error("[" + PROVIDER_NAME + "] API İsteği: " + apiUrl);
-
-            return fetch(apiUrl, {
-                headers: { 
-                    "Accept": "application/json",
-                    "X-Requested-With": "XMLHttpRequest" // JS isteği gibi görünmek için
+            // 2. 410 hatası veren API yerine doğrudan arama sayfasına gidiyoruz
+            // Ancak bu sefer Nuvio'yu tam bir tarayıcı gibi tanıtıyoruz
+            return fetch(BASE_URL + "/search?q=" + encodeURIComponent(title), {
+                headers: {
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                    "Accept": "text/html,application/xhtml+xml,application/xml",
+                    "Referer": BASE_URL + "/"
                 }
             });
         })
-        .then(res => {
-            console.error("[" + PROVIDER_NAME + "] API Yanıt Kodu: " + res.status);
-            return res.json();
-        })
-        .then(json => {
-            // Paylaştığın JSON yapısındaki 'result' veya 'results' objesini kontrol et
-            var data = json.result || json.results || [];
-            if (!Array.isArray(data)) data = [data]; // Tekli objeyi diziye çevir
+        .then(res => res.text())
+        .then(html => {
+            // 3. HTML içindeki JSON verisini arıyoruz. 
+            // Paylaştığın örneklerdeki {"with":...} yapısı genellikle bir <script> içinde olur.
+            var results = [];
+            
+            // JSON formatındaki tüm blokları yakalayan daha geniş bir Regex
+            var jsonBlocks = html.match(/\{"with":\s*"[^"]+",.*?"result":\s*\{.*?\}/g);
 
-            var results = data.map(item => {
-                if (item.url) {
-                    return {
-                        name: item.provider || "WatchBuddy",
-                        title: (item.title || "Kaynak") + " [" + (item.year || "") + "]",
-                        url: decodeURIComponent(item.url).replace(/\\/g, ""),
-                        quality: "1080p",
-                        poster: item.poster
-                    };
-                }
-                return null;
-            }).filter(r => r !== null);
+            if (jsonBlocks) {
+                jsonBlocks.forEach(block => {
+                    try {
+                        var parsed = JSON.parse(block);
+                        if (parsed.result && parsed.result.url) {
+                            results.push({
+                                name: parsed.result.title || "Kaynak",
+                                title: (parsed.result.title || "Video") + " [" + (parsed.result.year || "") + "]",
+                                url: decodeURIComponent(parsed.result.url).replace(/\\/g, ""),
+                                quality: "1080p",
+                                poster: parsed.result.poster
+                            });
+                        }
+                    } catch (e) {
+                        // Eğer JSON tam değilse (parçalanamazsa) manuel regex dene
+                        var urlMatch = block.match(/"url"\s*:\s*"([^"]+)"/);
+                        if (urlMatch) {
+                            results.push({
+                                name: "WatchBuddy",
+                                title: "Kaynak",
+                                url: decodeURIComponent(urlMatch[1]).replace(/\\/g, ""),
+                                quality: "1080p"
+                            });
+                        }
+                    }
+                });
+            }
 
-            console.error("[" + PROVIDER_NAME + "] Toplam Link: " + results.length);
+            console.error("[" + PROVIDER_NAME + "] HTML'den sökülen link: " + results.length);
             resolve(results);
         })
         .catch(e => {
-            console.error("[" + PROVIDER_NAME + "] Bağlantı Hatası: " + e.message);
+            console.error("[" + PROVIDER_NAME + "] Hata: " + e.message);
             resolve([]);
         });
     });
