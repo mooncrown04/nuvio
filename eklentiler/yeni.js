@@ -1,113 +1,114 @@
 /**
- * Nuvio Scraper - FilmCennetim (TMDB API'siz Versiyon)
- * Bu kod tamamen site içi parametreleri kullanarak objeye dönüştürme yapar.
+ * Nuvio Scraper - FilmCennetim (TMDB Sabit Kodlu Versiyon)
+ * GitHub: mooncrown04/nuviotr mantığıyla hazırlanmıştır.
  */
 
 const BASE_URL = "https://stream.watchbuddy.tv";
+const TMDB_API_KEY = "65166299966144e590059e7987771746"; // Sabit TMDB Key
 
 const Scraper = {
-    // 1. ARAMA: HTML'den linkleri yakalayıp Nuvio kartlarına dönüştürür
+    // 1. Arama: Linkleri yakalar
     search: function(query) {
-        const searchUrl = BASE_URL + "/ara/FilmCennetim?lang=tr&sorgu=" + encodeURIComponent(query);
-        console.error("[Nuvio-Debug] Arama URL: " + searchUrl);
+        const searchUrl = `${BASE_URL}/ara/FilmCennetim?lang=tr&sorgu=${encodeURIComponent(query)}`;
+        console.error(`[Nuvio-Debug] Arama: ${searchUrl}`);
 
         return fetch(searchUrl)
-            .then(res => {
-                if (!res.ok) throw new Error("Arama sayfası yüklenemedi: " + res.status);
-                return res.text();
-            })
+            .then(res => res.text())
             .then(html => {
                 const results = [];
-                // HTML içindeki href="/izle/FilmCennetim?..." linklerini yakalayan regex
                 const regex = /href="(\/izle\/FilmCennetim\?[^"]+)"/g;
                 let match;
-
                 while ((match = regex.exec(html)) !== null) {
-                    try {
-                        const path = match[1].replace(/&amp;/g, '&');
-                        const params = new URLSearchParams(path.split('?')[1]);
-                        
-                        // API KULLANMADAN DÖNÜŞTÜRME: Veriyi URL parametrelerinden alıyoruz
-                        results.push({
-                            id: path, // Linkin tamamını ID olarak kullanıyoruz
-                            name: params.get('baslik') || "Bilinmeyen Film",
-                            poster: params.get('poster_url') || "",
-                            type: 'movie',
-                            // Alt bilgi olarak yıl ve rating
-                            description: "Yıl: " + (params.get('year') || "-") + " | IMDb: " + (params.get('rating') || "-")
-                        });
-                    } catch (e) {
-                        console.error("[Nuvio-Error] Veri dönüştürme hatası: " + e.message);
-                    }
+                    const path = match[1].replace(/&amp;/g, '&');
+                    const params = new URLSearchParams(path.split('?')[1]);
+                    results.push({
+                        id: path,
+                        name: params.get('baslik') || "Film",
+                        poster: params.get('poster_url') || "",
+                        type: 'movie'
+                    });
                 }
-                console.error("[Nuvio-Debug] Bulunan sonuç sayısı: " + results.length);
                 return results;
+            });
+    },
+
+    // 2. Meta: Linke basıldığında TMDB API'sini kullanan o "sabit kod" yapısı
+    getMeta: function(id) {
+        const params = new URLSearchParams(id.split('?')[1]);
+        const originalTitle = params.get('baslik') || "";
+        
+        // İsmi TMDB için temizle (Yıl, 4K, Dublaj vb. ekleri at)
+        const cleanTitle = originalTitle
+            .replace(/[0-9]{4}/g, '')
+            .replace(/İzle|Full|HD|4K|Türkçe|Dublaj|Altyazılı/gi, '')
+            .trim();
+
+        console.error(`[Nuvio-Debug] TMDB Aranıyor: ${cleanTitle}`);
+
+        const tmdbUrl = `https://api.themoviedb.org/3/search/movie?api_key=${TMDB_API_KEY}&query=${encodeURIComponent(cleanTitle)}&language=tr-TR`;
+
+        return fetch(tmdbUrl)
+            .then(res => res.json())
+            .then(json => {
+                const movie = json.results && json.results[0];
+                if (movie) {
+                    return {
+                        id: id,
+                        name: movie.title,
+                        poster: `https://image.tmdb.org/t/p/w500${movie.poster_path}`,
+                        background: `https://image.tmdb.org/t/p/original${movie.backdrop_path}`,
+                        description: movie.overview,
+                        imdbRating: movie.vote_average,
+                        releaseInfo: movie.release_date ? movie.release_date.split('-')[0] : "",
+                        type: 'movie'
+                    };
+                }
+                // TMDB bulamazsa linkteki orijinal veriyi dön
+                return {
+                    id: id,
+                    name: originalTitle,
+                    poster: params.get('poster_url'),
+                    type: 'movie'
+                };
             })
             .catch(err => {
-                console.error("[Nuvio-Critical] Search çöktü: " + err.message);
-                return [];
+                console.error(`[Nuvio-Critical] TMDB Hatası: ${err.message}`);
+                return null;
             });
     },
 
-    // 2. META: Kart tıklandığında URL'deki veriyi Nuvio detay sayfasına basar
-    getMeta: function(id) {
-        console.error("[Nuvio-Debug] Meta oluşturuluyor ID: " + id);
-        try {
-            // ID zaten parametre dolu bir link olduğu için parse ediyoruz
-            const params = new URLSearchParams(id.split('?')[1]);
-            
-            return Promise.resolve({
-                id: id,
-                name: params.get('baslik'),
-                poster: params.get('poster_url'),
-                background: params.get('poster_url'), // Arkaplanı da poster yapıyoruz
-                type: 'movie',
-                releaseInfo: params.get('year') || "",
-                imdbRating: params.get('rating') || "",
-                description: params.get('baslik') + " filmini yüksek kalitede izle."
-            });
-        } catch (e) {
-            console.error("[Nuvio-Critical] getMeta hatası: " + e.message);
-            return Promise.resolve(null);
-        }
-    },
-
-    // 3. STREAM: Oynat dendiğinde URL bozulmalarını tamir eder ve kaynağı çeker
+    // 3. Stream: Hostname bozulmasını kesin çözen yapı
     getStreams: function(id) {
-        // HOSTNAME TAMİRİ: Loglarda gördüğümüz .tv286217 gibi bozulmaları temizliyoruz
-        let cleanId = id.split(' ')[0].replace(/(https:\/\/stream\.watchbuddy\.tv)\d+/, '$1').trim();
-        const streamUrl = cleanId.startsWith('http') ? cleanId : BASE_URL + cleanId;
+        // Logda görülen tv286217 gibi bozulmaları burada regex ile temizliyoruz
+        // Sadece ana domaini koru, arkasına gelen sayıları at
+        let fixedPath = id.replace(/(https?:\/\/stream\.watchbuddy\.tv)\d+/, '$1').split(' ')[0];
         
-        console.error("[Nuvio-Debug] Stream isteği atılıyor: " + streamUrl);
+        const streamUrl = fixedPath.startsWith('http') ? fixedPath : BASE_URL + fixedPath;
+        console.error(`[Nuvio-Debug] Stream Çekiliyor: ${streamUrl}`);
 
         return fetch(streamUrl)
             .then(res => {
-                if (!res.ok) throw new Error("Yayın sayfası hatası: " + res.status);
+                if (!res.ok) throw new Error("HTTP 0/Host Hatası");
                 return res.text();
             })
             .then(html => {
                 const streams = [];
-                // HTML içindeki iframe (kaynak) linklerini yakala
                 const iframeRegex = /<iframe[^>]+src="([^"]+)"/g;
                 let match;
-                let count = 1;
-
                 while ((match = iframeRegex.exec(html)) !== null) {
                     const src = match[1];
-                    if (src && src.startsWith('http') && !src.includes('ads')) {
+                    if (src.includes('http') && !src.includes('googletagmanager')) {
                         streams.push({
-                            title: "Kaynak " + (count++),
+                            title: `Kaynak ${streams.length + 1}`,
                             url: src,
                             type: 'embed'
                         });
                     }
                 }
-                
-                if (streams.length === 0) console.error("[Nuvio-Warning] Hiç yayın linki bulunamadı!");
                 return streams;
             })
             .catch(err => {
-                console.error("[Nuvio-Critical] getStreams hatası: " + err.message);
+                console.error(`[Nuvio-Critical] getStreams Hatası: ${err.message}`);
                 return [];
             });
     }
