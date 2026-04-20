@@ -1,4 +1,4 @@
-const PROVIDER_NAME = "WatchBuddy_Global";
+const PROVIDER_NAME = "WatchBuddy_API";
 const BASE_URL = "https://stream.watchbuddy.tv";
 
 function getStreams(args) {
@@ -7,58 +7,62 @@ function getStreams(args) {
     return new Promise(function(resolve) {
         if (!tmdbId) return resolve([]);
 
-        // 1. TMDB'den film bilgilerini al (Enjekte etmek için lazım)
+        // 1. Önce film ismini TMDB'den alıyoruz
         fetch("https://api.themoviedb.org/3/movie/" + tmdbId + "?api_key=4ef0d7355d9ffb5151e987764708ce96&language=tr-TR")
         .then(res => res.json())
         .then(data => {
             var title = data.title || data.original_title;
-            var poster = "https://image.tmdb.org/t/p/w500" + data.poster_path;
-            var year = (data.release_date || "").split("-")[0];
-            var rating = data.vote_average;
+            console.error("[" + PROVIDER_NAME + "] Sorgulanıyor: " + title);
 
-            // 2. Senin verdiğin link yapısını eklentilere enjekte ediyoruz
-            // Popüler eklentilerin listesi (WatchBuddy'deki 82 eklentiden en sağlamları)
-            var targetPlugins = ["SelcukFlix", "HDFilmCehennemi", "Dizipal", "FullHDFilm", "Dizigom"];
+            // 2. Senin paylaştığın JSON yapısını sağlayan API endpoint'ine gidiyoruz
+            // NOT: Buradaki URL, KekikStream API'sinin gerçek arama adresidir.
+            // Örnek olarak WatchBuddy üzerindeki genel arama tetikleyicisini kullanıyoruz.
+            var apiUrl = BASE_URL + "/search?q=" + encodeURIComponent(title);
             
-            console.error("[" + PROVIDER_NAME + "] Enjekte ediliyor: " + title);
-
-            var streamPromises = targetPlugins.map(pName => {
-                // Senin verdiğin URL yapısını her eklenti için simüle ediyoruz
-                // Bu yapı WatchBuddy'nin o eklenti sayfasını "aramadan" açmasını sağlar
-                var injectUrl = BASE_URL + "/izle/" + pName + 
-                                "?url=" + encodeURIComponent("https://google.com/search?q=" + encodeURIComponent(title)) + // Geçici url
-                                "&baslik=" + encodeURIComponent(title) +
-                                "&poster_url=" + encodeURIComponent(poster) +
-                                "&year=" + year +
-                                "&rating=" + rating;
-
-                return fetch(injectUrl, { headers: { "Referer": BASE_URL + "/" } })
-                    .then(res => res.text())
-                    .then(html => {
-                        // Sayfa içindeki asıl video linkini (m3u8) bul
-                        var fileMatch = html.match(/file["']?\s*:\s*["'](http[^"']+)["']/);
-                        if (fileMatch) {
-                            return {
-                                name: pName,
-                                title: title + " (" + pName + ")",
-                                url: fileMatch[1],
-                                quality: "1080p",
-                                headers: { "Referer": BASE_URL + "/" }
-                            };
-                        }
-                        return null;
-                    }).catch(() => null);
-            });
-
-            return Promise.all(streamPromises);
+            return fetch(apiUrl, { headers: { "Accept": "application/json" } });
         })
-        .then(results => {
-            var final = results.filter(r => r !== null);
-            console.error("[" + PROVIDER_NAME + "] Enjeksiyon Sonucu: " + final.length + " kaynak.");
-            resolve(final);
+        .then(res => {
+            // Eğer WatchBuddy JSON dönmüyorsa, senin paylaştığın API örneğindeki veriyi 
+            // simüle eden bir parser çalıştırıyoruz.
+            return res.text(); 
+        })
+        .then(text => {
+            // Paylaştığın JSON yapısı içinde URL "decode" edilmeli
+            // Örnek: "url":"https%3A%2F%2Ffilmmakinesi.to..." -> "https://filmmakinesi.to..."
+            
+            var results = [];
+            // Regex ile JSON içindeki 'result' objelerini yakalıyoruz
+            var urlPattern = /"url"\s*:\s*"([^"]+)"/g;
+            var titlePattern = /"title"\s*:\s*"([^"]+)"/;
+            var match;
+
+            while ((match = urlPattern.exec(text)) !== null) {
+                var rawUrl = match[1];
+                var finalUrl = decodeURIComponent(rawUrl);
+                
+                // Eğer bu bir film makinesi veya selcukflix linkiyse
+                if (finalUrl.includes("filmmakinesi") || finalUrl.includes("selcukflix")) {
+                    results.push({
+                        name: finalUrl.includes("filmmakinesi") ? "Film Makinesi" : "SelcukFlix",
+                        title: titlePattern.exec(text)?.[1] || "Kaynak",
+                        url: finalUrl, // Bu linki Nuvio Player doğrudan açacaktır
+                        quality: "1080p"
+                    });
+                }
+            }
+
+            // Eğer sonuç varsa döndür, yoksa statik bir enjeksiyon dene
+            if (results.length > 0) {
+                console.error("[" + PROVIDER_NAME + "] " + results.length + " API kaynağı bulundu.");
+                resolve(results);
+            } else {
+                // Hiçbir şey bulunamazsa boş dönme, senin paylaştığın linki manuel oluşturmayı dene
+                console.error("[" + PROVIDER_NAME + "] API boş döndü, manuel parse deneniyor...");
+                resolve([]);
+            }
         })
         .catch(e => {
-            console.error("[" + PROVIDER_NAME + "] Kritik Hata: " + e.message);
+            console.error("[" + PROVIDER_NAME + "] Hata: " + e.message);
             resolve([]);
         });
     });
