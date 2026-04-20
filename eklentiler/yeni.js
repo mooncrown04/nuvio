@@ -1,58 +1,49 @@
-// Version: 10.0 (Fire TV Optimized Bridge)
-// FIXED: Network library detection for Cloudstream/Fire TV environments.
-
+// Nuvio için HDFilmCehennemi Resolver
 const PROVIDER_NAME = "HDFilmCehennemi";
 
-async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
-    const targetUrl = "https://www.hdfilmcehennemi.nl/1-ready-or-not-izle-hdf-8/";
+async function getStreams(args) {
+    // Nuvio'da link genelde args.url üzerinden gelir
+    const targetUrl = args.url || "https://www.hdfilmcehennemi.nl/1-ready-or-not-izle-hdf-8/";
     const bridgeUrl = `https://stream.watchbuddy.tv/izle/HDFilmCehennemi?url=${encodeURIComponent(targetUrl)}`;
 
-    console.error("[" + PROVIDER_NAME + "] v10 Çözücü Başlatıldı...");
-
     try {
-        // Cloudstream JS eklentilerinde genellikle 'request' veya 'app' kullanılır.
-        // Hepsini birden kontrol eden en güvenli yapı:
-        const client = (typeof request !== 'undefined') ? request : 
-                       (typeof app !== 'undefined') ? app : 
-                       (typeof http !== 'undefined') ? http : null;
+        // Nuvio'nun fetch yeteneğini kullanıyoruz
+        const response = await fetch(bridgeUrl, {
+            headers: {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                "Referer": "https://stream.watchbuddy.tv/"
+            }
+        });
 
-        if (!client) {
-            console.error("[" + PROVIDER_NAME + "] KRİTİK: Hiçbir network istemcisi (request/app/http) tanımlı değil.");
-            // Eğer istemci yoksa, direkt WatchBuddy linkini dönüyoruz. 
-            // Bazı Cloudstream sürümleri URL'yi harici player'a gönderebilir.
+        const html = await response.text();
+
+        // WatchBuddy sayfasındaki gizli video linkini buluyoruz
+        // file: "https://...index.m3u8" formatını arar
+        const streamUrlMatch = html.match(/file["']?\s*:\s*["'](http[^"']+)["']/);
+
+        if (streamUrlMatch && streamUrlMatch[1]) {
+            const finalStream = streamUrlMatch[1];
+            
+            // Nuvio'nun beklediği stream objesi formatı
             return [{
-                name: "HDFC (WatchBuddy Link)",
+                name: "HDFC - 1080p",
+                url: finalStream,
+                headers: {
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+                    "Referer": "https://stream.watchbuddy.tv/"
+                }
+            }];
+        } else {
+            // Eğer link çözülemezse, son çare olarak ham bridge linkini gönder
+            // Ama 422 hatası almamak için Nuvio'nun bunu bir webview/iframe olarak açması gerekir
+            return [{
+                name: "HDFC (Web Player)",
                 url: bridgeUrl,
-                quality: "1080p"
+                type: "embed" // Nuvio bu tag'i destekliyorsa tarayıcıda açar
             }];
         }
-
-        // WatchBuddy sayfasını çekip içindeki gerçek .m3u8 linkini ayıklamaya çalışıyoruz
-        const response = await client.get(bridgeUrl);
-        const html = (typeof response === 'string') ? response : (response.text || response.body || "");
-
-        // WatchBuddy'nin player kodunda 'file: "..."' şeklinde link saklanır.
-        const finalUrlMatch = html.match(/file["']?\s*:\s*["'](http[^"']+)["']/);
-        const finalUrl = finalUrlMatch ? finalUrlMatch[1] : bridgeUrl;
-
-        console.error("[" + PROVIDER_NAME + "] Çözüm başarılı, link dönülüyor.");
-
-        return [{
-            name: PROVIDER_NAME,
-            url: finalUrl,
-            quality: "1080p",
-            headers: { "Referer": "https://stream.watchbuddy.tv/" }
-        }];
-
     } catch (err) {
-        console.error("[" + PROVIDER_NAME + "] v10 Hata: " + err.message);
-        // Hata olsa bile en azından köprü linkini dönmeyi dene
-        return [{
-            name: "HDFC (Fallback)",
-            url: bridgeUrl,
-            quality: "1080p"
-        }];
+        console.log("Nuvio Error: " + err.message);
+        return [];
     }
 }
-
-module.exports = { getStreams };
