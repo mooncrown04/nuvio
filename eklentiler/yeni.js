@@ -1,91 +1,95 @@
 /**
- * FilmCennetim Provider - Nuvio (Optimized with TMDB Bridge)
- * JetFilmizle şablonundaki paralel arama ve TMDB isim eşleme mantığı uygulandı.
+ * FilmCennetim - Nuvio Provider (Final Optimized)
+ * 1. TMDB Bridge (Köprü) mantığı düzeltildi.
+ * 2. Boş TMDB verisi gelme riski (TMDB Bilgisi: ()) engellendi.
+ * 3. URL bozulmaları (tv7555 vb.) tamamen temizlendi.
  */
 
-const BASE_URL = "https://stream.watchbuddy.tv";
-const TMDB_API_KEY = "65166299966144e590059e7987771746";
+var BASE_URL     = 'https://stream.watchbuddy.tv';
+var TMDB_API_KEY = '65166299966144e590059e7987771746';
 
-// 1. TMDB'den filmin temiz isim bilgilerini çeken fonksiyon
-function fetchTmdbInfo(tmdbId) {
-    return fetch(`https://api.themoviedb.org/3/movie/${tmdbId}?api_key=${TMDB_API_KEY}&language=tr-TR`)
-        .then(res => res.json())
-        .then(data => ({
-            titleTr: data.title || '',
-            titleEn: data.original_title || '',
-            year: (data.release_date || '').slice(0, 4)
-        }));
-}
-
-// 2. FilmCennetim sitesinde TMDB'den gelen isimle arama yapan fonksiyon
-function searchInProvider(query) {
-    const searchUrl = `${BASE_URL}/ara/FilmCennetim?lang=tr&sorgu=${encodeURIComponent(query)}`;
-    
-    return fetch(searchUrl)
-        .then(res => res.text())
-        .then(html => {
-            const results = [];
-            const regex = /href="(\/izle\/FilmCennetim\?[^"]+)"/g;
-            let match;
-            while ((match = regex.exec(html)) !== null) {
-                const path = match[1].replace(/&amp;/g, '&');
-                results.push(path);
-            }
-            return results;
-        })
-        .catch(() => []);
-}
-
-const Scraper = {
-    // Nuvio'nun ana giriş noktası
-    getStreams: function(tmdbId) {
-        console.error(`[Nuvio-Debug] Akış Başladı. TMDB ID: ${tmdbId}`);
-
-        // Önce TMDB'den filmin gerçek isimlerini alıyoruz (JetFilmizle örneğindeki gibi)
-        return fetchTmdbInfo(tmdbId)
-            .then(info => {
-                console.error(`[Nuvio-Debug] TMDB Bilgisi: ${info.titleTr} (${info.year})`);
-                // Temiz isimle provider'da arama yapıyoruz
-                return searchInProvider(info.titleTr);
-            })
-            .then(links => {
-                if (links.length === 0) throw new Error("Provider'da film bulunamadı.");
-                
-                // İlk bulunan sonucun (en yakın eşleşme) sayfasına gidiyoruz
-                // URL sonundaki bozulmaları (tv7555 vb.) burada engellemek için tam URL oluşturuyoruz
-                const targetPath = links[0].split(' ')[0]; 
-                const finalUrl = BASE_URL + targetPath;
-                
-                console.error(`[Nuvio-Debug] Sayfa Çekiliyor: ${finalUrl}`);
-                return fetch(finalUrl);
-            })
-            .then(res => res.text())
-            .then(html => {
-                const streams = [];
-                // HTML içindeki iframe (kaynak) linklerini ayıkla
-                const iframeRegex = /<iframe[^>]+src="([^"]+)"/g;
-                let match;
-                let count = 1;
-
-                while ((match = iframeRegex.exec(html)) !== null) {
-                    const src = match[1];
-                    // Reklam veya geçersiz iframe'leri filtrele
-                    if (src.includes('http') && !src.includes('google')) {
-                        streams.push({
-                            title: `Kaynak ${count++}`,
-                            url: src,
-                            type: 'embed',
-                            headers: { "Referer": BASE_URL }
-                        });
-                    }
-                }
-                return streams;
-            })
-            .catch(err => {
-                console.error(`[Nuvio-Critical] Hata: ${err.message}`);
-                return [];
-            });
-    }
+// JetFilmizle şablonundaki headers yapısı
+var HEADERS = {
+  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36',
+  'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+  'Referer': BASE_URL + '/'
 };
 
-module.exports = Scraper;
+function fetchTmdbInfo(tmdbId) {
+  var url = 'https://api.themoviedb.org/3/movie/' + tmdbId + '?api_key=' + TMDB_API_KEY + '&language=tr-TR';
+  return fetch(url)
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      // Loglarda gördüğümüz () hatasını önlemek için kontrol ekledik
+      if (!d.title) throw new Error('TMDB film ismini bulamadı.');
+      return {
+        titleTr: d.title || '',
+        titleEn: d.original_title || '',
+        year: (d.release_date || '').slice(0, 4)
+      };
+    });
+}
+
+function searchFilm(query) {
+  var searchUrl = BASE_URL + '/ara/FilmCennetim?lang=tr&sorgu=' + encodeURIComponent(query);
+  return fetch(searchUrl, { headers: HEADERS })
+    .then(function(r) { return r.text(); })
+    .then(function(html) {
+      var re = /href="(\/izle\/FilmCennetim\?[^"]+)"/g;
+      var m, links = [];
+      while ((m = re.exec(html)) !== null) {
+        var path = m[1].replace(/&amp;/g, '&');
+        // URL sonuna eklenen tv7555 gibi sayıları regex ile uçuruyoruz
+        var cleanPath = path.split(' ')[0].replace(/\d+$/, '');
+        links.push(cleanPath);
+      }
+      return links;
+    })
+    .catch(function() { return []; });
+}
+
+function getStreams(id, mediaType) {
+  // Nuvio'da ID bazen tam URL gelir, bazen sadece rakam (TMDB ID)
+  var tmdbId = id.toString().replace(/[^0-9]/g, '');
+  console.error('[Nuvio-Debug] Akış Başladı. TMDB ID: ' + tmdbId);
+
+  return fetchTmdbInfo(tmdbId)
+    .then(function(info) {
+      console.error('[Nuvio-Debug] TMDB Bilgisi: ' + info.titleTr + ' (' + info.year + ')');
+      return searchFilm(info.titleTr);
+    })
+    .then(function(links) {
+      if (!links || links.length === 0) throw new Error('Providerda film bulunamadı.');
+      
+      var targetUrl = BASE_URL + links[0];
+      console.error('[Nuvio-Debug] Sayfa Çekiliyor: ' + targetUrl);
+
+      return fetch(targetUrl, { headers: HEADERS });
+    })
+    .then(function(r) { return r.text(); })
+    .then(function(html) {
+      var streams = [];
+      var iframeRe = /<iframe[^>]+src="([^"]+)"/gi;
+      var m;
+      while ((m = iframeRe.exec(html)) !== null) {
+        var src = m[1];
+        if (src.indexOf('http') !== -1 && src.indexOf('google') === -1) {
+          streams.push({
+            title: 'Kaynak ' + (streams.length + 1),
+            url: src,
+            type: 'embed',
+            headers: { 'Referer': BASE_URL + '/' }
+          });
+        }
+      }
+      return streams;
+    })
+    .catch(function(err) {
+      console.error('[Nuvio-Critical] Hata: ' + err.message);
+      return [];
+    });
+}
+
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = { getStreams: getStreams };
+}
