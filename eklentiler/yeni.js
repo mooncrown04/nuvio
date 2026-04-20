@@ -1,3 +1,6 @@
+// Version: 4.6 (Protocol Compliant - VideoID Fix)
+// Note: console.log is FORBIDDEN. Use console.error for all logs. No async/await.
+
 var cheerio = require("cheerio-without-node-native");
 
 const PROVIDER_NAME = "HDFilmCehennemi";
@@ -10,7 +13,7 @@ const DEFAULT_HEADERS = {
 
 function decodeSource(parts) {
     try {
-        console.error("[" + PROVIDER_NAME + "] Çözücü başlatıldı...");
+        console.error("[" + PROVIDER_NAME + "] DECODE: Parça sayısı -> " + parts.length);
         let joined = parts.join("").split("").reverse().join("");
         let rot13 = joined.replace(/[a-zA-Z]/g, function(c) {
             return String.fromCharCode((c <= "Z" ? 90 : 122) >= (c = c.charCodeAt(0) + 13) ? c : c - 26);
@@ -24,104 +27,87 @@ function decodeSource(parts) {
         }
         return unmixed.includes("https") ? "https" + unmixed.split("https")[1] : unmixed;
     } catch (e) {
-        console.error("[" + PROVIDER_NAME + "] Çözücü Hatası: " + e.message);
+        console.error("[" + PROVIDER_NAME + "] DECODE HATASI: " + e.message);
         return null;
     }
 }
 
 function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
-    console.error("[" + PROVIDER_NAME + "] --- BAŞLATILDI ---");
-
+    console.error("[" + PROVIDER_NAME + "] PROTOTOKOL v4.6 BAŞLATILDI");
+    
     return new Promise(function(resolve) {
         var isMovie = mediaType === 'movie';
         var tmdbUrl = 'https://api.themoviedb.org/3/' + (isMovie ? 'movie' : 'tv') + '/' + tmdbId + '?language=tr-TR&api_key=4ef0d7355d9ffb5151e987764708ce96';
 
         fetch(tmdbUrl, { headers: DEFAULT_HEADERS })
-            .then(function(res) { 
-                if (!res) throw new Error("TMDB yanıtı boş");
-                return res.json(); 
-            })
+            .then(function(res) { return res.json(); })
             .then(function(tmdbData) {
-                var query = tmdbData.title || tmdbData.name;
-                // Arama sorgusunu basitleştir (Örn: "Ani Saldırı" -> "Ani Saldiri")
-                query = query.replace(/['":]/g, "").trim();
-                console.error("[" + PROVIDER_NAME + "] Arama: " + query);
+                console.error("[" + PROVIDER_NAME + "] TMDB VERİSİ ALINDI -> " + (tmdbData.title || tmdbData.name));
+                var query = (tmdbData.title || tmdbData.name).replace(/['":]/g, "").trim();
                 return fetch(BASE_URL + "/search?q=" + encodeURIComponent(query), { headers: DEFAULT_HEADERS });
             })
-            .then(function(res) {
-                if (!res) throw new Error("Arama yanıtı alınamadı");
-                return res.json();
-            })
+            .then(function(res) { return res.json(); })
             .then(function(searchData) {
+                console.error("[" + PROVIDER_NAME + "] ARAMA YANITI -> Sonuç: " + (searchData.results ? searchData.results.length : 0));
                 var results = searchData.results || [];
-                if (results.length === 0) {
-                    console.error("[" + PROVIDER_NAME + "] HATA: Arama sonucu bulunamadı.");
-                    return resolve(EMPTY_RESULT);
-                }
+                if (results.length === 0) return resolve(EMPTY_RESULT);
 
                 var $search = cheerio.load(results[0]);
                 var targetUrl = $search("a").first().attr("href");
-                
-                if (!targetUrl) {
-                    console.error("[" + PROVIDER_NAME + "] HATA: Link ayıklanamadı.");
-                    return resolve(EMPTY_RESULT);
-                }
+                if (!targetUrl) return resolve(EMPTY_RESULT);
 
                 if (!isMovie) {
                     targetUrl = targetUrl.replace(/\/$/, "") + "-sezon-" + seasonNum + "-bolum-" + episodeNum;
                 }
-                
-                console.error("[" + PROVIDER_NAME + "] Hedef URL: " + targetUrl);
+                console.error("[" + PROVIDER_NAME + "] HEDEF SAYFA -> " + targetUrl);
                 return fetch(targetUrl, { headers: DEFAULT_HEADERS });
             })
-            .then(function(res) {
-                if (!res) throw new Error("Sayfa içeriği boş");
-                return res.text();
-            })
+            .then(function(res) { return res.text(); })
             .then(function(pageHtml) {
                 var $page = cheerio.load(pageHtml);
-                // Video ID bulmak için alternatif yöntemleri de dene
+                
+                // --- VİDEO ID ÇEKME STRATEJİSİ (v4.6 Güncellemesi) ---
                 var videoID = $page("button.alternative-link").first().attr("data-video") || 
+                              $page(".player-container").attr("data-video") ||
                               $page("[data-video]").first().attr("data-video");
 
+                // Eğer hala bulunamadıysa script içinden ayıkla
                 if (!videoID) {
-                    console.error("[" + PROVIDER_NAME + "] HATA: videoID bulunamadı (Sayfa yapısı değişmiş olabilir).");
-                    return resolve(EMPTY_RESULT);
+                    var scriptMatch = pageHtml.match(/data-video=\"(\d+)\"/i);
+                    videoID = scriptMatch ? scriptMatch[1] : null;
                 }
 
-                console.error("[" + PROVIDER_NAME + "] videoID Yakalandı: " + videoID);
+                console.error("[" + PROVIDER_NAME + "] VİDEO ID DURUMU -> " + (videoID || "BULUNAMADI"));
+                if (!videoID) return resolve(EMPTY_RESULT);
+
                 return fetch(BASE_URL + "/video/" + videoID + "/", { 
-                    headers: Object.assign({}, DEFAULT_HEADERS, { "Referer": BASE_URL + "/" }) 
+                    headers: Object.assign({}, DEFAULT_HEADERS, { "Referer": targetUrl || BASE_URL }) 
                 });
             })
-            .then(function(res) {
-                if (!res) throw new Error("Video API yanıtı yok");
-                return res.text();
-            })
+            .then(function(res) { return res.text(); })
             .then(function(apiHtml) {
+                console.error("[" + PROVIDER_NAME + "] API HTML UZUNLUK -> " + apiHtml.length);
                 var iframeMatch = apiHtml.match(/data-src=\\"([^"]+)/);
                 var iframeUrl = iframeMatch ? iframeMatch[1].replace(/\\/g, "") : "";
                 
                 if (!iframeUrl) {
-                    console.error("[" + PROVIDER_NAME + "] HATA: Iframe bulunamadı.");
+                    console.error("[" + PROVIDER_NAME + "] IFRAME BULUNAMADI");
                     return resolve(EMPTY_RESULT);
                 }
 
                 if (iframeUrl.includes("rapidrame")) {
-                    iframeUrl = BASE_URL + "/rplayer/" + (iframeUrl.split("?rapidrame_id=")[1] || "");
+                    var rapidID = iframeUrl.split("?rapidrame_id=")[1];
+                    iframeUrl = BASE_URL + "/rplayer/" + (rapidID || "");
                 }
 
-                console.error("[" + PROVIDER_NAME + "] Iframe URL: " + iframeUrl);
+                console.error("[" + PROVIDER_NAME + "] IFRAME URL -> " + iframeUrl);
                 return fetch(iframeUrl, { headers: DEFAULT_HEADERS });
             })
-            .then(function(res) {
-                if (!res) throw new Error("Player sayfası boş");
-                return res.text();
-            })
+            .then(function(res) { return res.text(); })
             .then(function(playerHtml) {
                 var fileLinkMatch = playerHtml.match(/file_link=\"(.*?)\"/);
                 if (!fileLinkMatch) {
-                    console.error("[" + PROVIDER_NAME + "] HATA: file_link bulunamadı.");
+                    console.error("[" + PROVIDER_NAME + "] FILE_LINK YOK");
                     return resolve(EMPTY_RESULT);
                 }
 
@@ -130,10 +116,10 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                 
                 var finalLink = decodeSource(parts);
                 if (finalLink) {
-                    console.error("[" + PROVIDER_NAME + "] BAŞARILI.");
+                    console.error("[" + PROVIDER_NAME + "] BAŞARILI LINK ÜRETİLDİ");
                     resolve([{
                         name: PROVIDER_NAME,
-                        title: "HDFC - VIP",
+                        title: "HDFC - Full HD",
                         url: finalLink,
                         quality: "1080p",
                         headers: { "User-Agent": DEFAULT_HEADERS["User-Agent"], "Referer": BASE_URL + "/" }
@@ -143,7 +129,7 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                 }
             })
             .catch(function(err) {
-                console.error("[" + PROVIDER_NAME + "] KRİTİK HATA: " + err.message);
+                console.error("[" + PROVIDER_NAME + "] PROTOKOL HATASI -> " + err.message);
                 resolve(EMPTY_RESULT);
             });
     });
