@@ -1,6 +1,6 @@
 /**
  * JetFilmizle — Nuvio Provider (STANDART ŞABLON)
- * * NOT: Hem Film hem de Dizi (TV) desteği içerir.
+ * * NOT: Bu eklenti Nuvio standart şablonuna göre yapılandırılmıştır.
  * name  -> İçerik Adı (Film/Dizi İsmi)
  * title -> ⌜ Sağlayıcı ⌟ | 🇹🇷 Dil Bilgisi
  */
@@ -10,7 +10,8 @@ var TMDB_API_KEY = '500330721680edb6d5f7f12ba7cd9023';
 
 var HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36',
-    'Referer': BASE_URL + '/'
+    'Referer': BASE_URL + '/',
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
 };
 
 // ── Yardımcılar ──────────────────────────────────────────────
@@ -29,44 +30,48 @@ function fetchTmdbInfo(tmdbId, mediaType) {
         .then(function(d) { return { title: d.name || d.title }; });
 }
 
-// ── Ana İşlem ────────────────────────────────────────────────
+// ── Ana İşlem (Nuvio Hibrit Yapı) ─────────────────────────────
 function getStreams(id, mediaType, season, episode) {
     var tmdbId = id.toString().replace(/[^0-9]/g, '');
     
     return fetchTmdbInfo(tmdbId, mediaType)
         .then(function(info) {
             var slug = titleToSlug(info.title);
-            var targetUrl = '';
+            // Nuvio'da seçilen bölüme göre dinamik URL oluşturma
+            var targetUrl = (mediaType === 'tv') 
+                ? BASE_URL + '/dizi/' + slug + '/sezon-' + (season || 1) + '/bolum-' + (episode || 1)
+                : BASE_URL + '/film/' + slug;
 
-            if (mediaType === 'tv') {
-                // Dizi Yapısı: /dizi/dizi-adi/sezon-1/bolum-1
-                targetUrl = BASE_URL + '/dizi/' + slug + '/sezon-' + (season || 1) + '/bolum-' + (episode || 1);
-            } else {
-                // Film Yapısı: /film/film-adi
-                targetUrl = BASE_URL + '/film/' + slug;
-            }
-
-            console.error('[JetFilm-Debug] Hedef URL: ' + targetUrl);
+            console.error('[JetFilm-Debug] Hedef URL Deneniyor: ' + targetUrl);
 
             return fetch(targetUrl, { headers: HEADERS })
                 .then(function(r) {
                     if (r.ok) return r.text();
                     
-                    // Eğer direkt link tutmazsa arama yap
+                    // Direkt link (Cobra Kai gibi) bulunamazsa arama yap
+                    console.error('[JetFilm-Debug] Direkt link bulunamadı, aramaya geçiliyor: ' + info.title);
                     return fetch(BASE_URL + '/filmara.php', {
                         method: 'POST',
                         headers: Object.assign({}, HEADERS, { 'Content-Type': 'application/x-www-form-urlencoded' }),
                         body: 's=' + encodeURIComponent(info.title)
                     }).then(function(res) { return res.text(); })
                       .then(function(searchHtml) {
-                          var regex = new RegExp('href="(https?://jetfilmizle\\.net/(film|dizi)/' + slug + '[^"]*)"');
+                          // Arama sonuçlarında hem /film/ hem /dizi/ içeren ilk mantıklı sonucu yakala
+                          var regex = new RegExp('href="(https?://jetfilmizle\\.net/(film|dizi)/([^"/]+))"', 'i');
                           var m = regex.exec(searchHtml);
                           if (m) {
-                              var finalLink = m[1];
-                              if (mediaType === 'tv') finalLink += '/sezon-' + season + '/bolum-' + episode;
+                              var foundSlug = m[3];
+                              var foundType = m[2];
+                              var finalLink = BASE_URL + '/' + foundType + '/' + foundSlug;
+                              
+                              if (mediaType === 'tv') {
+                                  finalLink += '/sezon-' + (season || 1) + '/bolum-' + (episode || 1);
+                              }
+                              
+                              console.error('[JetFilm-Debug] Arama ile eşleşen bulundu: ' + finalLink);
                               return fetch(finalLink, { headers: HEADERS }).then(function(r) { return r.text(); });
                           }
-                          throw new Error('Bulunamadı');
+                          throw new Error('İçerik sitede bulunamadı');
                       });
                 })
                 .then(function(html) {
@@ -75,15 +80,20 @@ function getStreams(id, mediaType, season, episode) {
         })
         .then(function(res) {
             var streams = [];
-            
-            // Dil Kontrolü
-            var isDublaj = res.html.toLowerCase().indexOf('dublaj') !== -1;
-            var isAltyazi = res.html.toLowerCase().indexOf('altyazı') !== -1 || res.html.toLowerCase().indexOf('altyazi') !== -1;
-            var dilEtiketi = isDublaj ? "Türkçe Dublaj" : (isAltyazi ? "Türkçe Altyazı" : "Türkçe");
-
-            // Pixeldrain Ayıklama
-            var pdRe = /href="(https?:\/\/pixeldrain\.com\/u\/([^"]+))"/g;
             var m;
+
+            // Dil Kontrolü
+            var lowHtml = res.html.toLowerCase();
+            var isDublaj = lowHtml.indexOf('dublaj') !== -1;
+            var isAltyazi = lowHtml.indexOf('altyazı') !== -1 || lowHtml.indexOf('altyazi') !== -1;
+            
+            var dilEtiketi = "Türkçe";
+            if (isDublaj && isAltyazi) dilEtiketi = "Dublaj & Altyazı";
+            else if (isDublaj) dilEtiketi = "Dublaj";
+            else if (isAltyazi) dilEtiketi = "Altyazı";
+
+            // 1. Pixeldrain (Video Fix)
+            var pdRe = /href="(https?:\/\/pixeldrain\.com\/u\/([^"]+))"/g;
             while ((m = pdRe.exec(res.html)) !== null) {
                 streams.push({
                     name: res.name,
@@ -96,7 +106,7 @@ function getStreams(id, mediaType, season, episode) {
                 });
             }
             
-            // Iframe Ayıklama (Jetv vb.)
+            // 2. Iframe / Alternatif Kaynaklar
             var iframeRe = /<iframe[^>]+(?:src)="([^"]+)"/gi;
             while ((m = iframeRe.exec(res.html)) !== null) {
                 var src = m[1];
@@ -113,7 +123,10 @@ function getStreams(id, mediaType, season, episode) {
 
             return streams;
         })
-        .catch(function() { return []; });
+        .catch(function(err) {
+            console.error('[Nuvio-Critical]: ' + err.message);
+            return [];
+        });
 }
 
 module.exports = { getStreams: getStreams };
