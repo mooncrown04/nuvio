@@ -1,8 +1,9 @@
 /**
  * JetFilmizle — Nuvio Provider (STANDART ŞABLON)
  * * NOT: Bu eklenti Nuvio standart şablonuna göre yapılandırılmıştır.
- * name  -> İçerik Adı (Film/Dizi İsmi)
- * title -> ⌜ Sağlayıcı ⌟ | 🇹🇷 Dil Bilgisi
+ * * Bölüm geçişleri ve katalog aramaları Nuvio mantığına tam uyumludur.
+ * name  -> Üstte görünen içerik adı (Film/Dizi İsmi)
+ * title -> Altta görünen ⌜ Sağlayıcı ⌟ | 🇹🇷 Dil Bilgisi (Örn: Dublaj & Altyazı)
  */
 
 var BASE_URL     = 'https://jetfilmizle.net';
@@ -11,10 +12,10 @@ var TMDB_API_KEY = '500330721680edb6d5f7f12ba7cd9023';
 var HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36',
     'Referer': BASE_URL + '/',
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8'
 };
 
-// ── Yardımcılar ──────────────────────────────────────────────
+// ── Yardımcı Fonksiyonlar ─────────────────────────────────────
 function titleToSlug(t) {
     return (t || '').toLowerCase()
         .replace(/ğ/g,'g').replace(/ü/g,'u').replace(/ş/g,'s')
@@ -31,7 +32,7 @@ function fetchTmdbInfo(tmdbId, mediaType) {
         .catch(function() { return { title: '' }; });
 }
 
-// ── Ana İşlem (Hibrit & Hızlı Yapı) ──────────────────────────
+// ── Ana Akış ──────────────────────────────────────────────────
 function getStreams(id, mediaType, season, episode) {
     var tmdbId = id.toString().replace(/[^0-9]/g, '');
     
@@ -40,7 +41,7 @@ function getStreams(id, mediaType, season, episode) {
             if (!info.title) return [];
             var slug = titleToSlug(info.title);
             
-            // Nuvio'da seçilen bölüme göre URL kur
+            // Nuvio kataloğunda seçilen sezon/bölüm bilgisine göre link inşası
             var targetUrl = (mediaType === 'tv') 
                 ? BASE_URL + '/dizi/' + slug + '/sezon-' + (season || 1) + '/bolum-' + (episode || 1)
                 : BASE_URL + '/film/' + slug;
@@ -51,14 +52,13 @@ function getStreams(id, mediaType, season, episode) {
                 .then(function(r) {
                     if (r.ok) return r.text();
                     
-                    // Direkt link tutmazsa (Katil Makine örneğindeki gibi) ARAMA yap
+                    // Direkt link tutmazsa (Slug farklıysa) arama motorunu kullan
                     return fetch(BASE_URL + '/filmara.php', {
                         method: 'POST',
                         headers: Object.assign({}, HEADERS, { 'Content-Type': 'application/x-www-form-urlencoded' }),
                         body: 's=' + encodeURIComponent(info.title)
                     }).then(function(res) { return res.text(); })
                       .then(function(searchHtml) {
-                          // Arama sonucunda hem film hem dizi linklerini esnek yakala
                           var regex = new RegExp('href="(https?://jetfilmizle\\.net/(film|dizi)/([^"/]+))"', 'i');
                           var m = regex.exec(searchHtml);
                           if (m) {
@@ -68,7 +68,7 @@ function getStreams(id, mediaType, season, episode) {
                               if (mediaType === 'tv') {
                                   finalLink += '/sezon-' + (season || 1) + '/bolum-' + (episode || 1);
                               }
-                              console.error('[JetFilm-Debug] Arama ile Doğrulandı: ' + finalLink);
+                              console.error('[JetFilm-Debug] Arama ile Link Onaylandı: ' + finalLink);
                               return fetch(finalLink, { headers: HEADERS }).then(function(r) { return r.text(); });
                           }
                           return '';
@@ -79,18 +79,22 @@ function getStreams(id, mediaType, season, episode) {
                     var streams = [];
                     var lowHtml = html.toLowerCase();
                     
-                    // Dil Kontrolü (Sayfa içeriğinden)
+                    // Gerçek Dil Kontrolü (Kafadan değil, sayfa içeriğinden)
                     var isDublaj = lowHtml.indexOf('dublaj') !== -1;
                     var isAltyazi = lowHtml.indexOf('altyazı') !== -1 || lowHtml.indexOf('altyazi') !== -1;
-                    var dil = isDublaj ? "Dublaj" : (isAltyazi ? "Altyazı" : "Türkçe");
+                    
+                    var dilEtiketi = "Türkçe";
+                    if (isDublaj && isAltyazi) dilEtiketi = "Dublaj & Altyazı";
+                    else if (isDublaj) dilEtiketi = "Dublaj";
+                    else if (isAltyazi) dilEtiketi = "Altyazı";
 
-                    // 1. Pixeldrain Fix (M3U8 Alternatifi)
+                    // 1. Pixeldrain (Video Akış Fix)
                     var pdRe = /href="(https?:\/\/pixeldrain\.com\/u\/([^"]+))"/g;
                     var m;
                     while ((m = pdRe.exec(html)) !== null) {
                         streams.push({
                             name: info.title,
-                            title: '⌜ JetFilmizle ⌟ | 🇹🇷 ' + dil + ' (Pixeldrain)',
+                            title: '⌜ JetFilmizle ⌟ | 🇹🇷 ' + dilEtiketi + ' (Pixeldrain)',
                             url: 'https://pixeldrain.com/api/file/' + m[2] + '?download',
                             type: 'video',
                             quality: '1080p',
@@ -106,7 +110,7 @@ function getStreams(id, mediaType, season, episode) {
                         if (src.indexOf('jetv') !== -1 || src.indexOf('d2rs') !== -1) {
                             streams.push({
                                 name: info.title,
-                                title: '⌜ JetFilmizle ⌟ | 🇹🇷 ' + dil + ' (Hızlı)',
+                                title: '⌜ JetFilmizle ⌟ | 🇹🇷 ' + dilEtiketi + ' (Hızlı)',
                                 url: src.startsWith('//') ? 'https:' + src : src,
                                 type: 'embed',
                                 language: 'tr'
