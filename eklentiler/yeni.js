@@ -7,68 +7,58 @@ function getStreams(args) {
     return new Promise(function(resolve) {
         if (!tmdbId) return resolve([]);
 
-        // 1. TMDB'den güncel başlığı al
+        // 1. TMDB'den film bilgilerini al (Enjekte etmek için lazım)
         fetch("https://api.themoviedb.org/3/movie/" + tmdbId + "?api_key=4ef0d7355d9ffb5151e987764708ce96&language=tr-TR")
         .then(res => res.json())
         .then(data => {
             var title = data.title || data.original_title;
-            console.error("[" + PROVIDER_NAME + "] Hedef: " + title);
+            var poster = "https://image.tmdb.org/t/p/w500" + data.poster_path;
+            var year = (data.release_date || "").split("-")[0];
+            var rating = data.vote_average;
+
+            // 2. Senin verdiğin link yapısını eklentilere enjekte ediyoruz
+            // Popüler eklentilerin listesi (WatchBuddy'deki 82 eklentiden en sağlamları)
+            var targetPlugins = ["SelcukFlix", "HDFilmCehennemi", "Dizipal", "FullHDFilm", "Dizigom"];
             
-            // 2. WatchBuddy ana sayfasındaki eklenti listesini al
-            return fetch(BASE_URL + "/").then(res => res.text()).then(html => {
-                return { title: title, html: html };
-            });
-        })
-        .then(obj => {
-            // Eklenti isimlerini yakala (HDFilmCehennemi, Dizigom vb.)
-            var pluginRegex = /href="\/eklenti\/([^"\/]+)"/g;
-            var plugins = [];
-            var match;
-            while ((match = pluginRegex.exec(obj.html)) !== null) {
-                if (plugins.indexOf(match[1]) === -1) plugins.push(match[1]);
-            }
+            console.error("[" + PROVIDER_NAME + "] Enjekte ediliyor: " + title);
 
-            // En güvenilir 10 kaynağı seç (Çakışma ve hız için)
-            var topTen = plugins.slice(0, 10);
-            console.error("[" + PROVIDER_NAME + "] " + topTen.length + " kaynak zorlanıyor...");
+            var streamPromises = targetPlugins.map(pName => {
+                // Senin verdiğin URL yapısını her eklenti için simüle ediyoruz
+                // Bu yapı WatchBuddy'nin o eklenti sayfasını "aramadan" açmasını sağlar
+                var injectUrl = BASE_URL + "/izle/" + pName + 
+                                "?url=" + encodeURIComponent("https://google.com/search?q=" + encodeURIComponent(title)) + // Geçici url
+                                "&baslik=" + encodeURIComponent(title) +
+                                "&poster_url=" + encodeURIComponent(poster) +
+                                "&year=" + year +
+                                "&rating=" + rating;
 
-            var streamPromises = topTen.map(pName => {
-                // KRİTİK DEĞİŞİKLİK: Doğrudan WatchBuddy'nin 'embed' sayfasına yönlendiriyoruz
-                // Bu yapı, JS render beklemeden sunucu taraflı link dönmesini sağlar
-                var embedUrl = BASE_URL + "/eklenti/" + pName + "/izle?url=" + encodeURIComponent(obj.title);
-
-                return fetch(embedUrl, { 
-                    headers: { 
-                        "Referer": BASE_URL + "/",
-                        "User-Agent": "Mozilla/5.0 (Linux; Android 10)" 
-                    } 
-                })
-                .then(res => res.text())
-                .then(pHtml => {
-                    // Sayfa içinde video linkini (m3u8/mp4) bul
-                    var fileMatch = pHtml.match(/file["']?\s*:\s*["'](http[^"']+)["']/);
-                    if (fileMatch) {
-                        return {
-                            name: pName,
-                            title: pName + " - 1080p",
-                            url: fileMatch[1],
-                            quality: "1080p",
-                            headers: { "Referer": BASE_URL + "/" }
-                        };
-                    }
-                    return null;
-                }).catch(() => null);
+                return fetch(injectUrl, { headers: { "Referer": BASE_URL + "/" } })
+                    .then(res => res.text())
+                    .then(html => {
+                        // Sayfa içindeki asıl video linkini (m3u8) bul
+                        var fileMatch = html.match(/file["']?\s*:\s*["'](http[^"']+)["']/);
+                        if (fileMatch) {
+                            return {
+                                name: pName,
+                                title: title + " (" + pName + ")",
+                                url: fileMatch[1],
+                                quality: "1080p",
+                                headers: { "Referer": BASE_URL + "/" }
+                            };
+                        }
+                        return null;
+                    }).catch(() => null);
             });
 
             return Promise.all(streamPromises);
         })
         .then(results => {
             var final = results.filter(r => r !== null);
-            console.error("[" + PROVIDER_NAME + "] Bulunan: " + final.length);
+            console.error("[" + PROVIDER_NAME + "] Enjeksiyon Sonucu: " + final.length + " kaynak.");
             resolve(final);
         })
         .catch(e => {
-            console.error("[" + PROVIDER_NAME + "] Sistem Hatası: " + e.message);
+            console.error("[" + PROVIDER_NAME + "] Kritik Hata: " + e.message);
             resolve([]);
         });
     });
