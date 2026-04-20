@@ -7,49 +7,49 @@ function getStreams(args) {
     return new Promise(function(resolve) {
         if (!tmdbId) return resolve([]);
 
-        // 1. TMDB Metodu (Konuşmamızın temeli)
+        // 1. TMDB'den ismi al (Rambo: Son Kan gibi)
         fetch("https://api.themoviedb.org/3/movie/" + tmdbId + "?api_key=4ef0d7355d9ffb5151e987764708ce96&language=tr-TR")
         .then(res => res.json())
         .then(data => {
             var title = data.title || data.original_title;
-            console.error("[" + PROVIDER_NAME + "] Aramaya Başlanıyor: " + title);
+            console.error("[" + PROVIDER_NAME + "] Derin Tarama: " + title);
             
-            // 2. WatchBuddy Arama sayfasına git
-            return fetch(BASE_URL + "/search?q=" + encodeURIComponent(title));
+            // 2. Ana sayfayı çekip eklenti listesini alıyoruz (JS Gerektirmez)
+            return fetch(BASE_URL + "/");
         })
         .then(res => res.text())
         .then(html => {
-            // 3. Eklenti listesini yakala (Senin gönderdiğin source koddaki yapı)
-            var pluginRegex = /href="\/eklenti\/([^"]+)"/g;
+            // Kaynak kodundaki eklenti linklerini yakala
+            var pluginRegex = /href="\/eklenti\/([^"\/]+)"/g;
             var plugins = [];
             var match;
             while ((match = pluginRegex.exec(html)) !== null) {
                 if (plugins.indexOf(match[1]) === -1) plugins.push(match[1]);
             }
 
-            if (plugins.length === 0) {
-                console.error("[" + PROVIDER_NAME + "] Eklenti listesi bulunamadı.");
-                return resolve([]);
-            }
+            if (plugins.length === 0) throw new Error("Eklentiler bulunamadı.");
 
-            // 4. Kritik Hamle: Arama sonucunu eklenti sayfasına zorla
-            // WatchBuddy normalde bunu JS ile yapar, biz URL üzerinden zorluyoruz
-            var streamPromises = plugins.slice(0, 10).map(pName => {
-                // Her eklentinin 'izle' sayfasına, o film için bir URL oluşturup gönderiyoruz
-                var searchPath = "/izle/" + pName + "?url=" + encodeURIComponent("/search?q=" + args.id);
+            // 3. En popüler eklentileri seç (Hız için ilk 20 eklenti)
+            // Örn: HDFilmCehennemi, Dizipal, FullHDFilm vb.
+            var targetPlugins = plugins.slice(0, 20);
+            console.error("[" + PROVIDER_NAME + "] " + targetPlugins.length + " eklentide Rambo aranıyor...");
 
-                return fetch(BASE_URL + searchPath, { headers: { "Referer": BASE_URL } })
+            var streamPromises = targetPlugins.map(pName => {
+                // Her eklentinin kendi arama sonucuna doğrudan gidiyoruz
+                // TMDB ID kullanarak WatchBuddy'nin eşleştirme sistemini tetikliyoruz
+                var searchUrl = BASE_URL + "/izle/" + pName + "?url=" + encodeURIComponent("/search?q=" + tmdbId);
+
+                return fetch(searchUrl, { headers: { "Referer": BASE_URL + "/" } })
                     .then(res => res.text())
-                    .then(p_html => {
-                        // Video linkini ara (file: "...")
-                        var fileMatch = p_html.match(/file["']?\s*:\s*["'](http[^"']+)["']/);
+                    .then(pHtml => {
+                        var fileMatch = pHtml.match(/file["']?\s*:\s*["'](http[^"']+)["']/);
                         if (fileMatch) {
                             return {
                                 name: pName,
-                                title: pName + " - WB",
+                                title: pName + " - 1080p",
                                 url: fileMatch[1],
                                 quality: "1080p",
-                                headers: { "Referer": BASE_URL }
+                                headers: { "Referer": BASE_URL + "/" }
                             };
                         }
                         return null;
@@ -60,7 +60,7 @@ function getStreams(args) {
         })
         .then(results => {
             var final = results.filter(r => r !== null);
-            console.error("[" + PROVIDER_NAME + "] Sonuç: " + final.length + " aktif kaynak.");
+            console.error("[" + PROVIDER_NAME + "] Bulunan Kaynak: " + final.length);
             resolve(final);
         })
         .catch(e => {
