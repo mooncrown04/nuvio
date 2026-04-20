@@ -1,19 +1,17 @@
-// Version: 4.9 (Protocol Compliant - Script Injection Scan)
-// Note: console.log is FORBIDDEN. Use console.error for all logs. No async/await.
+// Version: 5.0 (DEŞİFRE MODU - Sadece Analiz)
+// Note: console.error ile ham veri avcılığı.
 
 var cheerio = require("cheerio-without-node-native");
 
 const PROVIDER_NAME = "HDFilmCehennemi";
 const BASE_URL = "https://www.hdfilmcehennemi.nl";
-const EMPTY_RESULT = [];
 const DEFAULT_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "X-Requested-With": "fetch",
-    "Referer": BASE_URL + "/"
+    "Accept-Language": "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7"
 };
 
 function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
-    console.error("[" + PROVIDER_NAME + "] PROTOKOL v4.9: SCRIPT SCAN BASLADI");
+    console.error("[" + PROVIDER_NAME + "] v5.0 DEŞİFRE MODU BAŞLATILDI");
     
     return new Promise(function(resolve) {
         var isMovie = mediaType === 'movie';
@@ -32,61 +30,38 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                 
                 var $search = cheerio.load(results[0]);
                 var targetUrl = $search("a").first().attr("href");
-                if (!isMovie) targetUrl = targetUrl.replace(/\/$/, "") + "-sezon-" + seasonNum + "-bolum-" + episodeNum;
-                
-                console.error("[" + PROVIDER_NAME + "] SAYFA CEKILIYOR -> " + targetUrl);
+                console.error("[" + PROVIDER_NAME + "] ANALİZ EDİLEN URL -> " + targetUrl);
                 return fetch(targetUrl, { headers: DEFAULT_HEADERS });
             })
             .then(function(res) { return res.text(); })
             .then(function(pageHtml) {
-                // --- SCRIPT VE PLAYER ANALIZI ---
-                // Site data-video yerine artik ID'yi bir JSON objesinde sakliyor olabilir.
-                var idFinder = pageHtml.match(/id\s*:\s*(\d{5,})/gi) || 
-                               pageHtml.match(/post\s*:\s*(\d{5,})/gi) || 
-                               pageHtml.match(/["'](\d{6,})["']/g); // 6 haneli sayilar genellikle video ID'sidir.
+                // --- DEŞİFRE ALANI ---
+                // 1. Script etiketlerini sayalım ve ilk 100 karakterlerini görelim
+                var $ = cheerio.load(pageHtml);
+                var scripts = [];
+                $("script").each(function(i, el) {
+                    var src = $(el).attr("src");
+                    var content = $(el).html().substring(0, 40).replace(/\s+/g, " ");
+                    scripts.push(src ? "SRC: " + src : "INT: " + content);
+                });
+                console.error("[" + PROVIDER_NAME + "] SCRIPT HARİTASI -> " + JSON.stringify(scripts.slice(0, 5)));
 
-                console.error("[" + PROVIDER_NAME + "] SAYFA ICI POTANSIYEL ID'LER -> " + JSON.stringify(idFinder ? idFinder.slice(0, 5) : "YOK"));
+                // 2. Video container'ın içini olduğu gibi basalım
+                var playerArea = $(".player-container").html() || "PLAYER_CONTAINER_YOK";
+                console.error("[" + PROVIDER_NAME + "] PLAYER ALANI (HAM) -> " + playerArea.substring(0, 200));
 
-                var $page = cheerio.load(pageHtml);
-                
-                // Yeni ihtimal: 'data-id' veya 'data-post' kullanimi
-                var videoID = $page("[data-id]").attr("data-id") || 
-                              $page("[data-post]").attr("data-post") ||
-                              $page("input#post_id").val();
+                // 3. ID olabilecek gizli inputlar
+                var inputs = [];
+                $("input[type='hidden']").each(function(i, el) {
+                    inputs.push($(el).attr("id") + "=" + $(el).val());
+                });
+                console.error("[" + PROVIDER_NAME + "] GİZLİ INPUTLAR -> " + JSON.stringify(inputs));
 
-                // Hicbiri yoksa manuel regex denemesi
-                if (!videoID && idFinder) {
-                    // Bulunan ilk 6+ haneli sayiyi dene
-                    var firstMatch = idFinder[0].match(/\d+/);
-                    videoID = firstMatch ? firstMatch[0] : null;
-                }
-
-                console.error("[" + PROVIDER_NAME + "] TESPIT EDILEN ID -> " + videoID);
-                if (!videoID) throw new Error("ID TESPIT EDILEMEDI.");
-
-                // Sitenin video endpoint'i degismis olabilir mi? /video/ yerine /ajax/ deneyelim
-                return fetch(BASE_URL + "/video/" + videoID + "/", { headers: DEFAULT_HEADERS });
-            })
-            .then(function(res) { return res.text(); })
-            .then(function(apiHtml) {
-                console.error("[" + PROVIDER_NAME + "] API YANITI (ILK 100) -> " + apiHtml.substring(0, 100).replace(/\n/g, ""));
-                
-                var iframeMatch = apiHtml.match(/data-src=\\"([^"]+)/);
-                var iframeUrl = iframeMatch ? iframeMatch[1].replace(/\\/g, "") : "";
-
-                if (!iframeUrl) throw new Error("Iframe linki ayiklanamadi.");
-
-                resolve([{
-                    name: PROVIDER_NAME,
-                    title: "HDFC - v4.9",
-                    url: iframeUrl,
-                    quality: "1080p",
-                    headers: { "User-Agent": DEFAULT_HEADERS["User-Agent"] }
-                }]);
+                throw new Error("ANALİZ TAMAMLANDI - LOGLARI KONTROL ET");
             })
             .catch(function(err) {
-                console.error("[" + PROVIDER_NAME + "] KRITIK HATA: " + err.message);
-                resolve(EMPTY_RESULT);
+                console.error("[" + PROVIDER_NAME + "] DURUM -> " + err.message);
+                resolve([]);
             });
     });
 }
