@@ -1,4 +1,4 @@
-const PROVIDER_NAME = "WatchBuddy_Logger";
+const PROVIDER_NAME = "WatchBuddy_V14";
 const BASE_URL = "https://stream.watchbuddy.tv";
 
 function getStreams(args) {
@@ -7,53 +7,48 @@ function getStreams(args) {
     return new Promise(function(resolve) {
         if (!tmdbId) return resolve([]);
 
+        // 1. TMDB'den temiz isim ve yıl al (Doğru eşleşme için şart)
         fetch("https://api.themoviedb.org/3/movie/" + tmdbId + "?api_key=4ef0d7355d9ffb5151e987764708ce96&language=tr-TR")
         .then(res => res.json())
         .then(data => {
             var title = data.title || data.original_title;
-            console.error("[" + PROVIDER_NAME + "] Sorgu: " + title);
-            return fetch(BASE_URL + "/search?q=" + encodeURIComponent(title));
-        })
-        .then(res => res.text())
-        .then(html => {
-            console.error("[" + PROVIDER_NAME + "] Sayfa çekildi. Boyut: " + html.length);
-
-            // 1. ADIM: Sayfadaki tüm script bloklarını bulup loglayalım
-            var scripts = html.match(/<script\b[^>]*>([\s\S]*?)<\/script>/gm) || [];
-            console.error("[" + PROVIDER_NAME + "] Bulunan Script Sayısı: " + scripts.length);
-
-            // 2. ADIM: Senin paylaştığın JSON yapısına (with/result) benzer metinleri avlayalım
-            // Metin içinde "with" ve "url" geçen yerleri 500 karakterlik bloklar halinde alıyoruz
-            var regex = /\{[^{}]*"with"[^{}]*"url"[^{}]*\}/g;
-            var matches = html.match(regex) || [];
+            var year = (data.release_date || "").split("-")[0];
             
-            if (matches.length > 0) {
-                matches.forEach((m, i) => {
-                    console.error("[" + PROVIDER_NAME + "] BULGU " + (i+1) + ": " + m.substring(0, 800));
-                });
-            } else {
-                console.error("[" + PROVIDER_NAME + "] JSON yapısı ham metinde bulunamadı. Scriptleri inceliyoruz...");
-                // Eğer ham metinde yoksa, scriptlerin içine bakalım
-                scripts.forEach((s, i) => {
-                    if (s.includes("url") || s.includes("results")) {
-                        console.error("[" + PROVIDER_NAME + "] ŞÜPHELİ SCRİPT " + i + ": " + s.substring(0, 500));
-                    }
-                });
-            }
-
-            // 3. ADIM: Ekranda gördüğün o verilerin kaynağı olabilecek değişkenleri arayalım
-            var suspects = ["config", "data", "results", "payload"];
-            suspects.forEach(key => {
-                var pos = html.indexOf(key + "=");
-                if (pos !== -1) {
-                    console.error("[" + PROVIDER_NAME + "] DEĞİŞKEN YAKALANDI (" + key + "): " + html.substring(pos, pos + 200));
-                }
+            // 2. Senin paylaştığın JSON yapısını simüle eden "Direct API" yöntemi
+            // WatchBuddy'nin en çok kullanılan 4 eklentisini doğrudan sorguluyoruz
+            var providers = ["SelcukFlix", "FilmMakinesi", "HDFilmCehennemi", "Dizipal"];
+            
+            var promises = providers.map(p => {
+                // Her provider için direkt izle/yönlendir linkini deniyoruz
+                var directUrl = BASE_URL + "/izle/" + p + "?url=" + encodeURIComponent("https://www.google.com/search?q=" + encodeURIComponent(title + " " + year));
+                
+                return fetch(directUrl, { headers: { "Referer": BASE_URL + "/" } })
+                    .then(res => res.text())
+                    .then(html => {
+                        // Sayfa içinde m3u8 veya video linki var mı?
+                        var fileMatch = html.match(/file["']?\s*:\s*["']([^"']+)["']/);
+                        if (fileMatch) {
+                            return {
+                                name: p,
+                                title: title + " (" + p + ")",
+                                url: fileMatch[1].replace(/\\/g, ""),
+                                quality: "1080p"
+                            };
+                        }
+                        return null;
+                    })
+                    .catch(() => null);
             });
 
-            resolve([]); // Sadece log okumak için şimdilik boş dönüyoruz
+            return Promise.all(promises);
+        })
+        .then(results => {
+            var finalResults = results.filter(r => r !== null);
+            console.error("[" + PROVIDER_NAME + "] Bulunan Kaynak Sayısı: " + finalResults.length);
+            resolve(finalResults);
         })
         .catch(e => {
-            console.error("[" + PROVIDER_NAME + "] Hata: " + e.message);
+            console.error("[" + PROVIDER_NAME + "] Kritik Hata: " + e.message);
             resolve([]);
         });
     });
