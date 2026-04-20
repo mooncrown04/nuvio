@@ -14,6 +14,7 @@ var HEADERS = {
     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
 };
 
+// ── Yardımcılar ──────────────────────────────────────────────
 function titleToSlug(t) {
     return (t || '').toLowerCase()
         .replace(/ğ/g,'g').replace(/ü/g,'u').replace(/ş/g,'s')
@@ -30,6 +31,7 @@ function fetchTmdbInfo(tmdbId, mediaType) {
         .catch(function() { return { title: '' }; });
 }
 
+// ── Ana İşlem (Hibrit & Hızlı Yapı) ──────────────────────────
 function getStreams(id, mediaType, season, episode) {
     var tmdbId = id.toString().replace(/[^0-9]/g, '');
     
@@ -38,29 +40,35 @@ function getStreams(id, mediaType, season, episode) {
             if (!info.title) return [];
             var slug = titleToSlug(info.title);
             
-            // 1. ADIM: Direkt URL oluştur (Nuvio Bölüm Seçimi Uyumu)
+            // Nuvio'da seçilen bölüme göre URL kur
             var targetUrl = (mediaType === 'tv') 
                 ? BASE_URL + '/dizi/' + slug + '/sezon-' + (season || 1) + '/bolum-' + (episode || 1)
                 : BASE_URL + '/film/' + slug;
 
-            console.error('[JetFilm-Debug] İstek: ' + targetUrl);
+            console.error('[JetFilm-Debug] İstek Deneniyor: ' + targetUrl);
 
             return fetch(targetUrl, { headers: HEADERS })
                 .then(function(r) {
                     if (r.ok) return r.text();
                     
-                    // 2. ADIM: Direkt link yoksa Arama yap
+                    // Direkt link tutmazsa (Katil Makine örneğindeki gibi) ARAMA yap
                     return fetch(BASE_URL + '/filmara.php', {
                         method: 'POST',
                         headers: Object.assign({}, HEADERS, { 'Content-Type': 'application/x-www-form-urlencoded' }),
                         body: 's=' + encodeURIComponent(info.title)
                     }).then(function(res) { return res.text(); })
                       .then(function(searchHtml) {
+                          // Arama sonucunda hem film hem dizi linklerini esnek yakala
                           var regex = new RegExp('href="(https?://jetfilmizle\\.net/(film|dizi)/([^"/]+))"', 'i');
                           var m = regex.exec(searchHtml);
                           if (m) {
-                              var finalLink = BASE_URL + '/' + m[2] + '/' + m[3];
-                              if (mediaType === 'tv') finalLink += '/sezon-' + (season || 1) + '/bolum-' + (episode || 1);
+                              var foundType = m[2];
+                              var foundSlug = m[3];
+                              var finalLink = BASE_URL + '/' + foundType + '/' + foundSlug;
+                              if (mediaType === 'tv') {
+                                  finalLink += '/sezon-' + (season || 1) + '/bolum-' + (episode || 1);
+                              }
+                              console.error('[JetFilm-Debug] Arama ile Doğrulandı: ' + finalLink);
                               return fetch(finalLink, { headers: HEADERS }).then(function(r) { return r.text(); });
                           }
                           return '';
@@ -71,13 +79,12 @@ function getStreams(id, mediaType, season, episode) {
                     var streams = [];
                     var lowHtml = html.toLowerCase();
                     
-                    // Dil Etiketi Belirleme
-                    var dil = "Türkçe";
-                    if (lowHtml.indexOf('dublaj') !== -1 && (lowHtml.indexOf('altyazı') !== -1 || lowHtml.indexOf('altyazi') !== -1)) dil = "Dublaj & Altyazı";
-                    else if (lowHtml.indexOf('dublaj') !== -1) dil = "Dublaj";
-                    else if (lowHtml.indexOf('altyazı') !== -1 || lowHtml.indexOf('altyazi') !== -1) dil = "Altyazı";
+                    // Dil Kontrolü (Sayfa içeriğinden)
+                    var isDublaj = lowHtml.indexOf('dublaj') !== -1;
+                    var isAltyazi = lowHtml.indexOf('altyazı') !== -1 || lowHtml.indexOf('altyazi') !== -1;
+                    var dil = isDublaj ? "Dublaj" : (isAltyazi ? "Altyazı" : "Türkçe");
 
-                    // Pixeldrain Fix
+                    // 1. Pixeldrain Fix (M3U8 Alternatifi)
                     var pdRe = /href="(https?:\/\/pixeldrain\.com\/u\/([^"]+))"/g;
                     var m;
                     while ((m = pdRe.exec(html)) !== null) {
@@ -92,7 +99,7 @@ function getStreams(id, mediaType, season, episode) {
                         });
                     }
                     
-                    // Iframe/Embed Kaynaklar
+                    // 2. Iframe / JetV / D2RS Kaynakları
                     var iframeRe = /<iframe[^>]+(?:src)="([^"]+)"/gi;
                     while ((m = iframeRe.exec(html)) !== null) {
                         var src = m[1];
