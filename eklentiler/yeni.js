@@ -1,106 +1,95 @@
-// Version: 6.9 (Global Context Fix)
-// FIXED: 'app is not defined' by accessing global context safely.
-
-var cheerio = require("cheerio-without-node-native");
+// Version: 8.0 (Zero-Dependency Kotlin Port)
+// Bu kod, WatchBuddy'nin sunucuda yaptığı işi cihazın içinde yapar.
 
 const PROVIDER_NAME = "HDFilmCehennemi";
-const STATIC_URL = "https://www.hdfilmcehennemi.nl/project-hail-mary-3/";
 
-// Kotlin'deki unmix algoritması
-function unmix(byteArray) {
-    let result = "";
-    for (let i = 0; i < byteArray.length; i++) {
-        let charCode = byteArray[i] & 0xFF;
-        let newChar = (charCode - (399756995 % (i + 5)) + 256) % 256;
-        result += String.fromCharCode(newChar);
+/**
+ * Kotlin'deki dcHello ve unmix algoritmasının 
+ * hiçbir kütüphaneye ihtiyaç duymayan saf JS hali.
+ */
+function solveHDFC(base64Parts) {
+    try {
+        // 1. Parçaları birleştir (Kotlin: parts.joinToString(""))
+        let combined = base64Parts.join("");
+        
+        // 2. Base64 Decode (Standard atob)
+        let binaryString = atob(combined);
+        let bytes = new Uint8Array(binaryString.length);
+        for (let i = 0; i < binaryString.length; i++) {
+            bytes[i] = binaryString.charCodeAt(i);
+        }
+
+        // 3. Unmix Algoritması (Kotlin: charCode - (399756995 % (i + 5)))
+        let result = "";
+        for (let i = 0; i < bytes.length; i++) {
+            let charCode = bytes[i] & 0xFF;
+            let magic = 399756995 % (i + 5);
+            let newChar = (charCode - magic + 256) % 256;
+            result += String.fromCharCode(newChar);
+        }
+
+        // 4. Linki Temizle (Kotlin: substringAfter("https"))
+        if (result.includes("https")) {
+            return "https" + result.split("https").pop();
+        }
+        return result;
+    } catch (e) {
+        return null;
     }
-    return result;
 }
 
-// Global uygulama nesnesini bul (Cloudstream için kritik)
-const _app = (typeof app !== 'undefined') ? app : (typeof globalThis.app !== 'undefined') ? globalThis.app : null;
-
 async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
-    console.error("[" + PROVIDER_NAME + "] v6.9 STARTING...");
+    // WatchBuddy'nin yaptığı gibi, senin verdiğin linki baz alıyoruz
+    const targetUrl = "https://www.hdfilmcehennemi.nl/1-ready-or-not-izle-hdf-8/";
     
-    if (!_app) {
-        console.error("[" + PROVIDER_NAME + "] FATAL: Cloudstream 'app' object not found in global context.");
-        return [];
-    }
+    console.error("[" + PROVIDER_NAME + "] Çözücü Başlatıldı...");
 
     try {
-        const HEADERS = { 
+        // Cloudstream ortamında request fonksiyonunu güvenli çağır
+        const request = (typeof app !== 'undefined') ? app : globalThis.app;
+        if (!request) throw new Error("Network kütüphanesi bulunamadı!");
+
+        const headers = { 
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:137.0) Gecko/20100101 Firefox/137.0",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
             "X-Requested-With": "fetch"
         };
 
-        // 1. Film Sayfasını Al
-        const response = await _app.get(STATIC_URL, { headers: HEADERS });
-        const html = response.text;
+        // 1. Adım: Film sayfasından Video ID çek
+        const page = await request.get(targetUrl, { headers });
+        const videoID = page.text.match(/data-video=["'](\d+)["']/)?.[1];
+        if (!videoID) throw new Error("Video ID bulunamadı (Cloudflare engeli olabilir)");
 
-        // Cloudflare kontrolü
-        if (html.includes("Just a moment") || html.includes("DDoS protection")) {
-            console.error("[" + PROVIDER_NAME + "] CLOUDFLARE DETECTED! Use a VPN or wait.");
-            return [];
-        }
-
-        const $ = cheerio.load(html);
-
-        // 2. Video ID Bul (Kotlin logic)
-        let videoID = $("button.alternative-link").attr("data-video");
-        if (!videoID) {
-            let match = html.match(/data-video=["'](\d+)["']/);
-            if (match) videoID = match[1];
-        }
-
-        if (!videoID) {
-            console.error("[" + PROVIDER_NAME + "] ID NOT FOUND. Page length: " + html.length);
-            return [];
-        }
-
-        console.error("[" + PROVIDER_NAME + "] FOUND ID: " + videoID);
-
-        // 3. API İsteyi (Kotlin: /video/ID/)
-        const apiRes = await _app.get(`https://www.hdfilmcehennemi.nl/video/${videoID}/`, {
-            headers: HEADERS,
-            referer: STATIC_URL
+        // 2. Adım: API'den Iframe URL'yi al
+        const api = await request.get(`https://www.hdfilmcehennemi.nl/video/${videoID}/`, { 
+            headers, 
+            referer: targetUrl 
         });
-        
-        let iframeMatch = apiRes.text.match(/data-src=\\?"([^"\\]+)/);
-        let iframeUrl = iframeMatch ? iframeMatch[1].replace(/\\/g, "") : "";
-        
-        if (!iframeUrl) return [];
-
+        let iframeUrl = api.text.match(/data-src=\\?"([^"\\]+)/)?.[1].replace(/\\/g, "");
         if (iframeUrl.includes("rapidrame")) {
             iframeUrl = "https://www.hdfilmcehennemi.nl/rplayer/" + iframeUrl.split("?rapidrame_id=")[1];
         }
 
-        // 4. Player & Decrypt
-        const playerRes = await _app.get(iframeUrl, { 
-            headers: { "Referer": "https://www.hdfilmcehennemi.nl/" } 
-        });
-        
-        let base64Match = playerRes.text.match(/file_link\s*=\s*["']\(\[(.*?)\]\)["']/);
-        if (base64Match) {
-            let parts = base64Match[1].match(/"(.*?)"/g).map(p => p.replace(/"/g, ""));
-            let binary = Buffer.from(parts.join(""), 'base64');
-            let decoded = unmix(binary);
-            
-            let finalUrl = decoded.includes("https") ? "https" + decoded.split("https").pop() : "";
+        // 3. Adım: Player sayfasından şifreli base64 parçalarını al
+        const player = await request.get(iframeUrl, { referer: "https://www.hdfilmcehennemi.nl/" });
+        const base64Data = player.text.match(/file_link\s*=\s*["']\(\[(.*?)\]\)["']/)?.[1];
+        if (!base64Data) throw new Error("Şifreli veri bulunamadı");
 
+        // 4. Adım: Kotlin algoritmasıyla çöz
+        const parts = base64Data.match(/"(.*?)"/g).map(p => p.replace(/"/g, ""));
+        const finalUrl = solveHDFC(parts);
+
+        if (finalUrl) {
+            console.error("[" + PROVIDER_NAME + "] Link başarıyla çözüldü!");
             return [{
                 name: PROVIDER_NAME,
                 url: finalUrl,
                 quality: "1080p",
-                headers: { "User-Agent": HEADERS["User-Agent"], "Referer": "https://www.hdfilmcehennemi.nl/" }
+                headers: { "Referer": "https://www.hdfilmcehennemi.nl/" }
             }];
         }
 
-        return [];
-
     } catch (err) {
-        console.error("[" + PROVIDER_NAME + "] ERROR: " + err.message);
+        console.error("[" + PROVIDER_NAME + "] Hata: " + err.message);
         return [];
     }
 }
