@@ -1,55 +1,69 @@
-// Nuvio HDFilmCehennemi Resolver (v13.0)
+/**
+ * Nuvio Local Scraper Şablonu - v4.5 (WatchBuddy Resolver)
+ * Kural 1: console.log YASAK, tüm loglar console.error olmalı.
+ * Kural 2: async/await YASAK, Promise/axios.then kullanılmalı.
+ */
 
-async function getStreams(args) {
-    // Nuvio'da URL args içinden gelir
-    const sourceUrl = args.url || "";
-    if (!sourceUrl) return [];
+var axios = require("axios");
+const PROVIDER_NAME = "HDFilmCehennemi";
+const DEFAULT_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+    "X-Requested-With": "fetch"
+};
 
-    console.error("[HDFC] Resolver Tetiklendi: " + sourceUrl);
+function getStreams(args) {
+    // Nuvio'da loglar error kanalından akar
+    console.error(`[${PROVIDER_NAME}] Başlatıldı -> URL: ${args.url}`);
 
-    // WatchBuddy köprüsü
-    const bridgeUrl = `https://stream.watchbuddy.tv/izle/HDFilmCehennemi?url=${encodeURIComponent(sourceUrl)}`;
-
-    try {
-        // Nuvio'da standart fetch kullanımı
-        const response = await fetch(bridgeUrl, {
-            headers: {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                "Referer": "https://stream.watchbuddy.tv/"
-            }
-        });
-
-        const html = await response.text();
-
-        // Sayfa içindeki gerçek m3u8/mp4 linkini cımbızla çekme
-        const streamUrlMatch = html.match(/file["']?\s*:\s*["'](http[^"']+)["']/);
-
-        if (streamUrlMatch && streamUrlMatch[1]) {
-            const finalUrl = streamUrlMatch[1];
-            console.error("[HDFC] Link Bulundu: " + finalUrl);
-
-            return [{
-                name: "HDFC (WatchBuddy)",
-                url: finalUrl,
-                quality: "1080p",
-                headers: {
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-                    "Referer": "https://stream.watchbuddy.tv/"
-                }
-            }];
+    return new Promise(function(resolve) {
+        var sourceUrl = args.url || "";
+        if (!sourceUrl) {
+            console.error(`[${PROVIDER_NAME}] HATA: Kaynak URL boş.`);
+            return resolve([]);
         }
-        
-        console.error("[HDFC] Video linki sayfa içinde bulunamadı.");
-        return [];
 
-    } catch (err) {
-        console.error("[HDFC] Hata oluştu: " + err.message);
-        return [];
-    }
+        // WatchBuddy Köprüsü
+        var bridgeUrl = "https://stream.watchbuddy.tv/izle/HDFilmCehennemi?url=" + encodeURIComponent(sourceUrl);
+
+        axios.get(bridgeUrl, { 
+            headers: {
+                "User-Agent": DEFAULT_HEADERS["User-Agent"],
+                "Referer": "https://stream.watchbuddy.tv/"
+            } 
+        })
+        .then(function(response) {
+            var html = response.data;
+            // Sayfa içindeki gerçek video dosyasını (m3u8/mp4) çekiyoruz
+            var streamUrlMatch = html.match(/file["']?\s*:\s*["'](http[^"']+)["']/);
+
+            if (streamUrlMatch && streamUrlMatch[1]) {
+                var finalUrl = streamUrlMatch[1];
+                console.error(`[${PROVIDER_NAME}] BAŞARILI LİNK: ${finalUrl}`);
+
+                resolve([{
+                    name: PROVIDER_NAME,
+                    title: "HDFC - 1080p",
+                    url: finalUrl,
+                    quality: "1080p",
+                    headers: {
+                        "User-Agent": DEFAULT_HEADERS["User-Agent"],
+                        "Referer": "https://stream.watchbuddy.tv/"
+                    }
+                }]);
+            } else {
+                console.error(`[${PROVIDER_NAME}] HATA: Sayfa içinde video linki bulunamadı.`);
+                resolve([]);
+            }
+        })
+        .catch(function(err) {
+            console.error(`[${PROVIDER_NAME}] KRİTİK HATA: ${err.message}`);
+            resolve([]);
+        });
+    });
 }
 
-// Nuvio'nun fonksiyonu bulabilmesi için her iki yöntemi de tanımlıyoruz:
-if (typeof module !== 'undefined') {
-    module.exports = { getStreams };
+// Nuvio'nun fonksiyonu bulabilmesi için global ve module tanımları
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = { getStreams: getStreams };
 }
 globalThis.getStreams = getStreams;
