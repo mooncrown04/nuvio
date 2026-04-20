@@ -1,73 +1,61 @@
+// Bu kodda her şeyi birleştirdim: TMDB ID kullanımı + RecTV Arama Mantığı + HDFC Link Yapısı
 const PROVIDER_NAME = "HDFilmCehennemi";
 const BASE_URL = "https://www.hdfilmcehennemi.nl";
 
 function getStreams(args) {
+    // 1. ADIM: Nuvio'dan gelen o meşhur ID'yi yakala (Unutmadım!)
     var tmdbId = (typeof args === 'object') ? (args.tmdbId || args.id) : args;
-    console.error(`[${PROVIDER_NAME}] TMDB ID: ${tmdbId}`);
-
+    
     return new Promise(function(resolve) {
         if (!tmdbId) return resolve([]);
 
-        // 1. TMDB'den film ismini öğren
-        fetch(`https://api.themoviedb.org/3/movie/${tmdbId}?api_key=4ef0d7355d9ffb5151e987764708ce96&language=tr-TR`)
-        .then(res => res.json())
-        .then(tmdbData => {
-            var movieTitle = tmdbData.title || tmdbData.original_title;
-            console.error(`[${PROVIDER_NAME}] Aranan Başlık: ${movieTitle}`);
+        // 2. ADIM: TMDB üzerinden film adını al (RecTV'de yaptığımız gibi)
+        fetch("https://api.themoviedb.org/3/movie/" + tmdbId + "?api_key=4ef0d7355d9ffb5151e987764708ce96&language=tr-TR")
+        .then(function(res) { return res.json(); })
+        .then(function(data) {
+            var searchTitle = data.title || data.original_title;
+            console.error("[" + PROVIDER_NAME + "] Aranan Film: " + searchTitle);
             
-            // 2. Sitede arama yap
-            return fetch(`${BASE_URL}/search?q=${encodeURIComponent(movieTitle)}`);
+            // 3. ADIM: HDFC'de ara
+            return fetch(BASE_URL + "/search?q=" + encodeURIComponent(searchTitle));
         })
-        .then(res => res.text())
-        .then(html => {
-            // KRİTİK: Ana sayfa linkini (/) veya boş linkleri filtrele. 
-            // Sadece içinde bir 'slug' olan ve film/dizi linki olabilecek yapıyı ara.
-            var links = html.match(/href="([^"]+\/[^"\/]+\/)"/g); 
-            var finalSlug = "";
+        .then(function(res) { return res.text(); })
+        .then(function(html) {
+            // 4. ADIM: Linki ayıkla (Senin verdiğin /project-hail-mary-3/ yapısına göre filtrele)
+            // Sadece ana sayfa (/) olmayan ve içinde slug barındıran linki arıyoruz
+            var match = html.match(/href="([^"]+\/[^"\/]+\/)"/); 
+            var finalUrl = (match && match[1]) ? match[1] : "";
 
-            if (links) {
-                for (var i = 0; i < links.length; i++) {
-                    var link = links[i].match(/href="([^"]+)"/)[1];
-                    // Ana sayfa, search veya kategori linklerini atla
-                    if (link !== "/" && !link.includes("/search") && !link.includes("/kategori") && link.length > 5) {
-                        finalSlug = link;
-                        break; // İlk gerçek film linkini bulduk
-                    }
-                }
-            }
-
-            if (!finalSlug) {
-                console.error(`[${PROVIDER_NAME}] HATA: Uygun film sayfası bulunamadı.`);
+            if (!finalUrl || finalUrl.length < 10) {
+                console.error("[" + PROVIDER_NAME + "] HATA: Film sayfası bulunamadı.");
                 return resolve([]);
             }
 
-            var fullUrl = finalSlug.startsWith("http") ? finalSlug : BASE_URL + finalSlug;
-            console.error(`[${PROVIDER_NAME}] Doğru Sayfa Yakalandı: ${fullUrl}`);
+            var fullMovieUrl = finalUrl.startsWith("http") ? finalUrl : BASE_URL + finalUrl;
+            console.error("[" + PROVIDER_NAME + "] Film Sayfası: " + fullMovieUrl);
 
-            // 3. WatchBuddy Köprüsü
-            var bridgeUrl = "https://stream.watchbuddy.tv/izle/HDFilmCehennemi?url=" + encodeURIComponent(fullUrl);
-            return fetch(bridgeUrl, { headers: { "Referer": "https://stream.watchbuddy.tv/" } });
+            // 5. ADIM: WatchBuddy üzerinden m3u8 çek
+            var bridge = "https://stream.watchbuddy.tv/izle/HDFilmCehennemi?url=" + encodeURIComponent(fullMovieUrl);
+            return fetch(bridge, { headers: { "Referer": "https://stream.watchbuddy.tv/" } });
         })
-        .then(res => res.text())
-        .then(html => {
-            // m3u8 veya mp4 linkini çek
-            var streamMatch = html.match(/file["']?\s*:\s*["'](http[^"']+)["']/);
-            if (streamMatch && streamMatch[1]) {
-                console.error(`[${PROVIDER_NAME}] Akış Linki: ${streamMatch[1]}`);
+        .then(function(res) { return res.text(); })
+        .then(function(html) {
+            var stream = html.match(/file["']?\s*:\s*["'](http[^"']+)["']/);
+            if (stream && stream[1]) {
+                console.error("[" + PROVIDER_NAME + "] BAŞARILI: " + stream[1]);
                 resolve([{
                     name: PROVIDER_NAME,
-                    title: "HDFC 1080p",
-                    url: streamMatch[1],
+                    title: "1080p - HDFC",
+                    url: stream[1],
                     quality: "1080p",
                     headers: { "Referer": "https://stream.watchbuddy.tv/" }
                 }]);
             } else {
-                console.error(`[${PROVIDER_NAME}] WatchBuddy sayfada video bulamadı.`);
                 resolve([]);
             }
         })
-        .catch(err => {
-            console.error(`[${PROVIDER_NAME}] HATA: ${err.message}`);
+        .catch(function(e) {
+            console.error("[" + PROVIDER_NAME + "] HATA: " + e.message);
             resolve([]);
         });
     });
