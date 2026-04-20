@@ -1,4 +1,4 @@
-// Version: 4.6 (Protocol Compliant - VideoID Fix)
+// Version: 4.8 (Protocol Compliant - Raw Data Inspection)
 // Note: console.log is FORBIDDEN. Use console.error for all logs. No async/await.
 
 var cheerio = require("cheerio-without-node-native");
@@ -11,29 +11,8 @@ const DEFAULT_HEADERS = {
     "X-Requested-With": "fetch"
 };
 
-function decodeSource(parts) {
-    try {
-        console.error("[" + PROVIDER_NAME + "] DECODE: Parça sayısı -> " + parts.length);
-        let joined = parts.join("").split("").reverse().join("");
-        let rot13 = joined.replace(/[a-zA-Z]/g, function(c) {
-            return String.fromCharCode((c <= "Z" ? 90 : 122) >= (c = c.charCodeAt(0) + 13) ? c : c - 26);
-        });
-        let decodedBytes = Buffer.from(rot13, 'base64');
-        let unmixed = "";
-        for (let i = 0; i < decodedBytes.length; i++) {
-            let charCode = decodedBytes[i] & 0xFF;
-            let newChar = (charCode - (399756995 % (i + 5)) + 256) % 256;
-            unmixed += String.fromCharCode(newChar);
-        }
-        return unmixed.includes("https") ? "https" + unmixed.split("https")[1] : unmixed;
-    } catch (e) {
-        console.error("[" + PROVIDER_NAME + "] DECODE HATASI: " + e.message);
-        return null;
-    }
-}
-
 function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
-    console.error("[" + PROVIDER_NAME + "] PROTOTOKOL v4.6 BAŞLATILDI");
+    console.error("[" + PROVIDER_NAME + "] PROTOKOL v4.8: HAM VERI ANALIZI BASLADI");
     
     return new Promise(function(resolve) {
         var isMovie = mediaType === 'movie';
@@ -42,94 +21,74 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
         fetch(tmdbUrl, { headers: DEFAULT_HEADERS })
             .then(function(res) { return res.json(); })
             .then(function(tmdbData) {
-                console.error("[" + PROVIDER_NAME + "] TMDB VERİSİ ALINDI -> " + (tmdbData.title || tmdbData.name));
-                var query = (tmdbData.title || tmdbData.name).replace(/['":]/g, "").trim();
+                var query = (tmdbData.title || tmdbData.name || "").replace(/['":]/g, "").trim();
+                console.error("[" + PROVIDER_NAME + "] TMDB'DEN GELEN ISIM -> " + query);
                 return fetch(BASE_URL + "/search?q=" + encodeURIComponent(query), { headers: DEFAULT_HEADERS });
             })
             .then(function(res) { return res.json(); })
             .then(function(searchData) {
-                console.error("[" + PROVIDER_NAME + "] ARAMA YANITI -> Sonuç: " + (searchData.results ? searchData.results.length : 0));
                 var results = searchData.results || [];
-                if (results.length === 0) return resolve(EMPTY_RESULT);
+                if (results.length === 0) throw new Error("Arama sonucu donmedi.");
 
                 var $search = cheerio.load(results[0]);
                 var targetUrl = $search("a").first().attr("href");
-                if (!targetUrl) return resolve(EMPTY_RESULT);
-
+                
                 if (!isMovie) {
                     targetUrl = targetUrl.replace(/\/$/, "") + "-sezon-" + seasonNum + "-bolum-" + episodeNum;
                 }
-                console.error("[" + PROVIDER_NAME + "] HEDEF SAYFA -> " + targetUrl);
+                console.error("[" + PROVIDER_NAME + "] SITEDEN CEKILEN HEDEF URL -> " + targetUrl);
                 return fetch(targetUrl, { headers: DEFAULT_HEADERS });
             })
-            .then(function(res) { return res.text(); })
+            .then(function(res) { 
+                if (!res) throw new Error("Sayfa fetch edilemedi.");
+                return res.text(); 
+            })
             .then(function(pageHtml) {
-                var $page = cheerio.load(pageHtml);
+                // --- KRITIK VERI INCELEME ALANI ---
+                // Sayfanın player kısmını veya data-video geçebilecek yerleri ham olarak logluyoruz
+                var rawInspect = pageHtml.match(/<button.*?class="alternative-link".*?>/gi) || 
+                                 pageHtml.match(/data-video=["'].*?["']/gi) ||
+                                 ["VIDEO_ID_YAPISI_BULUNAMADI"];
                 
-                // --- VİDEO ID ÇEKME STRATEJİSİ (v4.6 Güncellemesi) ---
-                var videoID = $page("button.alternative-link").first().attr("data-video") || 
-                              $page(".player-container").attr("data-video") ||
-                              $page("[data-video]").first().attr("data-video");
+                console.error("[" + PROVIDER_NAME + "] HAM HTML KESITI (ILK 3 BULGU) -> " + JSON.stringify(rawInspect.slice(0, 3)));
+                
+                var $page = cheerio.load(pageHtml);
+                var videoID = $page("button.alternative-link").attr("data-video") || 
+                              $page("[data-video]").attr("data-video");
 
-                // Eğer hala bulunamadıysa script içinden ayıkla
+                // Regex ile de deniyoruz
                 if (!videoID) {
-                    var scriptMatch = pageHtml.match(/data-video=\"(\d+)\"/i);
-                    videoID = scriptMatch ? scriptMatch[1] : null;
+                    var m = pageHtml.match(/data-video=["'](\d+)["']/i);
+                    videoID = m ? m[1] : null;
                 }
 
-                console.error("[" + PROVIDER_NAME + "] VİDEO ID DURUMU -> " + (videoID || "BULUNAMADI"));
-                if (!videoID) return resolve(EMPTY_RESULT);
+                console.error("[" + PROVIDER_NAME + "] ISLENMIS VIDEO ID -> " + (videoID || "YOK"));
+                if (!videoID) throw new Error("Site yapisinda videoID artik farkli bir isimde veya yapida.");
 
                 return fetch(BASE_URL + "/video/" + videoID + "/", { 
-                    headers: Object.assign({}, DEFAULT_HEADERS, { "Referer": targetUrl || BASE_URL }) 
+                    headers: Object.assign({}, DEFAULT_HEADERS, { "Referer": BASE_URL + "/" }) 
                 });
             })
-            .then(function(res) { return res.text(); })
+            .then(function(res) { 
+                return res.text(); 
+            })
             .then(function(apiHtml) {
-                console.error("[" + PROVIDER_NAME + "] API HTML UZUNLUK -> " + apiHtml.length);
+                console.error("[" + PROVIDER_NAME + "] API'DEN DONEN HAM VERI -> " + apiHtml.substring(0, 150));
                 var iframeMatch = apiHtml.match(/data-src=\\"([^"]+)/);
                 var iframeUrl = iframeMatch ? iframeMatch[1].replace(/\\/g, "") : "";
                 
-                if (!iframeUrl) {
-                    console.error("[" + PROVIDER_NAME + "] IFRAME BULUNAMADI");
-                    return resolve(EMPTY_RESULT);
-                }
-
-                if (iframeUrl.includes("rapidrame")) {
-                    var rapidID = iframeUrl.split("?rapidrame_id=")[1];
-                    iframeUrl = BASE_URL + "/rplayer/" + (rapidID || "");
-                }
-
-                console.error("[" + PROVIDER_NAME + "] IFRAME URL -> " + iframeUrl);
-                return fetch(iframeUrl, { headers: DEFAULT_HEADERS });
-            })
-            .then(function(res) { return res.text(); })
-            .then(function(playerHtml) {
-                var fileLinkMatch = playerHtml.match(/file_link=\"(.*?)\"/);
-                if (!fileLinkMatch) {
-                    console.error("[" + PROVIDER_NAME + "] FILE_LINK YOK");
-                    return resolve(EMPTY_RESULT);
-                }
-
-                var partsMatch = fileLinkMatch[1].match(/\"(.*?)\"/g);
-                var parts = partsMatch ? partsMatch.map(function(p) { return p.replace(/\"/g, ""); }) : [];
+                if (!iframeUrl) throw new Error("Iframe ayiklanamadi.");
                 
-                var finalLink = decodeSource(parts);
-                if (finalLink) {
-                    console.error("[" + PROVIDER_NAME + "] BAŞARILI LINK ÜRETİLDİ");
-                    resolve([{
-                        name: PROVIDER_NAME,
-                        title: "HDFC - Full HD",
-                        url: finalLink,
-                        quality: "1080p",
-                        headers: { "User-Agent": DEFAULT_HEADERS["User-Agent"], "Referer": BASE_URL + "/" }
-                    }]);
-                } else {
-                    resolve(EMPTY_RESULT);
-                }
+                resolve([{
+                    name: PROVIDER_NAME,
+                    title: "HDFC - VIP",
+                    url: iframeUrl, // Simdilik rplayer'a girmeden once iframe'i gorelim
+                    quality: "720p/1080p",
+                    headers: { "User-Agent": DEFAULT_HEADERS["User-Agent"] }
+                }]);
             })
             .catch(function(err) {
-                console.error("[" + PROVIDER_NAME + "] PROTOKOL HATASI -> " + err.message);
+                console.error("[" + PROVIDER_NAME + "] DURDURULDU: " + err.message);
                 resolve(EMPTY_RESULT);
             });
     });
