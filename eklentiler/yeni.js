@@ -1,122 +1,114 @@
 /**
- * Nuvio Scraper - FilmCennetim (KekikStream Based)
- * Hata payını minimize etmek için harici axios bağımlılığı kaldırıldı.
+ * Nuvio Scraper - FilmCennetim (GitHub nuviotr mantığıyla)
+ * Bu kod Nuvio QuickJS ortamında doğrudan çalışacak şekilde optimize edilmiştir.
  */
 
 const BASE_URL = "https://stream.watchbuddy.tv";
 
 const Scraper = {
-    // 1. Arama Fonksiyonu
-    search: async function(query) {
-        try {
-            const searchUrl = `${BASE_URL}/ara/FilmCennetim?lang=tr&sorgu=${encodeURIComponent(query)}`;
-            const response = await fetch(searchUrl);
-            
-            if (!response.ok) {
-                console.error(`[Scraper Error] Arama isteği başarısız: ${response.status} - ${searchUrl}`);
-                return [];
-            }
+    /**
+     * Arama Fonksiyonu: Nuvio arama çubuğuna yazıldığında tetiklenir.
+     */
+    search: function(query) {
+        const searchUrl = `${BASE_URL}/ara/FilmCennetim?lang=tr&sorgu=${encodeURIComponent(query)}`;
+        
+        console.error(`[Nuvio-Info] Arama URL: ${searchUrl}`);
 
-            const html = await response.text();
-            
-            // Not: Eğer ortamda cheerio yoksa regex ile manuel ayıklama yapılır.
-            // Burada en güvenli yöntem olan URL tabanlı yakalamayı kullanıyoruz.
-            const results = [];
-            const regex = /href="(\/izle\/FilmCennetim\?[^"]+)"/g;
-            let match;
+        return fetch(searchUrl)
+            .then(res => {
+                if (!res.ok) throw new Error(`HTTP Hata: ${res.status}`);
+                return res.text();
+            })
+            .then(html => {
+                const results = [];
+                // GitHub providerlarındaki mantık: URL parametrelerini Regex ile yakala
+                const regex = /href="(\/izle\/FilmCennetim\?[^"]+)"/g;
+                let match;
 
-            while ((match = regex.exec(html)) !== null) {
-                try {
-                    const fullLink = match[1].replace(/&amp;/g, '&');
-                    const params = new URLSearchParams(fullLink.split('?')[1]);
-                    
-                    results.push({
-                        id: fullLink,
-                        name: params.get('baslik') || "Bilinmeyen İçerik",
-                        poster: params.get('poster_url') || "",
-                        type: 'movie',
-                        description: `Yıl: ${params.get('year') || '-'} | IMDb: ${params.get('rating') || '-'}`
-                    });
-                } catch (e) {
-                    console.error("[Scraper Error] Link parse edilemedi:", e.message);
+                while ((match = regex.exec(html)) !== null) {
+                    try {
+                        const path = match[1].replace(/&amp;/g, '&');
+                        const params = new URLSearchParams(path.split('?')[1]);
+                        
+                        results.push({
+                            id: path,
+                            name: params.get('baslik') || "İsimsiz",
+                            poster: params.get('poster_url') || "",
+                            type: 'movie'
+                        });
+                    } catch (e) {
+                        console.error("[Nuvio-Error] Link parse hatası: " + e.message);
+                    }
                 }
-            }
-
-            return results;
-
-        } catch (error) {
-            console.error("[Scraper Critical] Search fonksiyonu çöktü:", error.message);
-            return [];
-        }
+                return results;
+            })
+            .catch(err => {
+                console.error("[Nuvio-Critical] Search Fonksiyonu Çöktü: " + err.message);
+                return [];
+            });
     },
 
-    // 2. Detay Getirme (Meta)
-    getMeta: async function(id) {
+    /**
+     * Detay Fonksiyonu: Bir film kartına tıklandığında çalışır.
+     */
+    getMeta: function(id) {
+        console.error(`[Nuvio-Info] Meta getiriliyor: ${id}`);
         try {
-            // ID zaten tam URL veya path olarak geliyor
-            const metaUrl = id.startsWith('http') ? id : `${BASE_URL}${id}`;
-            const params = new URLSearchParams(metaUrl.split('?')[1]);
-
-            // Detay sayfasından ekstra bilgi çekmek gerekirse fetch yapılabilir
-            // Ancak şablon gereği URL parametreleri yeterli
-            return {
+            const params = new URLSearchParams(id.split('?')[1]);
+            return Promise.resolve({
                 id: id,
                 name: params.get('baslik'),
                 poster: params.get('poster_url'),
                 background: params.get('poster_url'),
                 type: 'movie',
-                releaseInfo: params.get('year'),
-                imdbRating: params.get('rating'),
-                description: `${params.get('baslik')} içeriğini izlemek için kaynakları kontrol edin.`
-            };
-        } catch (error) {
-            console.error("[Scraper Critical] getMeta hatası:", error.message);
-            return null;
+                releaseInfo: params.get('year') || "",
+                imdbRating: params.get('rating') || ""
+            });
+        } catch (e) {
+            console.error("[Nuvio-Critical] getMeta Hatası: " + e.message);
+            return Promise.resolve(null);
         }
     },
 
-    // 3. Yayın Kaynaklarını Çekme (Stream)
-    getStreams: async function(id) {
-        try {
-            const streamUrl = id.startsWith('http') ? id : `${BASE_URL}${id}`;
-            const response = await fetch(streamUrl);
-            
-            if (!response.ok) {
-                console.error(`[Scraper Error] Stream sayfası yüklenemedi: ${response.status}`);
-                return [];
-            }
+    /**
+     * Yayın Fonksiyonu: Oynat tuşuna basıldığında kaynakları getirir.
+     */
+    getStreams: function(id) {
+        const streamUrl = id.startsWith('http') ? id : `${BASE_URL}${id}`;
+        console.error(`[Nuvio-Info] Stream çekiliyor: ${streamUrl}`);
 
-            const html = await response.text();
-            const streams = [];
+        return fetch(streamUrl)
+            .then(res => {
+                if (!res.ok) throw new Error(`HTTP Hata: ${res.status}`);
+                return res.text();
+            })
+            .then(html => {
+                const streams = [];
+                // Iframe kaynaklarını bulma mantığı
+                const iframeRegex = /<iframe[^>]+src="([^"]+)"/g;
+                let match;
+                let count = 1;
 
-            // HTML içindeki iframe (embed) kaynaklarını yakala
-            const iframeRegex = /<iframe[^>]+src="([^"]+)"/g;
-            let match;
-            let counter = 1;
-
-            while ((match = iframeRegex.exec(html)) !== null) {
-                const src = match[1];
-                if (!src.includes('googletagmanager')) { // Reklam servislerini ele
-                    streams.push({
-                        title: `Kaynak #${counter++}`,
-                        url: src,
-                        type: 'embed'
-                    });
+                while ((match = iframeRegex.exec(html)) !== null) {
+                    const src = match[1];
+                    if (src && src.includes('http')) {
+                        streams.push({
+                            title: `Kaynak ${count++}`,
+                            url: src,
+                            type: 'embed'
+                        });
+                    }
                 }
-            }
-
-            if (streams.length === 0) {
-                console.error("[Scraper Warning] Hiç yayın kaynağı bulunamadı.");
-            }
-
-            return streams;
-
-        } catch (error) {
-            console.error("[Scraper Critical] getStreams hatası:", error.message);
-            return [];
-        }
+                
+                if (streams.length === 0) console.error("[Nuvio-Warning] Hiç kaynak bulunamadı!");
+                return streams;
+            })
+            .catch(err => {
+                console.error("[Nuvio-Critical] getStreams Hatası: " + err.message);
+                return [];
+            });
     }
 };
 
-// Nuvio'nun tanıması için export
+// Nuvio'nun modülü tanıması için zorunlu alan
 module.exports = Scraper;
