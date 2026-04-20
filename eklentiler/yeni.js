@@ -1,3 +1,7 @@
+// ============================================================
+// JetFilmizle — Nuvio Provider (Full Debug & Pixeldrain Fix)
+// ============================================================
+
 var BASE_URL     = 'https://jetfilmizle.net';
 var TMDB_API_KEY = '500330721680edb6d5f7f12ba7cd9023';
 
@@ -7,6 +11,7 @@ var HEADERS = {
     'Referer': BASE_URL + '/'
 };
 
+// ── Slug Oluşturucu ──────────────────────────────────────────
 function titleToSlug(t) {
     return (t || '').toLowerCase()
         .replace(/ğ/g,'g').replace(/ü/g,'u').replace(/ş/g,'s')
@@ -15,40 +20,21 @@ function titleToSlug(t) {
         .replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'');
 }
 
+// ── TMDB Bilgi Çekme ─────────────────────────────────────────
 function fetchTmdbInfo(tmdbId) {
-    console.error('[Nuvio-Debug] TMDB İsteği Atılıyor: ' + tmdbId);
+    console.error('[Nuvio-Debug] TMDB İsteği: ' + tmdbId);
     return fetch('https://api.themoviedb.org/3/movie/' + tmdbId + '?api_key=' + TMDB_API_KEY + '&language=tr-TR')
         .then(function(r) { return r.json(); })
         .then(function(d) {
-            if (!d.title) throw new Error('TMDB Verisi Dönmedi');
+            if (!d.title) throw new Error('TMDB verisi boş döndü');
             console.error('[Nuvio-Debug] TMDB Başarılı: ' + d.title);
             return { titleTr: d.title, titleEn: d.original_title };
         });
 }
 
-function findFilmPage(titleTr, titleEn) {
-    var slugTr = titleToSlug(titleTr);
-    var urlTr = BASE_URL + '/film/' + slugTr;
-    
-    console.error('[Nuvio-Debug] Direkt Link Deneniyor: ' + urlTr);
-
-    return fetch(urlTr, { headers: HEADERS })
-        .then(function(r) {
-            if (r.ok) return r.text();
-            console.error('[Nuvio-Debug] Direkt Link Başarısız (404), Arama Yapılıyor...');
-            return searchAndGetPage(titleTr);
-        })
-        .then(function(html) {
-            // HTML içeriğinde film var mı kontrolü
-            if (html.indexOf('film_id') !== -1 || html.indexOf('div#movie') !== -1) {
-                console.error('[Nuvio-Debug] Film Sayfası Onaylandı.');
-                return html;
-            }
-            throw new Error('Geçerli Film Sayfası Bulunamadı');
-        });
-}
-
+// ── Arama Motoru ─────────────────────────────────────────────
 function searchAndGetPage(query) {
+    console.error('[Nuvio-Debug] Site İçi Arama Başladı: ' + query);
     return fetch(BASE_URL + '/filmara.php', {
         method: 'POST',
         headers: Object.assign({}, HEADERS, { 'Content-Type': 'application/x-www-form-urlencoded' }),
@@ -59,13 +45,35 @@ function searchAndGetPage(query) {
         var re = /href="(https?:\/\/jetfilmizle\.net\/film\/[^"?#]+)"/g;
         var m = re.exec(html);
         if (m) {
-            console.error('[Nuvio-Debug] Arama Sonucu Bulundu: ' + m[1]);
+            console.error('[Nuvio-Debug] Arama Sonucu Sayfası: ' + m[1]);
             return fetch(m[1], { headers: HEADERS }).then(function(r) { return r.text(); });
         }
-        throw new Error('Arama Sonucu Boş');
+        throw new Error('Arama sonucu bulunamadı');
     });
 }
 
+// ── Film Sayfasını Bulma ──────────────────────────────────────
+function findFilmPage(titleTr, titleEn) {
+    var slugTr = titleToSlug(titleTr);
+    var urlTr = BASE_URL + '/film/' + slugTr;
+    
+    console.error('[Nuvio-Debug] Direkt Link Deneniyor: ' + urlTr);
+
+    return fetch(urlTr, { headers: HEADERS })
+        .then(function(r) {
+            if (r.ok) return r.text();
+            return searchAndGetPage(titleTr);
+        })
+        .then(function(html) {
+            if (html.indexOf('film_id') !== -1 || html.indexOf('div#movie') !== -1) {
+                console.error('[Nuvio-Debug] Film Sayfası Onaylandı.');
+                return html;
+            }
+            throw new Error('Geçerli film içeriği bulunamadı');
+        });
+}
+
+// ── Ana Akış ─────────────────────────────────────────────────
 function getStreams(id, mediaType) {
     var tmdbId = id.toString().replace(/[^0-9]/g, '');
     console.error('[Nuvio-Debug] getStreams Başladı. ID: ' + tmdbId);
@@ -76,34 +84,41 @@ function getStreams(id, mediaType) {
         })
         .then(function(html) {
             var streams = [];
-            // Iframe Ayıklama
-            var iframeRe = /<iframe[^>]+(?:data-litespeed-src|src)="([^"]+)"/gi;
             var m;
+
+            // 1. Pixeldrain Linklerini Çöz ve Video Linkine Dönüştür
+            var pdRe = /href="(https?:\/\/pixeldrain\.com\/u\/([^"]+))"/g;
+            while ((m = pdRe.exec(html)) !== null) {
+                var fileId = m[2]; 
+                console.error('[Nuvio-Debug] Pixeldrain Dönüştürülüyor: ' + fileId);
+                
+                streams.push({
+                    title: 'Pixeldrain - ' + (streams.length + 1),
+                    url: 'https://pixeldrain.com/api/file/' + fileId + '?download',
+                    type: 'video',
+                    headers: { 
+                        'Referer': 'https://pixeldrain.com/',
+                        'User-Agent': HEADERS['User-Agent']
+                    }
+                });
+            }
+            
+            // 2. Iframe (Jetv / D2RS) Kaynakları
+            var iframeRe = /<iframe[^>]+(?:data-litespeed-src|src)="([^"]+)"/gi;
             while ((m = iframeRe.exec(html)) !== null) {
                 var src = m[1];
                 if (src.indexOf('jetv') !== -1 || src.indexOf('d2rs') !== -1) {
-                    console.error('[Nuvio-Debug] Kaynak Bulundu: ' + src);
+                    console.error('[Nuvio-Debug] Iframe Kaynağı Eklendi: ' + src);
                     streams.push({
-                        title: 'Jetv / D2RS',
-                        url: src,
+                        title: 'Hızlı Kaynak (Jetv)',
+                        url: src.startsWith('//') ? 'https:' + src : src,
                         type: 'embed',
                         headers: { 'Referer': BASE_URL + '/' }
                     });
                 }
             }
-            
-            // Pixeldrain Ayıklama
-            var pdRe = /href="(https?:\/\/pixeldrain\.com\/u\/[^"]+)"/g;
-            while ((m = pdRe.exec(html)) !== null) {
-                console.error('[Nuvio-Debug] Pixeldrain Bulundu: ' + m[1]);
-                streams.push({
-                    title: 'Pixeldrain',
-                    url: m[1],
-                    type: 'embed'
-                });
-            }
 
-            if (streams.length === 0) console.error('[Nuvio-Debug] Hiçbir Stream Linki Bulunamadı!');
+            console.error('[Nuvio-Debug] İşlem Tamam. Toplam Kaynak: ' + streams.length);
             return streams;
         })
         .catch(function(err) {
@@ -112,6 +127,7 @@ function getStreams(id, mediaType) {
         });
 }
 
+// ── Export ───────────────────────────────────────────────────
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = { getStreams: getStreams };
 } else {
