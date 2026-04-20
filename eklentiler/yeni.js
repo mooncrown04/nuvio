@@ -1,6 +1,6 @@
 /**
  * JetFilmizle — Nuvio Provider
- * Gelişmiş Eşleştirme: Arama motorunu atlayıp doğrudan slug denemesi yapar.
+ * Akıllı Eşleştirme + Dizi Kaynak Çözücü
  */
 
 var BASE_URL     = 'https://jetfilmizle.net';
@@ -11,7 +11,6 @@ var HEADERS = {
     'Referer': BASE_URL + '/'
 };
 
-// Türkçe karakterleri ve boşlukları siteye uygun slug haline getirir
 function jetSlug(t) {
     return (t || '').toLowerCase()
         .replace(/ğ/g,'g').replace(/ü/g,'u').replace(/ş/g,'s')
@@ -30,7 +29,6 @@ function getStreams(id, mediaType, season, episode) {
             var slugTR = jetSlug(info.name || info.title);
             var slugEN = jetSlug(info.original_name || info.original_title);
             
-            // Sırasıyla denenecek URL varyasyonları
             var urls = [];
             if (mediaType === 'tv') {
                 var suffix = '/sezon-' + (season || 1) + '/bolum-' + (episode || 1);
@@ -42,48 +40,62 @@ function getStreams(id, mediaType, season, episode) {
                 urls.push(BASE_URL + '/film/' + slugTR + '-izle');
             }
 
-            // İlk başarılı URL'yi bulana kadar dene
             return attemptUrls(urls);
         })
         .then(function(html) {
             if (!html) return [];
 
             var streams = [];
-            var dil = (html.indexOf('dublaj') !== -1) ? "Dublaj" : "Altyazı";
+            // Dil Etiketi Analizi
+            var isDublaj = html.indexOf('dublaj') !== -1 || html.indexOf('Türkçe Dublaj') !== -1;
+            var label = isDublaj ? "Dublaj" : "Altyazı";
 
-            // Pixeldrain Yakalayıcı
-            var pdRe = /href="(https?:\/\/pixeldrain\.com\/u\/([^"]+))"/g;
+            // 1. Pixeldrain Yakala (Dizilerde bazen data-url içinde olur)
+            var pdRe = /(?:href|data-url)="https?:\/\/pixeldrain\.com\/u\/([^"&\s]+)"/g;
             var m;
             while ((m = pdRe.exec(html)) !== null) {
                 streams.push({
-                    name: "JetFilmizle",
-                    title: '⌜ Pixeldrain ⌟ | 🇹🇷 ' + dil,
-                    url: 'https://pixeldrain.com/api/file/' + m[2] + '?download',
+                    name: "JetFilm",
+                    title: '⌜ Pixeldrain ⌟ | 🇹🇷 ' + label,
+                    url: 'https://pixeldrain.com/api/file/' + m[1] + '?download',
                     type: 'video',
                     quality: '1080p',
                     headers: { 'Referer': 'https://pixeldrain.com/' }
                 });
             }
 
-            // Hızlı Kaynak (JetV/D2RS)
+            // 2. JetV / D2RS Player Yakala
             var iframeRe = /<iframe[^>]+src="([^"]+)"/gi;
             while ((m = iframeRe.exec(html)) !== null) {
                 var src = m[1];
-                if (src.indexOf('jetv') !== -1 || src.indexOf('d2rs') !== -1) {
+                if (src.indexOf('jetv') !== -1 || src.indexOf('d2rs') !== -1 || src.indexOf('vidmoly') !== -1) {
                     streams.push({
-                        name: "JetFilmizle",
-                        title: '⌜ Hızlı Kaynak ⌟ | 🇹🇷 ' + dil,
+                        name: "JetFilm",
+                        title: '⌜ Hızlı Kaynak ⌟ | 🇹🇷 ' + label,
                         url: src.startsWith('//') ? 'https:' + src : src,
                         type: 'embed'
                     });
                 }
             }
+
+            // 3. Alternatif Kaynak Bulucu (Data-src veya Base64 kontrolü)
+            if (streams.length === 0) {
+                var altRe = /data-proxy="([^"]+)"/g;
+                if ((m = altRe.exec(html)) !== null) {
+                    streams.push({
+                        name: "JetFilm",
+                        title: '⌜ Alternatif ⌟ | 🇹🇷 ' + label,
+                        url: m[1],
+                        type: 'embed'
+                    });
+                }
+            }
+
             return streams;
         })
         .catch(function() { return []; });
 }
 
-// URL'leri sırayla kontrol eden yardımcı fonksiyon
 function attemptUrls(urls) {
     if (urls.length === 0) return Promise.resolve(null);
     var currentUrl = urls.shift();
@@ -91,8 +103,8 @@ function attemptUrls(urls) {
     return fetch(currentUrl, { headers: HEADERS })
         .then(function(r) { return r.text(); })
         .then(function(html) {
-            if (html.indexOf('Sayfa Bulunamadı') === -1 && html.length > 5000) {
-                console.error('[JetFilm-Success] URL Bulundu: ' + currentUrl);
+            // Sitenin gerçek bir içerik sayfası olduğunu doğrula (Boyut ve 404 kontrolü)
+            if (html.indexOf('Sayfa Bulunamadı') === -1 && html.length > 4000) {
                 return html;
             }
             return attemptUrls(urls);
