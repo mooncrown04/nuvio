@@ -1,6 +1,6 @@
 /**
  * JetFilmizle — Nuvio Provider
- * DIZI BÖLÜMÜ SABİTLEME & AUTO-SOURCE
+ * DIZI BOLUM & DINAMIK KAYNAK FIX
  */
 
 var BASE_URL     = 'https://jetfilmizle.net';
@@ -8,8 +8,7 @@ var TMDB_API_KEY = '500330721680edb6d5f7f12ba7cd9023';
 
 var HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36',
-    'Referer': BASE_URL + '/',
-    'X-Requested-With': 'XMLHttpRequest'
+    'Referer': BASE_URL + '/'
 };
 
 function jetSlug(t) {
@@ -40,37 +39,38 @@ function getStreams(id, mediaType, season, episode) {
             return attemptUrls(urls);
         })
         .then(function(html) {
-            if (!html) return [];
-
-            var streams = [];
-            
-            // --- DIZI MANTIGI: Seçili Bölümü Bul ---
-            if (mediaType === 'tv') {
-                console.error('[JetFilm-Debug] Bölüm ID aranıyor...');
-                // HTML içinde "2. Sezon 7. Bölüm" gibi geçen yerdeki data-id'yi yakalar
-                // JetFilm formatı: data-season="2" data-episode="7" data-id="12345"
-                var episodeRegex = new RegExp('data-season="' + s + '"[^>]+data-episode="' + e + '"[^>]+data-id="(\\d+)"', 'i');
-                var match = episodeRegex.exec(html);
-
-                if (match && match[1]) {
-                    var episodeId = match[1];
-                    console.error('[JetFilm-Success] Bölüm ID Bulundu: ' + episodeId);
-                    
-                    // Bu ID ile gidip asıl video kaynağını almamız lazım (Gerekirse)
-                    // Ama JetFilm Pixeldrain linklerini genellikle sayfanın altına "tab" olarak basar.
-                }
+            if (!html) {
+                console.error('[JetFilm-Error] Sayfa bulunamadı.');
+                return [];
             }
 
-            // 1. Pixeldrain (Tüm Sayfayı Tara)
-            var pdRe = /https?:\/\/pixeldrain\.com\/u\/([^"&\s/]+)/g;
+            var streams = [];
+            console.error('[JetFilm-Debug] Sayfa Analiz Ediliyor...');
+
+            // 1. Bölüm Spesifik Filtreleme (Diziler için)
+            // Sitede bölümler <li ... data-season="2" data-episode="7" data-id="XXXXX"> şeklinde olabilir.
+            var epPattern = new RegExp('data-season=["\']' + s + '["\'][^>]+data-episode=["\']' + e + '["\']', 'i');
+            var isEpisodeFound = epPattern.test(html);
+            
+            if (mediaType === 'tv') {
+                console.error('[JetFilm-Debug] Bölüm eşleşmesi durumu: ' + (isEpisodeFound ? 'BAŞARILI' : 'BULUNAMADI'));
+            }
+
+            // 2. Pixeldrain Yakalayıcı (Tüm yapıları kapsar)
+            // HTML içinde hem link hem de data-url olarak arar
+            var pdRe = /(?:href|data-url|value)=["\']?(https?:\/\/pixeldrain\.com\/u\/[a-zA-Z0-9_-]+)/g;
             var m;
             while ((m = pdRe.exec(html)) !== null) {
-                if (streams.length < 5) { // Log kirliliği olmasın
-                    console.error('[JetFilm-Debug] Kaynak Yakalandı (Pixeldrain): ' + m[1]);
+                var pdUrl = m[1];
+                var pdId = pdUrl.split('/u/')[1];
+                
+                // Aynı linki tekrar ekleme
+                if (!streams.some(x => x.url.includes(pdId))) {
+                    console.error('[JetFilm-Debug] Pixeldrain Linki Bulundu: ' + pdId);
                     streams.push({
                         name: "JetFilm",
-                        title: '⌜ Pixeldrain ⌟',
-                        url: 'https://pixeldrain.com/api/file/' + m[1] + '?download',
+                        title: '⌜ Pixeldrain ⌟ | S' + s + ' E' + e,
+                        url: 'https://pixeldrain.com/api/file/' + pdId + '?download',
                         type: 'video',
                         quality: '1080p',
                         headers: { 'Referer': 'https://pixeldrain.com/' }
@@ -78,22 +78,41 @@ function getStreams(id, mediaType, season, episode) {
                 }
             }
 
-            // 2. Iframe (Player)
-            var iframeRe = /<iframe[^>]+src="([^"]+)"/gi;
+            // 3. Iframe / Player Yakalayıcı
+            var iframeRe = /<iframe[^>]+src=["\']([^"\']+)["\']/gi;
             while ((m = iframeRe.exec(html)) !== null) {
                 var src = m[1];
-                if (/jetv|vidmoly|d2rs|moly|player/.test(src)) {
+                if (/jetv|vidmoly|d2rs|moly|player|vido/.test(src)) {
                     var finalSrc = src.startsWith('//') ? 'https:' + src : src;
+                    console.error('[JetFilm-Debug] Player Kaynağı Bulundu: ' + finalSrc);
                     streams.push({
                         name: "JetFilm",
-                        title: '⌜ Player ⌟',
+                        title: '⌜ Hızlı Kaynak ⌟',
                         url: finalSrc,
                         type: 'embed'
                     });
                 }
             }
 
-            console.error('[JetFilm-Debug] Toplam: ' + streams.length + ' kaynak.');
+            // 4. Eğer hala 0 ise, JS içindeki gizli "video_url" veya "file" tanımlarını ara
+            if (streams.length === 0) {
+                console.error('[JetFilm-Debug] Standart yöntemler sonuç vermedi, derin tarama yapılıyor...');
+                var deepRe = /["']?(?:file|link|url)["']?\s*[:=]\s*["'](https?:\/\/[^"']+)["']/gi;
+                while ((m = deepRe.exec(html)) !== null) {
+                    if (m[1].indexOf('pixeldrain') !== -1) {
+                         // Pixeldrain linkini JS içinden yakala
+                         var dId = m[1].split('/u/')[1].split(/[?&"']/)[0];
+                         streams.push({
+                            name: "JetFilm",
+                            title: '⌜ Pixeldrain (Derin) ⌟',
+                            url: 'https://pixeldrain.com/api/file/' + dId + '?download',
+                            type: 'video'
+                         });
+                    }
+                }
+            }
+
+            console.error('[JetFilm-Debug] İşlem Bitti. Toplam: ' + streams.length + ' kaynak.');
             return streams;
         });
 }
@@ -107,8 +126,8 @@ function attemptUrls(urls) {
             return null;
         })
         .then(function(html) {
-            if (html && html.indexOf('Sayfa Bulunamadı') === -1 && html.length > 5000) {
-                console.error('[JetFilm-Success] Sayfa: ' + currentUrl);
+            if (html && html.indexOf('Sayfa Bulunamadı') === -1 && html.length > 3000) {
+                console.error('[JetFilm-Success] Giriş Yapıldı: ' + currentUrl);
                 return html;
             }
             return attemptUrls(urls);
