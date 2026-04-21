@@ -1,6 +1,6 @@
 /**
  * JetFilmizle - Nuvio Provider
- * ULTIMATE BYPASS (No setTimeout, Pure JS)
+ * EMBED DECODER MODE
  */
 
 const BASE_URL = 'https://jetfilmizle.net';
@@ -11,11 +11,10 @@ async function getStreams(id, mediaType, season, episode) {
     const url = `${BASE_URL}/dizi/cobra-kai`; 
 
     try {
-        // 1. ADIM: Sayfa içeriğini al
         const response = await fetch(url);
         const html = await response.text();
 
-        // Verileri ayıkla
+        // 1. Verileri yakala
         const tokenMatch = html.match(/name="csrf-token"\s+content="([^"]+)"/i);
         const filmIdMatch = html.match(/data-film-id=["'](\d+)["']/i) || html.match(/name=["']film_id["']\s*value=["'](\d+)["']/i);
         const btnRegex = new RegExp(`data-source-index=["'](\\d+)["'][^>]*data-season=["']${s}["'][^>]*data-episode=["']${e}["']`, 'i');
@@ -28,73 +27,69 @@ async function getStreams(id, mediaType, season, episode) {
         const sourceIndex = btnMatch[1];
         const playerType = btnMatch[0].includes('dublaj') ? 'dublaj' : 'altyazili';
 
-        console.error(`[JET] ID:${filmId} | Index:${sourceIndex}`);
-
-        // 2. ADIM: Manuel Bekleme (setTimeout yerine)
-        // Bot koruması için milisaniyelik bir boş döngü
-        const start = Date.now();
-        while (Date.now() - start < 300) { /* bekle */ }
-
-        // 3. ADIM: POST İsteği
+        // 2. jetplayer POST isteği
         const playerResponse = await fetch(`${BASE_URL}/jetplayer`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
                 'X-Requested-With': 'XMLHttpRequest',
                 'X-CSRF-TOKEN': token,
-                'Referer': url,
-                'User-Agent': 'Mozilla/5.0 (Android TV)'
+                'Referer': url
             },
             body: `film_id=${filmId}&source_index=${sourceIndex}&player_type=${playerType}&is_series=1`
         });
 
-        const playerHtml = await playerResponse.text();
+        const playerRaw = await playerResponse.text();
+        console.error(`[JET-DEBUG] Gelen Yanıt: ${playerRaw}`);
 
-        // 4. ADIM: Link Ayıklama
-        let streamUrl = "";
-        
-        // Önce iframe src ara
-        const iframeM = playerHtml.match(/src=["']([^"']+)["']/i);
-        if (iframeM) {
-            streamUrl = iframeM[1];
-        } else {
-            // Iframe yoksa doğrudan link ara
-            const linkM = playerHtml.match(/https?:\/\/(?:pixeldrain|vidmoly|ok\.ru|mail\.ru)[^"'\s]+/i);
-            if (linkM) streamUrl = linkM[0];
-        }
-
-        // 5. ADIM: Eğer hala link yoksa "Erişim Engellendi" alınmış demektir, Base64 tara
-        if (!streamUrl || playerHtml.includes('engellendi')) {
-            console.error('[JET] Post engellendi, HTML deşifre ediliyor...');
-            const b64Regex = /[A-Za-z0-9+/]{50,}=*/g;
-            let m;
-            while ((m = b64Regex.exec(html)) !== null) {
-                try {
-                    // atob yoksa alternatif (Buffer) kontrolü veya manuel decode gerekebilir
-                    const decoded = (typeof atob !== 'undefined') ? atob(m[0]) : ""; 
-                    if (decoded.includes('http')) {
-                        streamUrl = decoded;
-                        break;
+        // 3. Eğer gelen yanıt bir JS dosyasıysa (/public/embed.js gibi)
+        let finalLink = "";
+        if (playerRaw.includes('.js')) {
+            const jsPath = playerRaw.match(/src=["']([^"']+)["']/i) || [null, playerRaw.trim()];
+            let fullJsUrl = jsPath[1];
+            
+            if (fullJsUrl) {
+                if (fullJsUrl.startsWith('/')) fullJsUrl = BASE_URL + fullJsUrl;
+                
+                console.error(`[JET-EMBED] JS Dosyası Okunuyor: ${fullJsUrl}`);
+                const jsRes = await fetch(fullJsUrl);
+                const jsContent = await jsRes.text();
+                
+                // JS içindeki linkleri veya Base64 bloklarını tara
+                const linkM = jsContent.match(/https?:\/\/(?:pixeldrain|vidmoly|ok\.ru|mail\.ru)[^"'\s]+/i);
+                if (linkM) {
+                    finalLink = linkM[0];
+                } else {
+                    // JS içinde gizli bir Base64 listesi var mı?
+                    const b64M = jsContent.match(/[A-Za-z0-9+/]{50,}=*/);
+                    if (b64M && typeof atob !== 'undefined') {
+                        const decoded = atob(b64M[0]);
+                        if (decoded.includes('http')) finalLink = decoded;
                     }
-                } catch(e) {}
+                }
             }
+        } else {
+            // Eğer doğrudan link geldiyse ayıkla
+            const linkM = playerRaw.match(/https?:\/\/[^"'\s]+/i);
+            if (linkM) finalLink = linkM[0];
         }
 
-        if (streamUrl) {
-            if (streamUrl.startsWith('//')) streamUrl = 'https:' + streamUrl;
-            console.error(`[JET-FINAL] ${streamUrl}`);
+        // 4. Sonuç Döndür
+        if (finalLink) {
+            console.error(`[JET-BULDUM] Final: ${finalLink}`);
             return [{
                 name: "JetFilmizle",
-                title: `S${s} E${e} (${playerType})`,
-                url: streamUrl,
+                title: `S${s} E${e} (ID: ${sourceIndex})`,
+                url: finalLink,
                 type: "embed"
             }];
         }
 
+        console.error('[JET-HATA] Link deşifre edilemedi.');
         return [];
 
     } catch (err) {
-        console.error(`[JET-ERROR] ${err.message}`);
+        console.error(`[JET-CRITICAL] ${err.message}`);
         return [];
     }
 }
