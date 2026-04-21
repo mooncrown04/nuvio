@@ -1,79 +1,69 @@
 /**
- * JetFilmizle - Nuvio Provider 
- * STRIKE TEAM - Düğüm Çözüldü
+ * JetFilmizle & Videopark - Universal Stream Extractor
+ * Hem m3u8 linklerini hem de gizli JS değişkenlerini yakalar.
  */
 
-const BASE_URL = 'https://jetfilmizle.net';
-
 async function getStreams(id, mediaType, season, episode) {
-    const s = season || 1;
-    const e = episode || 1;
-    // Not: Buradaki URL'yi dinamik film ismiyle değiştirebilirsin (id parametresi ile)
-    const url = `${BASE_URL}/dizi/cobra-kai`; 
+    // Videopark'ın tarayıcıda çalışan o meşhur linki
+    const playerUrl = "https://videopark.top/titan/w/DFADXFgPDU4";
 
     try {
-        const response = await fetch(url);
+        console.error(`[EXTRACTOR] Analiz Başladı: ${playerUrl}`);
+
+        const response = await fetch(playerUrl, {
+            headers: {
+                'Referer': 'https://jetfilmizle.net/',
+                'User-Agent': 'Mozilla/5.0 (Linux; Android 10; TV Box) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8'
+            }
+        });
+        
         const html = await response.text();
 
-        // 1. Güvenlik anahtarlarını al
-        const token = html.match(/name="csrf-token"\s+content="([^"]+)"/i)?.[1];
-        const filmId = html.match(/data-film-id=["'](\d+)["']/i)?.[1] || html.match(/name=["']film_id["']\s*value=["'](\d+)["']/i)?.[1];
-        
-        // Bölüm butonunu bul
-        const btnRegex = new RegExp(`data-source-index=["'](\\d+)["'][^>]*data-season=["']${s}["'][^>]*data-episode=["']${e}["']`, 'i');
-        const btnMatch = html.match(btnRegex);
+        // STRATEJİ 1: JSON formatında saklanan 'file' parametresi
+        let videoUrl = html.match(/["']?file["']?\s*:\s*["']([^"']+\.m3u8[^"']*)["']/i)?.[1] ||
+                       html.match(/["']?src["']?\s*:\s*["']([^"']+\.m3u8[^"']*)["']/i)?.[1];
 
-        if (!filmId || !btnMatch) return [];
+        // STRATEJİ 2: Eğer m3u8 doğrudan yoksa, sayfa içindeki Base64 veya Packed veriyi tara
+        if (!videoUrl) {
+            console.error("[EXTRACTOR] Doğrudan link yok, derin tarama yapılıyor...");
+            
+            // Videopark bazen linki bir JS değişkenine atar (Örn: var stream = "...")
+            const scripts = html.match(/<script\b[^>]*>([\s\S]*?)<\/script>/gm);
+            scripts?.forEach((s) => {
+                // 'eval' içeren veya çok uzun tek satırlı scriptleri logla
+                if (s.length > 500 && (s.includes('eval') || s.includes('p,a,c,k,e,d'))) {
+                    console.error(`[GIZLI-KOD] ${s.substring(0, 1000)}`);
+                }
+                
+                // Gizli m3u8 linklerini her ihtimale karşı regex ile tekrar tara
+                const innerMatch = s.match(/(https?:\/\/[^"']+\.m3u8[^"']*)/i);
+                if (innerMatch) videoUrl = innerMatch[1];
+            });
+        }
 
-        const sourceIndex = btnMatch[1];
-        const playerType = btnMatch[0].includes('dublaj') ? 'dublaj' : 'altyazili';
+        if (videoUrl) {
+            // Linki temizle ve protokol ekle
+            if (videoUrl.startsWith('//')) videoUrl = 'https:' + videoUrl;
 
-        // 2. Player verisini çek
-        const playerRes = await fetch(`${BASE_URL}/jetplayer`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
-                'X-Requested-With': 'XMLHttpRequest',
-                'X-CSRF-TOKEN': token,
-                'Referer': url
-            },
-            body: `film_id=${filmId}&source_index=${sourceIndex}&player_type=${playerType}&is_series=1`
-        });
-
-        const playerRaw = await playerRes.text();
-
-        // 3. TUZAĞI ATLA VE LİNKİ AL
-        // Logda gördüğümüz videopark linkini cımbızla çekiyoruz
-        const videoMatch = playerRaw.match(/src=['"](https?:\/\/videopark\.top\/[^'"]+)['"]/i);
-        
-        if (videoMatch) {
-            const finalLink = videoMatch[1];
-            console.error(`[JET-FINAL] Video Linki: ${finalLink}`);
-
+            console.error(`[BULUNDU] Video Adresi: ${videoUrl}`);
+            
             return [{
-                name: "JetFilmizle",
-                title: `S${s} E${e} (VideoPark)`,
-                url: finalLink,
-                type: "embed"
+                name: "Videopark HLS",
+                url: videoUrl,
+                type: "hls",
+                headers: {
+                    'Referer': 'https://videopark.top/',
+                    'User-Agent': 'Mozilla/5.0 (Linux; Android 10; TV Box)'
+                }
             }];
         }
 
-        // Eğer videopark değil de başka bir host gelirse (Alternatif)
-        const altMatch = playerRaw.match(/iframe[^>]+src=['"]([^'"]+)['"]/i);
-        if (altMatch && !altMatch[1].includes('embed.js')) {
-             return [{
-                name: "JetFilmizle",
-                title: `S${s} E${e} (Alt)`,
-                url: altMatch[1].startsWith('//') ? 'https:' + altMatch[1] : altMatch[1],
-                type: "embed"
-            }];
-        }
-
-        console.error('[JET-HATA] Video kaynağı bulunamadı.');
+        console.error("[HATA] Sayfa çekildi ama video linki ayıklanamadı.");
         return [];
 
     } catch (err) {
-        console.error(`[JET-KRITIK] ${err.message}`);
+        console.error(`[KRITIK-HATA] ${err.message}`);
         return [];
     }
 }
