@@ -1,6 +1,6 @@
 /**
  * JetFilmizle — Universal Provider (Film & Dizi)
- * Videopark (Titan), Pixeldrain ve Hızlı Kaynak destekli.
+ * FIX: Object.assign hatası giderildi (Legacy JS Compatibility).
  */
 
 var BASE_URL     = 'https://jetfilmizle.net';
@@ -15,17 +15,22 @@ function getStreams(id, mediaType, season, episode) {
     var tmdbId = id.toString().replace(/[^0-9]/g, '');
     var type = (mediaType === 'tv') ? 'tv' : 'movie';
 
-    // 1. TMDB'den Türkçe ismi al
     return fetch('https://api.themoviedb.org/3/' + type + '/' + tmdbId + '?api_key=' + TMDB_API_KEY + '&language=tr-TR')
         .then(function(r) { return r.json(); })
         .then(function(info) {
             var searchTitle = info.name || info.title;
             console.error('[JetFilm] Aranan: ' + searchTitle);
             
-            // 2. Sitede Ara
+            // Object.assign yerine manuel header oluşturma (Hata çözümü)
+            var searchHeaders = {
+                'User-Agent': HEADERS['User-Agent'],
+                'Referer': HEADERS['Referer'],
+                'Content-Type': 'application/x-www-form-urlencoded'
+            };
+
             return fetch(BASE_URL + '/filmara.php', {
                 method: 'POST',
-                headers: Object.assign({}, HEADERS, { 'Content-Type': 'application/x-www-form-urlencoded' }),
+                headers: searchHeaders,
                 body: 's=' + encodeURIComponent(searchTitle)
             })
             .then(function(res) { return res.text(); })
@@ -37,7 +42,6 @@ function getStreams(id, mediaType, season, episode) {
                 if (m) {
                     finalUrl = BASE_URL + '/' + m[2] + '/' + m[3];
                     if (mediaType === 'tv') {
-                        // Dizi ise bölüm yolunu ekle
                         finalUrl += '/sezon-' + (season || 1) + '/bolum-' + (episode || 1);
                     }
                 }
@@ -54,8 +58,7 @@ function getStreams(id, mediaType, season, episode) {
             var streams = [];
             var dil = (html.indexOf('dublaj') !== -1) ? "Dublaj" : "Altyazı";
 
-            // --- KAYNAK 1: Videopark (Titan) ---
-            // Loglarda çözdüğümüz _sd objesini yakalar
+            // 1. Videopark (Titan) - Loglarda çözdüğümüz yöntem
             var sdMatch = html.match(/var\s+_sd\s*=\s*({[\s\S]*?});/);
             if (sdMatch) {
                 try {
@@ -67,18 +70,18 @@ function getStreams(id, mediaType, season, episode) {
                             url: videoData.stream_url,
                             type: 'hls',
                             quality: '1080p',
-                            subtitles: videoData.subtitles ? videoData.subtitles.map(s => ({
-                                url: s.file,
-                                language: s.label,
-                                format: 'vtt'
-                            })) : [],
+                            subtitles: videoData.subtitles ? videoData.subtitles.map(function(s) {
+                                return { url: s.file, language: s.label, format: 'vtt' };
+                            }) : [],
                             headers: { 'Referer': 'https://videopark.top/', 'User-Agent': HEADERS['User-Agent'] }
                         });
                     }
-                } catch(e) {}
+                } catch(e) {
+                    console.error('[JetFilm] Videopark Parse Hatası');
+                }
             }
 
-            // --- KAYNAK 2: Pixeldrain ---
+            // 2. Pixeldrain
             var pdRe = /href="(https?:\/\/pixeldrain\.com\/u\/([^"]+))"/g;
             var m;
             while ((m = pdRe.exec(html)) !== null) {
@@ -92,7 +95,7 @@ function getStreams(id, mediaType, season, episode) {
                 });
             }
 
-            // --- KAYNAK 3: İframe / Embed Kaynaklar ---
+            // 3. Iframe/Embed
             var iframeRe = /<iframe[^>]+src="([^"]+)"/gi;
             while ((m = iframeRe.exec(html)) !== null) {
                 var src = m[1];
