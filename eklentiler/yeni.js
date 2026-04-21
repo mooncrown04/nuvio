@@ -1,9 +1,9 @@
 /**
- * JetFilmizle — Nuvio Provider
- * Film + Dizi + Videopark Titan Bypass (Full Compatibility)
+ * JetFilmizle — Nuvio Provider (ULTRA COMPATIBLE)
+ * Hem Film Hem Dizi - Hata Vermeyen Saf JS Sürümü
  */
 
-var BASE_URL     = 'https://jetfilmizle.net';
+var BASE_URL = 'https://jetfilmizle.net';
 var TMDB_API_KEY = '500330721680edb6d5f7f12ba7cd9023';
 
 var HEADERS = {
@@ -15,19 +15,18 @@ function getStreams(id, mediaType, season, episode) {
     var tmdbId = id.toString().replace(/[^0-9]/g, '');
     var type = (mediaType === 'tv') ? 'tv' : 'movie';
 
-    // 1. TMDB Bilgisi
     return fetch('https://api.themoviedb.org/3/' + type + '/' + tmdbId + '?api_key=' + TMDB_API_KEY + '&language=tr-TR')
         .then(function(r) { return r.json(); })
         .then(function(info) {
             var searchTitle = info.name || info.title;
             
+            // Object.assign HATASI ÇÖZÜMÜ: Manuel header
             var searchHeaders = {
                 'User-Agent': HEADERS['User-Agent'],
                 'Referer': HEADERS['Referer'],
                 'Content-Type': 'application/x-www-form-urlencoded'
             };
 
-            // 2. Sitede Ara
             return fetch(BASE_URL + '/filmara.php', {
                 method: 'POST',
                 headers: searchHeaders,
@@ -48,57 +47,54 @@ function getStreams(id, mediaType, season, episode) {
                 
                 if (!finalUrl) return [];
 
-                console.error('[JetFilm] Hedef Sayfa: ' + finalUrl);
+                console.error('[JetFilm] Gidilen URL: ' + finalUrl);
                 return fetch(finalUrl, { headers: HEADERS }).then(function(r) { return r.text(); });
             });
         })
         .then(function(html) {
-            if (!html) return [];
+            if (!html || html.indexOf('Sayfa Bulunamadı') !== -1) return [];
 
             var streams = [];
             var dil = (html.indexOf('dublaj') !== -1) ? "Dublaj" : "Altyazı";
 
-            // --- VIDEOPARK "TITAN" BYPASS MANTIĞI ---
-            // Senin "dizilere özel" dediğin kodun Nuvio uyumlu versiyonu
+            // 1. VIDEOPARK (TITAN) - Dizi ve Filmlerdeki Asıl Kaynak
             var sdMatch = html.match(/var\s+_sd\s*=\s*({[\s\S]*?});/);
             if (sdMatch) {
                 try {
-                    var data = JSON.parse(sdMatch[1]);
-                    if (data.stream_url) {
-                        var subs = [];
-                        if (data.subtitles) {
-                            for (var i = 0; i < data.subtitles.length; i++) {
-                                subs.push({
-                                    url: data.subtitles[i].file,
-                                    language: data.subtitles[i].label,
-                                    format: "vtt"
-                                });
+                    var videoData = JSON.parse(sdMatch[1]);
+                    if (videoData.stream_url) {
+                        // map() yerine FOR döngüsü (Eski JS uyumu için)
+                        var subList = [];
+                        if (videoData.subtitles) {
+                            for (var i = 0; i < videoData.subtitles.length; i++) {
+                                var s = videoData.subtitles[i];
+                                subList.push({ url: s.file, language: s.label, format: 'vtt' });
                             }
                         }
 
                         streams.push({
                             name: "JetFilmizle",
-                            title: '⌜ Videopark Titan ⌟ | 🇹🇷 ' + dil,
-                            url: data.stream_url,
+                            title: '⌜ Videopark ⌟ | 🇹🇷 ' + dil,
+                            url: videoData.stream_url,
                             type: 'hls',
                             quality: '1080p',
-                            subtitles: subs,
-                            headers: {
-                                'Referer': 'https://videopark.top/',
-                                'User-Agent': HEADERS['User-Agent']
+                            subtitles: subList,
+                            headers: { 
+                                'Referer': 'https://videopark.top/', 
+                                'User-Agent': HEADERS['User-Agent'] 
                             }
                         });
                     }
-                } catch(e) {
-                    console.error('[JetFilm] Titan Parse Hatası');
-                }
+                } catch(e) {}
             }
 
-            // --- EKSTRA KAYNAKLAR (Pixeldrain & Iframe) ---
+            // 2. PIXELDRAIN & DİĞERLERİ
             var linkRe = /(?:src|data-src|href)="([^"]+)"/gi;
             var match;
             while ((match = linkRe.exec(html)) !== null) {
                 var url = match[1];
+
+                // Pixeldrain Yakala
                 if (url.indexOf('pixeldrain.com/u/') !== -1) {
                     var pdId = url.split('/u/')[1].split('?')[0];
                     streams.push({
@@ -106,9 +102,12 @@ function getStreams(id, mediaType, season, episode) {
                         title: '⌜ Pixeldrain ⌟ | 🇹🇷 ' + dil,
                         url: 'https://pixeldrain.com/api/file/' + pdId + '?download',
                         type: 'video',
-                        quality: '1080p'
+                        quality: '1080p',
+                        headers: { 'Referer': 'https://pixeldrain.com/' }
                     });
                 }
+
+                // Iframe Kaynakları (JetV, D2RS vb.)
                 if (url.indexOf('jetv') !== -1 || url.indexOf('d2rs') !== -1) {
                     streams.push({
                         name: "JetFilmizle",
@@ -119,10 +118,21 @@ function getStreams(id, mediaType, season, episode) {
                 }
             }
 
-            return streams;
+            // Mükerrer linkleri temizle (Eski usul filter)
+            var finalStreams = [];
+            var seen = {};
+            for (var j = 0; j < streams.length; j++) {
+                var sUrl = streams[j].url;
+                if (!seen[sUrl]) {
+                    finalStreams.push(streams[j]);
+                    seen[sUrl] = true;
+                }
+            }
+
+            return finalStreams;
         })
-        .catch(function(err) {
-            console.error('[JetFilm-Error]: ' + err.message);
+        .catch(function(e) {
+            console.error('[JetFilm-Error]: ' + e.message);
             return [];
         });
 }
