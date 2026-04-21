@@ -1,6 +1,6 @@
 /**
- * JetFilmizle — Nuvio Provider (Universal)
- * Film & Dizi desteği + Videopark Auto-Extractor
+ * JetFilmizle — Nuvio Provider
+ * Film + Dizi + Videopark Titan Bypass (Full Compatibility)
  */
 
 var BASE_URL     = 'https://jetfilmizle.net';
@@ -8,28 +8,19 @@ var TMDB_API_KEY = '500330721680edb6d5f7f12ba7cd9023';
 
 var HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36',
-    'Referer': BASE_URL + '/'
+    'Referer': 'https://jetfilmizle.net/'
 };
-
-function titleToSlug(t) {
-    return (t || '').toLowerCase()
-        .replace(/ğ/g,'g').replace(/ü/g,'u').replace(/ş/g,'s')
-        .replace(/ı/g,'i').replace(/İ/g,'i').replace(/ö/g,'o')
-        .replace(/ç/g,'c').replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'');
-}
 
 function getStreams(id, mediaType, season, episode) {
     var tmdbId = id.toString().replace(/[^0-9]/g, '');
     var type = (mediaType === 'tv') ? 'tv' : 'movie';
 
-    // 1. TMDB Verisini Al
+    // 1. TMDB Bilgisi
     return fetch('https://api.themoviedb.org/3/' + type + '/' + tmdbId + '?api_key=' + TMDB_API_KEY + '&language=tr-TR')
         .then(function(r) { return r.json(); })
         .then(function(info) {
-            var originalTitle = info.name || info.title;
-            console.error('[JetFilm] Aranan: ' + originalTitle);
+            var searchTitle = info.name || info.title;
             
-            // Nuvio Uyumluluğu: Header manuel oluşturuldu (Object.assign silindi)
             var searchHeaders = {
                 'User-Agent': HEADERS['User-Agent'],
                 'Referer': HEADERS['Referer'],
@@ -40,7 +31,7 @@ function getStreams(id, mediaType, season, episode) {
             return fetch(BASE_URL + '/filmara.php', {
                 method: 'POST',
                 headers: searchHeaders,
-                body: 's=' + encodeURIComponent(originalTitle)
+                body: 's=' + encodeURIComponent(searchTitle)
             })
             .then(function(res) { return res.text(); })
             .then(function(searchHtml) {
@@ -50,77 +41,79 @@ function getStreams(id, mediaType, season, episode) {
                 var finalUrl = '';
                 if (m) {
                     finalUrl = BASE_URL + '/' + m[2] + '/' + m[3];
-                    // DIZI MANTIĞI BURADA EKLENDİ
                     if (mediaType === 'tv') {
                         finalUrl += '/sezon-' + (season || 1) + '/bolum-' + (episode || 1);
                     }
-                } else {
-                    var fallbackSlug = titleToSlug(originalTitle);
-                    finalUrl = (mediaType === 'tv') 
-                        ? BASE_URL + '/dizi/' + fallbackSlug + '/sezon-' + (season || 1) + '/bolum-' + (episode || 1)
-                        : BASE_URL + '/film/' + fallbackSlug;
                 }
+                
+                if (!finalUrl) return [];
 
-                console.error('[JetFilm] Gidilen: ' + finalUrl);
+                console.error('[JetFilm] Hedef Sayfa: ' + finalUrl);
                 return fetch(finalUrl, { headers: HEADERS }).then(function(r) { return r.text(); });
             });
         })
         .then(function(html) {
-            if (!html || html.indexOf('Sayfa Bulunamadı') !== -1) return [];
+            if (!html) return [];
 
             var streams = [];
             var dil = (html.indexOf('dublaj') !== -1) ? "Dublaj" : "Altyazı";
 
-            // --- KAYNAK 1: Videopark (Titan) Otomatik Link ---
+            // --- VIDEOPARK "TITAN" BYPASS MANTIĞI ---
+            // Senin "dizilere özel" dediğin kodun Nuvio uyumlu versiyonu
             var sdMatch = html.match(/var\s+_sd\s*=\s*({[\s\S]*?});/);
             if (sdMatch) {
                 try {
-                    var videoData = JSON.parse(sdMatch[1]);
-                    if (videoData.stream_url) {
+                    var data = JSON.parse(sdMatch[1]);
+                    if (data.stream_url) {
                         var subs = [];
-                        if (videoData.subtitles) {
-                            for (var i = 0; i < videoData.subtitles.length; i++) {
-                                var s = videoData.subtitles[i];
-                                subs.push({ url: s.file, language: s.label, format: 'vtt' });
+                        if (data.subtitles) {
+                            for (var i = 0; i < data.subtitles.length; i++) {
+                                subs.push({
+                                    url: data.subtitles[i].file,
+                                    language: data.subtitles[i].label,
+                                    format: "vtt"
+                                });
                             }
                         }
+
                         streams.push({
                             name: "JetFilmizle",
-                            title: '⌜ Videopark ⌟ | 🇹🇷 ' + dil,
-                            url: videoData.stream_url,
+                            title: '⌜ Videopark Titan ⌟ | 🇹🇷 ' + dil,
+                            url: data.stream_url,
                             type: 'hls',
                             quality: '1080p',
                             subtitles: subs,
-                            headers: { 'Referer': 'https://videopark.top/', 'User-Agent': HEADERS['User-Agent'] }
+                            headers: {
+                                'Referer': 'https://videopark.top/',
+                                'User-Agent': HEADERS['User-Agent']
+                            }
                         });
                     }
-                } catch(e) {}
+                } catch(e) {
+                    console.error('[JetFilm] Titan Parse Hatası');
+                }
             }
 
-            // --- KAYNAK 2: Pixeldrain ---
-            var pdRe = /href="(https?:\/\/pixeldrain\.com\/u\/([^"]+))"/g;
-            var pdM;
-            while ((pdM = pdRe.exec(html)) !== null) {
-                streams.push({
-                    name: "JetFilmizle",
-                    title: '⌜ Pixeldrain ⌟ | 🇹🇷 ' + dil,
-                    url: 'https://pixeldrain.com/api/file/' + pdM[2] + '?download',
-                    type: 'video',
-                    quality: '1080p',
-                    headers: { 'Referer': 'https://pixeldrain.com/' }
-                });
-            }
-
-            // --- KAYNAK 3: Hızlı Kaynaklar ---
-            var iframeRe = /<iframe[^>]+src="([^"]+)"/gi;
-            var ifM;
-            while ((ifM = iframeRe.exec(html)) !== null) {
-                var src = ifM[1];
-                if (src.indexOf('jetv') !== -1 || src.indexOf('d2rs') !== -1 || src.indexOf('videopark') !== -1) {
+            // --- EKSTRA KAYNAKLAR (Pixeldrain & Iframe) ---
+            var linkRe = /(?:src|data-src|href)="([^"]+)"/gi;
+            var match;
+            while ((match = linkRe.exec(html)) !== null) {
+                var url = match[1];
+                if (url.indexOf('pixeldrain.com/u/') !== -1) {
+                    var pdId = url.split('/u/')[1].split('?')[0];
+                    streams.push({
+                        name: "JetFilmizle",
+                        title: '⌜ Pixeldrain ⌟ | 🇹🇷 ' + dil,
+                        url: 'https://pixeldrain.com/api/file/' + pdId + '?download',
+                        type: 'video',
+                        quality: '1080p'
+                    });
+                }
+                if (url.indexOf('jetv') !== -1 || url.indexOf('d2rs') !== -1) {
                     streams.push({
                         name: "JetFilmizle",
                         title: '⌜ Hızlı Kaynak ⌟ | 🇹🇷 ' + dil,
-                        url: src.indexOf('//') === 0 ? 'https:' + src : src,
+                        url: url.indexOf('//') === 0 ? 'https:' + url : url,
                         type: 'embed'
                     });
                 }
@@ -128,8 +121,8 @@ function getStreams(id, mediaType, season, episode) {
 
             return streams;
         })
-        .catch(function(e) {
-            console.error('[JetFilm-Error]: ' + e.message);
+        .catch(function(err) {
+            console.error('[JetFilm-Error]: ' + err.message);
             return [];
         });
 }
