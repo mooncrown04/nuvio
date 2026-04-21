@@ -1,6 +1,6 @@
 /**
- * JetFilmizle - Nuvio Provider
- * SMART LINK SELECTOR (No more embed.js trap)
+ * JetFilmizle - Röntgen Modu
+ * Tahmin yok, sadece ham veriyi dökme var.
  */
 
 const BASE_URL = 'https://jetfilmizle.net';
@@ -11,24 +11,23 @@ async function getStreams(id, mediaType, season, episode) {
     const url = `${BASE_URL}/dizi/cobra-kai`; 
 
     try {
+        console.error(`[RONTGEN] Başlatılıyor: S${s} E${e}`);
+        
         const response = await fetch(url);
         const html = await response.text();
 
-        // 1. Verileri Ayıkla
-        const tokenMatch = html.match(/name="csrf-token"\s+content="([^"]+)"/i);
-        const filmIdMatch = html.match(/data-film-id=["'](\d+)["']/i) || html.match(/name=["']film_id["']\s*value=["'](\d+)["']/i);
-        const btnRegex = new RegExp(`data-source-index=["'](\\d+)["'][^>]*data-season=["']${s}["'][^>]*data-episode=["']${e}["']`, 'i');
-        const btnMatch = html.match(btnRegex);
+        // 1. Token ve ID'leri al (Burası zaten çalışıyor)
+        const token = html.match(/name="csrf-token"\s+content="([^"]+)"/i)?.[1];
+        const filmId = html.match(/data-film-id=["'](\d+)["']/i)?.[1] || html.match(/name=["']film_id["']\s*value=["'](\d+)["']/i)?.[1];
+        const btnMatch = html.match(new RegExp(`data-source-index=["'](\\d+)["'][^>]*data-season=["']${s}["']`, 'i'));
 
-        if (!filmIdMatch || !btnMatch) return [];
+        if (!filmId || !btnMatch) {
+            console.error("[RONTGEN-HATA] Ana sayfadan veri çekilemedi.");
+            return [];
+        }
 
-        const token = tokenMatch ? tokenMatch[1] : "";
-        const filmId = filmIdMatch[1];
-        const sourceIndex = btnMatch[1];
-        const playerType = btnMatch[0].includes('dublaj') ? 'dublaj' : 'altyazili';
-
-        // 2. jetplayer POST İsteği
-        const playerResponse = await fetch(`${BASE_URL}/jetplayer`, {
+        // 2. Jetplayer POST isteği
+        const playerRes = await fetch(`${BASE_URL}/jetplayer`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
@@ -36,47 +35,45 @@ async function getStreams(id, mediaType, season, episode) {
                 'X-CSRF-TOKEN': token,
                 'Referer': url
             },
-            body: `film_id=${filmId}&source_index=${sourceIndex}&player_type=${playerType}&is_series=1`
+            body: `film_id=${filmId}&source_index=${btnMatch[1]}&player_type=dublaj&is_series=1`
         });
 
-        const playerRaw = await playerResponse.text();
-        
-        // 3. SEÇİCİ LİNK AYIKLAMA (Strateji Değişikliği)
-        let finalUrl = "";
+        const playerRaw = await playerRes.text();
+        const iframeSrc = playerRaw.match(/src=['"]([^'"]+)['"]/i)?.[1];
 
-        // ÖNCELİK 1: Gerçek video hostları (videopark, vidmoly, pixeldrain vb.)
-        const videoHostMatch = playerRaw.match(/src=['"](https?:\/\/(?:videopark|vidmoly|pixeldrain|ok\.ru|mail\.ru)[^'"]+)['"]/i);
+        if (!iframeSrc) {
+            console.error(`[RONTGEN-HAM-YANIT] ${playerRaw}`);
+            return [];
+        }
+
+        // 3. ASIL RÖNTGEN BURADA: Videopark (veya diğer) sayfasının içine sızıyoruz
+        const targetUrl = iframeSrc.startsWith('//') ? 'https:' + iframeSrc : iframeSrc;
+        console.error(`[RONTGEN-HEDEF] Player Sayfası: ${targetUrl}`);
+
+        const videoPageRes = await fetch(targetUrl);
+        const videoPageHtml = await videoPageRes.text();
+
+        // Sayfa içindeki tüm m3u8, mp4 veya 'file' içeren JS değişkenlerini döküyoruz
+        console.error("--- HAM VERİ BAŞLANGICI ---");
         
-        if (videoHostMatch) {
-            finalUrl = videoHostMatch[1];
-            console.error(`[JET-HOST] Video Hostu Yakalandı: ${finalUrl}`);
-        } 
-        // ÖNCELİK 2: Eğer host yoksa ama iframe varsa (herhangi bir src)
-        else {
-            const genericIframe = playerRaw.match(/iframe[^>]+src=['"]([^'"]+)['"]/i);
-            if (genericIframe && !genericIframe[1].includes('embed.js')) {
-                finalUrl = genericIframe[1];
-                console.error(`[JET-IFRAME] Iframe Yakalandı: ${finalUrl}`);
+        // Özellikle 'file', 'sources', 'playlist' kelimelerini ara
+        const scripts = videoPageHtml.match(/<script\b[^>]*>([\s\S]*?)<\/script>/gm);
+        scripts?.forEach((s, i) => {
+            if (s.includes('file') || s.includes('source') || s.includes('m3u8')) {
+                console.error(`[RONTGEN-JS-BLOK-${i}] ${s.substring(0, 500).replace(/\n/g, ' ')}...`);
             }
-        }
+        });
 
-        // 4. Protokol Tamamlama ve Sonuç
-        if (finalUrl) {
-            if (finalUrl.startsWith('//')) finalUrl = 'https:' + finalUrl;
+        // Varsa meta etiketlerini dök
+        const metaVideo = videoPageHtml.match(/<meta[^>]+content=["'](https?:\/\/[^"']+\.(?:m3u8|mp4)[^"']*)["']/gi);
+        if (metaVideo) console.error(`[RONTGEN-META] ${metaVideo.join(' | ')}`);
 
-            return [{
-                name: "JetFilmizle",
-                title: `S${s} E${e} (Kaynak: ${sourceIndex})`,
-                url: finalUrl,
-                type: "embed"
-            }];
-        }
+        console.error("--- HAM VERİ BİTİŞİ ---");
 
-        console.error('[JET-HATA] Geçerli bir video kaynağı ayıklanamadı.');
-        return [];
+        return []; // Sadece veri topluyoruz, henüz link döndürmüyoruz
 
     } catch (err) {
-        console.error(`[JET-CRITICAL] ${err.message}`);
+        console.error(`[RONTGEN-KRITIK] ${err.message}`);
         return [];
     }
 }
