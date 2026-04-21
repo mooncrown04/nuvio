@@ -1,6 +1,6 @@
 /**
- * JetFilmizle - Nuvio Ultra (v19 Smart Filter)
- * Gereksiz ID'leri ayıklar ve sadece gerçek Videopark kaynaklarına odaklanır.
+ * JetFilmizle - Nuvio Ultra (v20 Final Force)
+ * Videopark Titan ve Dahili Jet-Player kaynaklarını en derinden kazır.
  */
 
 var BASE_URL = 'https://jetfilmizle.net';
@@ -21,7 +21,7 @@ function toSlug(t) {
 }
 
 async function getStreams(id, mediaType, season, episode) {
-    console.error('[Hata-Nerede] 1: Basladi');
+    console.error('[Hata-Nerede] 1: Islem Baslatildi');
     var tmdbId = id.toString().replace(/[^0-9]/g, '');
     var tmdbType = (mediaType === 'tv') ? 'tv' : 'movie';
 
@@ -38,7 +38,7 @@ async function getStreams(id, mediaType, season, episode) {
         if (mediaType === 'tv') {
             candidates.push(`${BASE_URL}/dizi/${slug}-2018/sezon-${s}/bolum-${e}`);
             candidates.push(`${BASE_URL}/dizi/${slug}/sezon-${s}/bolum-${e}`);
-            candidates.push(`${BASE_URL}/dizi/${slug}-izle/sezon-${s}/bolum-${e}`);
+            candidates.push(`${BASE_URL}/dizi/${slug}/sezon-${s}-bolum-${e}-izle`);
         } else {
             candidates.push(`${BASE_URL}/film/${slug}`);
             candidates.push(`${BASE_URL}/film/${slug}-izle`);
@@ -46,51 +46,49 @@ async function getStreams(id, mediaType, season, episode) {
 
         let html = "";
         for (let url of candidates) {
-            console.error(`[Hata-Nerede] 6: Deneniyor -> ${url}`);
+            console.error(`[Hata-Nerede] 6: Sayfa Deneniyor -> ${url}`);
             const res = await fetch(url, { headers: HEADERS });
             if (res.status === 200) {
                 html = await res.text();
-                if (html.length > 3000) break;
+                if (html.length > 2500) break;
             }
         }
 
         if (!html) return [];
 
         let streams = [];
-        const dil = (html.indexOf('dublaj') !== -1) ? "Dublaj" : "Altyazı";
+        const isDublaj = html.indexOf('dublaj') !== -1;
+        const label = isDublaj ? "Dublaj" : "Altyazı";
 
-        // 1. ANALİZ VE FİLTRELEME
-        let rawIds = [];
-        // Videopark ID'leri genelde 11 karakterdir ve içinde 'G-P2W' gibi Analytics kalıpları olmaz.
-        const titanRegex = /(?:titan\/w\/|data-id=|data-video=)["']?([a-zA-Z0-9_-]{10,15})/gi;
+        // 1. VIDEOPARK (TITAN) DERİN ARAMA
+        // Sadece ID formatına uyanları al (Örn: DFADXFgPDU4)
+        let titanIds = [];
+        const titanRegex = /(?:titan\/w\/|data-id=|data-video=)["']?(DFADX[a-zA-Z0-9_-]+|[a-zA-Z0-9_-]{11})["']?/gi;
         let m;
         while ((m = titanRegex.exec(html)) !== null) {
-            let foundId = m[1];
-            // FİLTRE: Analytics, CSS sınıfları ve anlamsız kelimeleri ele
-            if (foundId.startsWith('G-') || foundId.includes('search') || foundId.includes('input') || foundId.length < 10) {
-                continue;
+            let tId = m[1];
+            if (!tId.startsWith('G-') && !tId.includes('search') && titanIds.indexOf(tId) === -1) {
+                titanIds.push(tId);
             }
-            if (rawIds.indexOf(foundId) === -1) rawIds.push(foundId);
         }
 
-        console.error(`[TITAN] Filtrelenmiş ID Sayısı: ${rawIds.length} (Gerçek Kaynaklar Aranıyor)`);
+        console.error(`[TITAN] Bulunan Gecerli ID: ${titanIds.length}`);
 
-        for (let tId of rawIds) {
+        for (let tId of titanIds) {
             const playerUrl = `https://videopark.top/titan/w/${tId}`;
-            console.error(`[TITAN] Deneniyor: ${playerUrl}`);
+            console.error(`[TITAN] Worker Cozuluyor: ${playerUrl}`);
 
             try {
                 const pRes = await fetch(playerUrl, { headers: { 'Referer': 'https://jetfilmizle.net/', 'User-Agent': HEADERS['User-Agent'] } });
                 const pHtml = await pRes.text();
-                
                 const sdMatch = pHtml.match(/var\s+_sd\s*=\s*({[\s\S]*?});/);
+                
                 if (sdMatch) {
                     const data = JSON.parse(sdMatch[1]);
                     if (data.stream_url) {
-                        console.error(`[TITAN-SUCCESS] Kaynak Bulundu: ${tId}`);
                         streams.push({
-                            name: "Videopark",
-                            title: `⌜ Titan Worker ⌟ | ${dil}`,
+                            name: "Videopark (Titan)",
+                            title: `⌜ ${label} ⌟`,
                             url: data.stream_url,
                             type: "hls",
                             subtitles: data.subtitles ? data.subtitles.map(s => ({ url: s.file, language: s.label, format: "vtt" })) : [],
@@ -98,24 +96,30 @@ async function getStreams(id, mediaType, season, episode) {
                         });
                     }
                 }
-            } catch (e) { continue; }
+            } catch (e) { console.error("[TITAN-HATA] " + e.message); }
         }
 
-        // 2. Sayfa içi doğrudan _sd kontrolü (Yedek)
+        // 2. JET-PLAYER DIRECT (Eger Titan bulunamazsa)
         if (streams.length === 0) {
             const directSd = html.match(/var\s+_sd\s*=\s*({[\s\S]*?});/);
             if (directSd) {
                 try {
                     const d = JSON.parse(directSd[1]);
                     if (d.stream_url) {
-                        streams.push({ name: "JetFilm", title: "Standart | " + dil, url: d.stream_url, type: 'hls', headers: { 'Referer': 'https://videopark.top/' } });
+                        streams.push({
+                            name: "Jet-Direct",
+                            title: `⌜ Standart: ${label} ⌟`,
+                            url: d.stream_url,
+                            type: "hls",
+                            headers: { 'Referer': 'https://videopark.top/' }
+                        });
                     }
                 } catch(e) {}
             }
         }
 
-        // BOŞ DİZİ DÖNME KURALI (Java Engine Crash Fix)
-        console.error(`[Hata-Nerede] 10: Bitti. Toplam: ${streams.length}`);
+        console.error(`[Hata-Nerede] 10: Islem Bitti. Kaynak: ${streams.length}`);
+        // Bos dizi donerek Java tarafini koruyoruz
         return streams.length > 0 ? streams : [];
 
     } catch (err) {
