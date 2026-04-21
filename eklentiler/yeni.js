@@ -1,5 +1,6 @@
 /**
- * JetFilmizle - Röntgen v2 (Hata Düzeltildi)
+ * JetFilmizle - Nuvio Provider 
+ * STRIKE TEAM - Düğüm Çözüldü
  */
 
 const BASE_URL = 'https://jetfilmizle.net';
@@ -7,18 +8,27 @@ const BASE_URL = 'https://jetfilmizle.net';
 async function getStreams(id, mediaType, season, episode) {
     const s = season || 1;
     const e = episode || 1;
+    // Not: Buradaki URL'yi dinamik film ismiyle değiştirebilirsin (id parametresi ile)
     const url = `${BASE_URL}/dizi/cobra-kai`; 
 
     try {
         const response = await fetch(url);
         const html = await response.text();
 
+        // 1. Güvenlik anahtarlarını al
         const token = html.match(/name="csrf-token"\s+content="([^"]+)"/i)?.[1];
         const filmId = html.match(/data-film-id=["'](\d+)["']/i)?.[1] || html.match(/name=["']film_id["']\s*value=["'](\d+)["']/i)?.[1];
-        const btnMatch = html.match(new RegExp(`data-source-index=["'](\\d+)["'][^>]*data-season=["']${s}["']`, 'i'));
+        
+        // Bölüm butonunu bul
+        const btnRegex = new RegExp(`data-source-index=["'](\\d+)["'][^>]*data-season=["']${s}["'][^>]*data-episode=["']${e}["']`, 'i');
+        const btnMatch = html.match(btnRegex);
 
         if (!filmId || !btnMatch) return [];
 
+        const sourceIndex = btnMatch[1];
+        const playerType = btnMatch[0].includes('dublaj') ? 'dublaj' : 'altyazili';
+
+        // 2. Player verisini çek
         const playerRes = await fetch(`${BASE_URL}/jetplayer`, {
             method: 'POST',
             headers: {
@@ -27,46 +37,43 @@ async function getStreams(id, mediaType, season, episode) {
                 'X-CSRF-TOKEN': token,
                 'Referer': url
             },
-            body: `film_id=${filmId}&source_index=${btnMatch[1]}&player_type=dublaj&is_series=1`
+            body: `film_id=${filmId}&source_index=${sourceIndex}&player_type=${playerType}&is_series=1`
         });
 
-        let playerRaw = await playerRes.text();
-        console.error(`[RONTGEN-GELEN-HAM] ${playerRaw}`);
+        const playerRaw = await playerRes.text();
 
-        // EĞER GELEN VERİ SADECE BİR YOL İSE (Örn: /public/embed.js)
-        let targetUrl = "";
-        if (playerRaw.trim().startsWith('/') && !playerRaw.includes('<iframe')) {
-            targetUrl = BASE_URL + playerRaw.trim();
-        } else {
-            // EĞER GELEN VERİ HTML İSE İÇİNDEKİ SRC'Yİ AL
-            const m = playerRaw.match(/src=['"]([^'"]+)['"]/i);
-            if (m) {
-                targetUrl = m[1].startsWith('/') ? BASE_URL + m[1] : m[1];
-            }
+        // 3. TUZAĞI ATLA VE LİNKİ AL
+        // Logda gördüğümüz videopark linkini cımbızla çekiyoruz
+        const videoMatch = playerRaw.match(/src=['"](https?:\/\/videopark\.top\/[^'"]+)['"]/i);
+        
+        if (videoMatch) {
+            const finalLink = videoMatch[1];
+            console.error(`[JET-FINAL] Video Linki: ${finalLink}`);
+
+            return [{
+                name: "JetFilmizle",
+                title: `S${s} E${e} (VideoPark)`,
+                url: finalLink,
+                type: "embed"
+            }];
         }
 
-        if (!targetUrl) {
-            console.error("[RONTGEN] Hedef URL belirlenemedi.");
-            return [];
+        // Eğer videopark değil de başka bir host gelirse (Alternatif)
+        const altMatch = playerRaw.match(/iframe[^>]+src=['"]([^'"]+)['"]/i);
+        if (altMatch && !altMatch[1].includes('embed.js')) {
+             return [{
+                name: "JetFilmizle",
+                title: `S${s} E${e} (Alt)`,
+                url: altMatch[1].startsWith('//') ? 'https:' + altMatch[1] : altMatch[1],
+                type: "embed"
+            }];
         }
 
-        console.error(`[RONTGEN-HEDEF] Sızılıyor: ${targetUrl}`);
-
-        const targetRes = await fetch(targetUrl);
-        const targetContent = await targetRes.text();
-
-        console.error("--- VERİ DÖKÜMÜ BAŞLADI ---");
-        // Logcat'te satır sınırı olduğu için veriyi parçalara bölerek basıyoruz
-        const parts = targetContent.match(/.{1,800}/g);
-        parts?.forEach((part, i) => {
-            console.error(`[PART-${i}] ${part.replace(/\n/g, ' ')}`);
-        });
-        console.error("--- VERİ DÖKÜMÜ BİTTİ ---");
-
-        return []; 
+        console.error('[JET-HATA] Video kaynağı bulunamadı.');
+        return [];
 
     } catch (err) {
-        console.error(`[RONTGEN-HATA] ${err.message}`);
+        console.error(`[JET-KRITIK] ${err.message}`);
         return [];
     }
 }
