@@ -1,6 +1,6 @@
 /**
  * JetFilmizle - Nuvio Provider
- * GÜNCEL JETPLAYER SİSTEMİ (POST Method)
+ * PLAYER ANALYZER MODE
  */
 
 const BASE_URL = 'https://jetfilmizle.net';
@@ -8,32 +8,24 @@ const BASE_URL = 'https://jetfilmizle.net';
 async function getStreams(id, mediaType, season, episode) {
     const s = season || 1;
     const e = episode || 1;
-    // Not: dizi sayfasının URL'si değişebilir, gerekirse burayı 'id' ile güncelle
     const url = `${BASE_URL}/dizi/cobra-kai`; 
 
     try {
-        // 1. ADIM: Sayfadan Film ID ve Kaynak Index'ini çek
         const response = await fetch(url);
         const html = await response.text();
 
-        // Film ID'yi yakala (input name="film_id")
-        const filmIdMatch = html.match(/name=["']film_id["']\s*value=["'](\d+)["']/i);
-        // Sizin logdaki 21 numaralı index'i butondan yakala
+        // 1. Film ID ve Index yakala
+        const filmIdMatch = html.match(/name=["']film_id["']\s*value=["'](\d+)["']/i) || html.match(/data-film-id=["'](\d+)["']/i);
         const btnRegex = new RegExp(`data-source-index=["'](\\d+)["'][^>]*data-season=["']${s}["'][^>]*data-episode=["']${e}["']`, 'i');
         const btnMatch = html.match(btnRegex);
 
-        if (!filmIdMatch || !btnMatch) {
-            console.error('[JET-HATA] ID veya Index bulunamadı.');
-            return [];
-        }
+        if (!filmIdMatch || !btnMatch) return [];
 
         const filmId = filmIdMatch[1];
         const sourceIndex = btnMatch[1];
         const playerType = btnMatch[0].includes('dublaj') ? 'dublaj' : 'altyazili';
 
-        console.error(`[JET-DEBUG] İstek Hazırlanıyor: ID:${filmId} Index:${sourceIndex} Tip:${playerType}`);
-
-        // 2. ADIM: 'jetplayer' endpoint'ine POST isteği at (Sitenin yeni yöntemi)
+        // 2. jetplayer POST isteği
         const playerResponse = await fetch(`${BASE_URL}/jetplayer`, {
             method: 'POST',
             headers: {
@@ -44,28 +36,55 @@ async function getStreams(id, mediaType, season, episode) {
         });
 
         const playerHtml = await playerResponse.text();
-
-        // 3. ADIM: Gelen HTML içindeki iframe veya video linkini ayıkla
-        const iframeMatch = playerHtml.match(/src=["']([^"']+)["']/i);
         
-        if (iframeMatch) {
-            let streamUrl = iframeMatch[1];
-            if (streamUrl.startsWith('//')) streamUrl = 'https:' + streamUrl;
+        // DEBUG: Yanıtın ilk kısmını görerek yapıyı anlayalım
+        console.error(`[JET-HAM-YALIN] ${playerHtml.substring(0, 300).replace(/\n/g, ' ')}`);
 
-            console.error(`[JET-BAŞARI] Link Bulundu: ${streamUrl}`);
+        // 3. AGRESİF LİNK AYIKLAMA
+        // Iframe, source, window.location veya Base64 her şeyi tara
+        const linkPatterns = [
+            /src=["'](https?:\/\/[^"']+)["']/i,               // Klasik Iframe
+            /url\s*:\s*["'](https?:\/\/[^"']+)["']/i,        // JS Değişkeni
+            /location\.replace\(["']([^"']+)["']\)/i,         // Redirect
+            /["'](https?:\/\/(?:pixeldrain|vidmoly)[^"']+)["']/i // Doğrudan host linki
+        ];
+
+        let streamUrl = "";
+        for (let pattern of linkPatterns) {
+            const m = playerHtml.match(pattern);
+            if (m) {
+                streamUrl = m[1];
+                break;
+            }
+        }
+
+        // Eğer hala link yoksa ve içerde Base64 varsa çözmeyi dene
+        if (!streamUrl) {
+            const b64 = playerHtml.match(/[A-Za-z0-9+/]{40,}=*/);
+            if (b64) {
+                try {
+                    const decoded = atob(b64[0]);
+                    if (decoded.includes('http')) streamUrl = decoded;
+                } catch(e) {}
+            }
+        }
+
+        if (streamUrl) {
+            if (streamUrl.startsWith('//')) streamUrl = 'https:' + streamUrl;
+            console.error(`[JET-BULDUM] ${streamUrl}`);
             return [{
                 name: "JetFilmizle",
-                title: `S${s} E${e} (Kaynak: ${sourceIndex})`,
+                title: `S${s} E${e} (ID: ${sourceIndex})`,
                 url: streamUrl,
                 type: "embed"
             }];
         }
 
-        console.error('[JET-HATA] Player HTML içinde link bulunamadı.');
+        console.error('[JET-HATA] Hiçbir pattern eşleşmedi.');
         return [];
 
     } catch (err) {
-        console.error(`[JET-KRİTİK] ${err.message}`);
+        console.error(`[JET-CRITICAL] ${err.message}`);
         return [];
     }
 }
