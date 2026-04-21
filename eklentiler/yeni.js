@@ -1,6 +1,6 @@
 /**
  * JetFilmizle - Nuvio Provider
- * BYPASS MODE (Anti-Bot & Cookie Simulation)
+ * ULTIMATE BYPASS (No setTimeout, Pure JS)
  */
 
 const BASE_URL = 'https://jetfilmizle.net';
@@ -11,14 +11,13 @@ async function getStreams(id, mediaType, season, episode) {
     const url = `${BASE_URL}/dizi/cobra-kai`; 
 
     try {
-        // 1. ADIM: Önce sayfayı ziyaret et ve Token/ID al (Oturum açılışı)
+        // 1. ADIM: Sayfa içeriğini al
         const response = await fetch(url);
         const html = await response.text();
 
-        // CSRF Token ve Film ID'yi çek
+        // Verileri ayıkla
         const tokenMatch = html.match(/name="csrf-token"\s+content="([^"]+)"/i);
         const filmIdMatch = html.match(/data-film-id=["'](\d+)["']/i) || html.match(/name=["']film_id["']\s*value=["'](\d+)["']/i);
-        
         const btnRegex = new RegExp(`data-source-index=["'](\\d+)["'][^>]*data-season=["']${s}["'][^>]*data-episode=["']${e}["']`, 'i');
         const btnMatch = html.match(btnRegex);
 
@@ -29,42 +28,64 @@ async function getStreams(id, mediaType, season, episode) {
         const sourceIndex = btnMatch[1];
         const playerType = btnMatch[0].includes('dublaj') ? 'dublaj' : 'altyazili';
 
-        console.error(`[JET-BYPASS] Hazırlanıyor: ID:${filmId} Token:${token ? 'OK' : 'YOK'}`);
+        console.error(`[JET] ID:${filmId} | Index:${sourceIndex}`);
 
-        // 2. ADIM: Bekleme Simülasyonu (Bot koruması için kısa bir ara)
-        await new Promise(resolve => setTimeout(resolve, 500));
+        // 2. ADIM: Manuel Bekleme (setTimeout yerine)
+        // Bot koruması için milisaniyelik bir boş döngü
+        const start = Date.now();
+        while (Date.now() - start < 300) { /* bekle */ }
 
-        // 3. ADIM: POST İsteği (Gerçek Tarayıcı Başlıkları ile)
+        // 3. ADIM: POST İsteği
         const playerResponse = await fetch(`${BASE_URL}/jetplayer`, {
             method: 'POST',
             headers: {
-                'Accept': '*/*',
                 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
                 'X-Requested-With': 'XMLHttpRequest',
                 'X-CSRF-TOKEN': token,
                 'Referer': url,
-                'Origin': BASE_URL,
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+                'User-Agent': 'Mozilla/5.0 (Android TV)'
             },
             body: `film_id=${filmId}&source_index=${sourceIndex}&player_type=${playerType}&is_series=1`
         });
 
         const playerHtml = await playerResponse.text();
-        console.error(`[JET-YANIT] ${playerHtml.substring(0, 100)}`);
 
         // 4. ADIM: Link Ayıklama
-        // Erişim engellendi mesajı hala geliyorsa yedek olarak Base64 taraması yap
-        if (playerHtml.includes('engellendi')) {
-            console.error('[JET-UYARI] WAF hala devrede, HTML içi deşifre deneniyor...');
-            return scanForBase64Links(html, sourceIndex, s, e);
+        let streamUrl = "";
+        
+        // Önce iframe src ara
+        const iframeM = playerHtml.match(/src=["']([^"']+)["']/i);
+        if (iframeM) {
+            streamUrl = iframeM[1];
+        } else {
+            // Iframe yoksa doğrudan link ara
+            const linkM = playerHtml.match(/https?:\/\/(?:pixeldrain|vidmoly|ok\.ru|mail\.ru)[^"'\s]+/i);
+            if (linkM) streamUrl = linkM[0];
         }
 
-        const streamUrl = extractUrl(playerHtml);
+        // 5. ADIM: Eğer hala link yoksa "Erişim Engellendi" alınmış demektir, Base64 tara
+        if (!streamUrl || playerHtml.includes('engellendi')) {
+            console.error('[JET] Post engellendi, HTML deşifre ediliyor...');
+            const b64Regex = /[A-Za-z0-9+/]{50,}=*/g;
+            let m;
+            while ((m = b64Regex.exec(html)) !== null) {
+                try {
+                    // atob yoksa alternatif (Buffer) kontrolü veya manuel decode gerekebilir
+                    const decoded = (typeof atob !== 'undefined') ? atob(m[0]) : ""; 
+                    if (decoded.includes('http')) {
+                        streamUrl = decoded;
+                        break;
+                    }
+                } catch(e) {}
+            }
+        }
+
         if (streamUrl) {
-            console.error(`[JET-BAŞARI] ${streamUrl}`);
+            if (streamUrl.startsWith('//')) streamUrl = 'https:' + streamUrl;
+            console.error(`[JET-FINAL] ${streamUrl}`);
             return [{
                 name: "JetFilmizle",
-                title: `S${s} E${e} (Kaynak: ${sourceIndex})`,
+                title: `S${s} E${e} (${playerType})`,
                 url: streamUrl,
                 type: "embed"
             }];
@@ -73,33 +94,9 @@ async function getStreams(id, mediaType, season, episode) {
         return [];
 
     } catch (err) {
-        console.error(`[JET-KRİTİK] ${err.message}`);
+        console.error(`[JET-ERROR] ${err.message}`);
         return [];
     }
-}
-
-// Yardımcı Fonksiyonlar
-function extractUrl(text) {
-    const m = text.match(/src=["']([^"']+)["']/i) || text.match(/https?:\/\/(?:pixeldrain|vidmoly|ok\.ru|mail\.ru)[^"'\s]+/i);
-    if (m) return m[1].startsWith('//') ? 'https:' + m[1] : m[1];
-    return null;
-}
-
-function scanForBase64Links(html, targetIndex, s, e) {
-    const b64Regex = /[A-Za-z0-9+/]{50,}=*/g;
-    let found = [];
-    let m;
-    while ((m = b64Regex.exec(html)) !== null) {
-        try {
-            const d = atob(m[0]);
-            if (d.includes('http') && (d.includes('pixeldrain') || d.includes('vidmoly'))) found.push(d);
-        } catch(e) {}
-    }
-    if (found.length > 0) {
-        const link = found[targetIndex] || found[0];
-        return [{ name: "JetFilm (B64)", title: `S${s} E${e}`, url: link, type: "embed" }];
-    }
-    return [];
 }
 
 if (typeof module !== 'undefined') module.exports = { getStreams };
