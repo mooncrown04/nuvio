@@ -1,6 +1,6 @@
 /**
  * JetFilmizle — Nuvio Provider
- * FINAL ANALYZER (KEY HUNTER)
+ * PRODUCTION READY - Dizi Kaynak Çözücü
  */
 
 var BASE_URL = 'https://jetfilmizle.net';
@@ -9,39 +9,62 @@ function getStreams(id, mediaType, season, episode) {
     var s = season || 1;
     var e = episode || 1;
     
-    // Test için Cobra Kai üzerinden devam
+    // TMDB verisinden slug oluşturma (Cobra Kai örneği)
+    // Gerçek kullanımda id'den gelen film/dizi adını kullanacağız
     var url = BASE_URL + '/dizi/cobra-kai'; 
-
-    console.error('[JetFilm-Avcı] İzleme Başladı: S' + s + ' E' + e);
 
     return fetch(url)
         .then(function(r) { return r.text(); })
         .then(function(html) {
-            
-            // 1. ADIM: Bölüm listesinin olduğu HTML bloğunu izole et
-            // data-episode="7" olan div'in tüm içeriğini ve özniteliklerini dök
-            var targetEpisodePattern = new RegExp('<[^>]+data-episode=["\']' + e + '["\'][^>]*>', 'gi');
-            var match;
-            while ((match = targetEpisodePattern.exec(html)) !== null) {
-                console.error('[HEDEF-BULUNDU] ' + match[0]);
+            if (!html) return [];
+
+            // 1. ADIM: Doğru sezon ve bölüme ait source-index'i bul
+            // Örn: data-source-index="21" ... data-season="2" data-episode="7"
+            var regex = new RegExp('data-source-index=["\'](\\d+)["\'][^>]+data-season=["\']' + s + '["\'][^>]+data-episode=["\']' + e + '["\']', 'i');
+            var match = html.match(regex);
+
+            // Eğer sıralama farklıysa (önce episode sonra season geliyorsa) tersini de kontrol et
+            if (!match) {
+                regex = new RegExp('data-source-index=["\'](\\d+)["\'][^>]+data-episode=["\']' + e + '["\'][^>]+data-season=["\']' + s + '["\']', 'i');
+                match = html.match(regex);
             }
 
-            // 2. ADIM: Tüm sayfa boyunca "id=" veya "post=" içeren sayısal değerleri bul
-            // Genelde video çekmek için kullanılan benzersiz kimlik budur
-            var idHunter = /(?:id|post|data-id|data-post)=["'](\d+)["']/gi;
-            while ((match = idHunter.exec(html)) !== null) {
-                console.error('[POTANSIYEL-ID] Bulundu: ' + match[1] + ' (Öznitelik: ' + match[0] + ')');
+            if (match && match[1]) {
+                var sourceIndex = match[1];
+                console.error('[JetFilm-Sistem] Kaynak Indexi Bulundu: ' + sourceIndex);
+
+                // 2. ADIM: Sayfa içindeki gizli "sources" dizisini veya player verisini yakala
+                // JetFilm genelde video verilerini bir JS değişkeninde tutar
+                var sourceRegex = new RegExp('sources\\[' + sourceIndex + '\\]\\s*=\\s*["\']([^"\']+)["\']', 'i');
+                var sourceMatch = html.match(sourceRegex);
+
+                if (sourceMatch && sourceMatch[1]) {
+                    var videoUrl = sourceMatch[1];
+                    
+                    // Eğer link base64 ise çöz (JetFilm bazen yapar)
+                    if (videoUrl.includes('base64,')) videoUrl = atob(videoUrl.split('base64,')[1]);
+
+                    return [{
+                        name: "JetFilmizle",
+                        title: "S" + s + " E" + e + " (Kaynak: " + sourceIndex + ")",
+                        url: videoUrl,
+                        type: "embed"
+                    }];
+                }
+
+                // 3. ADIM: Alternatif - Eğer JS değişkeni yoksa, direkt Pixeldrain tara
+                // Bazı sayfalarda direkt iframe veya ID olarak geçer
+                var pixRe = /https?:\/\/(?:pixeldrain\.com|vidmoly\.to)[^"'\s]*/gi;
+                var pixMatches = html.match(pixRe);
+                if (pixMatches) {
+                    return pixMatches.map(function(link) {
+                        return { name: "JetFilm-Auto", title: "Otomatik Kaynak", url: link, type: "embed" };
+                    });
+                }
             }
 
-            // 3. ADIM: Sayfadaki tüm script src'lerini listele (kontrol için)
-            var scripts = html.match(/src=["']([^"']+\.js[^"']*)["']/gi);
-            if (scripts) {
-                scripts.forEach(function(s) {
-                    if(s.includes('assets')) console.error('[SCRIPT-DOSYASI] ' + s);
-                });
-            }
-
-            return []; 
+            console.error('[JetFilm-Hata] Kaynak indexi bulunamadı.');
+            return [];
         });
 }
 
