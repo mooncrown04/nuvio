@@ -1,6 +1,6 @@
 /**
  * JetFilmizle — Nuvio Provider
- * DIZI BOLUM & DINAMIK KAYNAK FIX
+ * ULTIMATE SOURCE EXTRACTOR - DIZI FIX
  */
 
 var BASE_URL     = 'https://jetfilmizle.net';
@@ -25,7 +25,7 @@ function getStreams(id, mediaType, season, episode) {
     var s = season || 1;
     var e = episode || 1;
 
-    console.error('[JetFilm-Debug] Başladı. S' + s + ' E' + e);
+    console.error('[JetFilm-Debug] Başladı: S' + s + ' E' + e);
 
     return fetch('https://api.themoviedb.org/3/' + type + '/' + tmdbId + '?api_key=' + TMDB_API_KEY + '&language=tr-TR')
         .then(function(r) { return r.json(); })
@@ -39,95 +39,89 @@ function getStreams(id, mediaType, season, episode) {
             return attemptUrls(urls);
         })
         .then(function(html) {
-            if (!html) {
-                console.error('[JetFilm-Error] Sayfa bulunamadı.');
-                return [];
-            }
+            if (!html) return [];
 
             var streams = [];
-            console.error('[JetFilm-Debug] Sayfa Analiz Ediliyor...');
+            console.error('[JetFilm-Debug] Sayfa bulundu, bölüm verisi aranıyor...');
 
-            // 1. Bölüm Spesifik Filtreleme (Diziler için)
-            // Sitede bölümler <li ... data-season="2" data-episode="7" data-id="XXXXX"> şeklinde olabilir.
-            var epPattern = new RegExp('data-season=["\']' + s + '["\'][^>]+data-episode=["\']' + e + '["\']', 'i');
-            var isEpisodeFound = epPattern.test(html);
-            
-            if (mediaType === 'tv') {
-                console.error('[JetFilm-Debug] Bölüm eşleşmesi durumu: ' + (isEpisodeFound ? 'BAŞARILI' : 'BULUNAMADI'));
-            }
-
-            // 2. Pixeldrain Yakalayıcı (Tüm yapıları kapsar)
-            // HTML içinde hem link hem de data-url olarak arar
-            var pdRe = /(?:href|data-url|value)=["\']?(https?:\/\/pixeldrain\.com\/u\/[a-zA-Z0-9_-]+)/g;
+            // --- STRATEJİ 1: HTML ATTR TARAMASI (Agresif) ---
+            // Sitede bazen linkler direkt butonların "data-source" veya "data-video" özniteliğinde durur.
+            var attrRe = /data-(?:source|video|url|id)=["']([^"']+)["']/gi;
             var m;
-            while ((m = pdRe.exec(html)) !== null) {
-                var pdUrl = m[1];
-                var pdId = pdUrl.split('/u/')[1];
-                
-                // Aynı linki tekrar ekleme
-                if (!streams.some(x => x.url.includes(pdId))) {
-                    console.error('[JetFilm-Debug] Pixeldrain Linki Bulundu: ' + pdId);
-                    streams.push({
-                        name: "JetFilm",
-                        title: '⌜ Pixeldrain ⌟ | S' + s + ' E' + e,
-                        url: 'https://pixeldrain.com/api/file/' + pdId + '?download',
-                        type: 'video',
-                        quality: '1080p',
-                        headers: { 'Referer': 'https://pixeldrain.com/' }
-                    });
+            while ((m = attrRe.exec(html)) !== null) {
+                var val = m[1];
+                if (val.includes('pixeldrain.com/u/')) {
+                    var pId = val.split('/u/')[1].split(/[?&"']/)[0];
+                    addPd(streams, pId, s, e);
+                } else if (/vidmoly|d2rs|jetv|moly/.test(val)) {
+                    addEmbed(streams, val);
                 }
             }
 
-            // 3. Iframe / Player Yakalayıcı
-            var iframeRe = /<iframe[^>]+src=["\']([^"\']+)["\']/gi;
+            // --- STRATEJİ 2: SADECE PIXELDRAIN ID TARAMASI (Çok Agresif) ---
+            // Pixeldrain linkleri bazen sadece "u/ABCDEFGH" olarak geçer.
+            var pdIdRe = /\/u\/([a-zA-Z0-9_-]{8,12})/g;
+            while ((m = pdIdRe.exec(html)) !== null) {
+                addPd(streams, m[1], s, e);
+            }
+
+            // --- STRATEJİ 3: IFRAME TARAMASI ---
+            var iframeRe = /<iframe[^>]+src=["']([^"']+)["']/gi;
             while ((m = iframeRe.exec(html)) !== null) {
-                var src = m[1];
-                if (/jetv|vidmoly|d2rs|moly|player|vido/.test(src)) {
-                    var finalSrc = src.startsWith('//') ? 'https:' + src : src;
-                    console.error('[JetFilm-Debug] Player Kaynağı Bulundu: ' + finalSrc);
-                    streams.push({
-                        name: "JetFilm",
-                        title: '⌜ Hızlı Kaynak ⌟',
-                        url: finalSrc,
-                        type: 'embed'
-                    });
+                addEmbed(streams, m[1]);
+            }
+
+            // --- STRATEJİ 4: JAVASCRIPT VAR TARAMASI ---
+            var jsRe = /["']?(?:file|link|url|src)["']?\s*[:=]\s*["']([^"']+)["']/gi;
+            while ((m = jsRe.exec(html)) !== null) {
+                var link = m[1];
+                if (link.includes('pixeldrain')) {
+                    var pdId = link.split('/u/')[1].split(/[?&"']/)[0];
+                    addPd(streams, pdId, s, e);
                 }
             }
 
-            // 4. Eğer hala 0 ise, JS içindeki gizli "video_url" veya "file" tanımlarını ara
-            if (streams.length === 0) {
-                console.error('[JetFilm-Debug] Standart yöntemler sonuç vermedi, derin tarama yapılıyor...');
-                var deepRe = /["']?(?:file|link|url)["']?\s*[:=]\s*["'](https?:\/\/[^"']+)["']/gi;
-                while ((m = deepRe.exec(html)) !== null) {
-                    if (m[1].indexOf('pixeldrain') !== -1) {
-                         // Pixeldrain linkini JS içinden yakala
-                         var dId = m[1].split('/u/')[1].split(/[?&"']/)[0];
-                         streams.push({
-                            name: "JetFilm",
-                            title: '⌜ Pixeldrain (Derin) ⌟',
-                            url: 'https://pixeldrain.com/api/file/' + dId + '?download',
-                            type: 'video'
-                         });
-                    }
-                }
-            }
-
-            console.error('[JetFilm-Debug] İşlem Bitti. Toplam: ' + streams.length + ' kaynak.');
+            console.error('[JetFilm-Debug] Tarama Bitti. Toplam: ' + streams.length);
             return streams;
         });
+}
+
+// Yardımcı Fonksiyonlar (Tekrarı önlemek için)
+function addPd(list, id, s, e) {
+    if (!list.some(x => x.url.includes(id))) {
+        console.error('[JetFilm-Debug] Yakalandı (Pixeldrain): ' + id);
+        list.push({
+            name: "JetFilm",
+            title: '⌜ Pixeldrain ⌟ | S' + s + ' E' + e,
+            url: 'https://pixeldrain.com/api/file/' + id + '?download',
+            type: 'video',
+            quality: '1080p',
+            headers: { 'Referer': 'https://pixeldrain.com/' }
+        });
+    }
+}
+
+function addEmbed(list, url) {
+    if (/jetv|vidmoly|d2rs|moly|player/.test(url) && !list.some(x => x.url === url)) {
+        var final = url.startsWith('//') ? 'https:' + url : url;
+        console.error('[JetFilm-Debug] Yakalandı (Embed): ' + final);
+        list.push({
+            name: "JetFilm",
+            title: '⌜ Player ⌟',
+            url: final,
+            type: 'embed'
+        });
+    }
 }
 
 function attemptUrls(urls) {
     if (urls.length === 0) return Promise.resolve(null);
     var currentUrl = urls.shift();
     return fetch(currentUrl, { headers: HEADERS })
-        .then(function(r) {
-            if (r.status === 200) return r.text();
-            return null;
-        })
+        .then(function(r) { return r.status === 200 ? r.text() : null; })
         .then(function(html) {
-            if (html && html.indexOf('Sayfa Bulunamadı') === -1 && html.length > 3000) {
-                console.error('[JetFilm-Success] Giriş Yapıldı: ' + currentUrl);
+            if (html && html.length > 5000) {
+                console.error('[JetFilm-Success] Girdi: ' + currentUrl);
                 return html;
             }
             return attemptUrls(urls);
