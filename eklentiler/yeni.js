@@ -1,6 +1,6 @@
 /**
- * JetFilmizle — Nuvio Provider
- * 404 HATASI ÇÖZÜLDÜ: TMDB isimleri uymadığında otomatik arama yapar.
+ * JetFilmizle — Nuvio Provider (Universal)
+ * Film & Dizi desteği + Videopark Auto-Extractor
  */
 
 var BASE_URL     = 'https://jetfilmizle.net';
@@ -22,83 +22,110 @@ function getStreams(id, mediaType, season, episode) {
     var tmdbId = id.toString().replace(/[^0-9]/g, '');
     var type = (mediaType === 'tv') ? 'tv' : 'movie';
 
-    // 1. TMDB'den doğru ismi al
+    // 1. TMDB Verisini Al
     return fetch('https://api.themoviedb.org/3/' + type + '/' + tmdbId + '?api_key=' + TMDB_API_KEY + '&language=tr-TR')
         .then(function(r) { return r.json(); })
         .then(function(info) {
             var originalTitle = info.name || info.title;
+            console.error('[JetFilm] Aranan: ' + originalTitle);
             
-            // 2. Sitede bu ismi ARA (404 almamak için en güvenli yol)
-            console.error('[JetFilm-Debug] Aranan İsim: ' + originalTitle);
-            
+            // Nuvio Uyumluluğu: Header manuel oluşturuldu (Object.assign silindi)
+            var searchHeaders = {
+                'User-Agent': HEADERS['User-Agent'],
+                'Referer': HEADERS['Referer'],
+                'Content-Type': 'application/x-www-form-urlencoded'
+            };
+
+            // 2. Sitede Ara
             return fetch(BASE_URL + '/filmara.php', {
                 method: 'POST',
-                headers: Object.assign({}, HEADERS, { 'Content-Type': 'application/x-www-form-urlencoded' }),
+                headers: searchHeaders,
                 body: 's=' + encodeURIComponent(originalTitle)
             })
             .then(function(res) { return res.text(); })
             .then(function(searchHtml) {
-                // Arama sonucundan doğru slug'ı yakala
                 var regex = new RegExp('href="(https?://jetfilmizle\\.net/(film|dizi)/([^"/]+))"', 'i');
                 var m = regex.exec(searchHtml);
                 
                 var finalUrl = '';
                 if (m) {
-                    // Sitenin kendi verdiği slug'ı kullanıyoruz
                     finalUrl = BASE_URL + '/' + m[2] + '/' + m[3];
+                    // DIZI MANTIĞI BURADA EKLENDİ
                     if (mediaType === 'tv') {
                         finalUrl += '/sezon-' + (season || 1) + '/bolum-' + (episode || 1);
                     }
                 } else {
-                    // Arama sonuç vermezse tahmin yürüt (Eski mantık)
                     var fallbackSlug = titleToSlug(originalTitle);
                     finalUrl = (mediaType === 'tv') 
                         ? BASE_URL + '/dizi/' + fallbackSlug + '/sezon-' + (season || 1) + '/bolum-' + (episode || 1)
                         : BASE_URL + '/film/' + fallbackSlug;
                 }
 
-                console.error('[JetFilm-Debug] Gidilen URL: ' + finalUrl);
-                return fetch(finalUrl, { headers: HEADERS });
+                console.error('[JetFilm] Gidilen: ' + finalUrl);
+                return fetch(finalUrl, { headers: HEADERS }).then(function(r) { return r.text(); });
             });
         })
-        .then(function(r) { return r.text(); })
         .then(function(html) {
-            if (html.indexOf('Sayfa Bulunamadı') !== -1) {
-                console.error('[JetFilm-Debug] Hata: Hala 404 alıyoruz.');
-                return [];
-            }
+            if (!html || html.indexOf('Sayfa Bulunamadı') !== -1) return [];
 
             var streams = [];
-            // Dil Etiketi
             var dil = (html.indexOf('dublaj') !== -1) ? "Dublaj" : "Altyazı";
 
-            // Pixeldrain Yakalayıcı
+            // --- KAYNAK 1: Videopark (Titan) Otomatik Link ---
+            var sdMatch = html.match(/var\s+_sd\s*=\s*({[\s\S]*?});/);
+            if (sdMatch) {
+                try {
+                    var videoData = JSON.parse(sdMatch[1]);
+                    if (videoData.stream_url) {
+                        var subs = [];
+                        if (videoData.subtitles) {
+                            for (var i = 0; i < videoData.subtitles.length; i++) {
+                                var s = videoData.subtitles[i];
+                                subs.push({ url: s.file, language: s.label, format: 'vtt' });
+                            }
+                        }
+                        streams.push({
+                            name: "JetFilmizle",
+                            title: '⌜ Videopark ⌟ | 🇹🇷 ' + dil,
+                            url: videoData.stream_url,
+                            type: 'hls',
+                            quality: '1080p',
+                            subtitles: subs,
+                            headers: { 'Referer': 'https://videopark.top/', 'User-Agent': HEADERS['User-Agent'] }
+                        });
+                    }
+                } catch(e) {}
+            }
+
+            // --- KAYNAK 2: Pixeldrain ---
             var pdRe = /href="(https?:\/\/pixeldrain\.com\/u\/([^"]+))"/g;
-            var m;
-            while ((m = pdRe.exec(html)) !== null) {
+            var pdM;
+            while ((pdM = pdRe.exec(html)) !== null) {
                 streams.push({
                     name: "JetFilmizle",
                     title: '⌜ Pixeldrain ⌟ | 🇹🇷 ' + dil,
-                    url: 'https://pixeldrain.com/api/file/' + m[2] + '?download',
+                    url: 'https://pixeldrain.com/api/file/' + pdM[2] + '?download',
                     type: 'video',
                     quality: '1080p',
                     headers: { 'Referer': 'https://pixeldrain.com/' }
                 });
             }
 
-            // Hızlı Kaynak (JetV/D2RS)
+            // --- KAYNAK 3: Hızlı Kaynaklar ---
             var iframeRe = /<iframe[^>]+src="([^"]+)"/gi;
-            while ((m = iframeRe.exec(html)) !== null) {
-                var src = m[1];
-                if (src.indexOf('jetv') !== -1 || src.indexOf('d2rs') !== -1) {
+            var ifM;
+            while ((ifM = iframeRe.exec(html)) !== null) {
+                var src = ifM[1];
+                if (src.indexOf('jetv') !== -1 || src.indexOf('d2rs') !== -1 || src.indexOf('videopark') !== -1) {
                     streams.push({
                         name: "JetFilmizle",
                         title: '⌜ Hızlı Kaynak ⌟ | 🇹🇷 ' + dil,
-                        url: src.startsWith('//') ? 'https:' + src : src,
+                        url: src.indexOf('//') === 0 ? 'https:' + src : src,
                         type: 'embed'
                     });
                 }
             }
+
             return streams;
         })
         .catch(function(e) {
