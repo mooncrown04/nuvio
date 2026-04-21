@@ -1,5 +1,5 @@
 /**
- * JetFilmizle - Nuvio Provider (API Injection Mode)
+ * JetFilmizle - Nuvio Provider (Hybrid API Mode)
  */
 
 const BASE_URL = 'https://jetfilmizle.net';
@@ -9,76 +9,70 @@ async function getStreams(id, mediaType, season, episode) {
     const e = episode || 1;
     const url = `${BASE_URL}/dizi/cobra-kai`;
 
-    console.error(`[STEP-1] Başladı: S${s} E${e}`);
+    console.error(`[DEBUG] Başlatıldı: S${s} E${e}`);
 
     try {
         const response = await fetch(url);
         const html = await response.text();
 
-        // 1. Doğru Buton ve Index'i Yakala
+        // 1. Index'i bul
         const btnRegex = new RegExp(`data-source-index=["'](\\d+)["'][^>]*data-season=["']${s}["'][^>]*data-episode=["']${e}["']`, 'i');
         const btnMatch = html.match(btnRegex);
         
         if (!btnMatch) {
-            console.error('[ERR] Hedef buton bulunamadı.');
+            console.error('[DEBUG] Buton bulunamadı.');
             return [];
         }
 
         const sourceIndex = btnMatch[1];
-        console.error(`[STEP-2] Index Bulundu: ${sourceIndex}`);
-
-        // 2. Gizli API Ucuna İstek At
-        // JetFilmizle genelde linkleri şu adresten çeker:
         const apiUrl = `${BASE_URL}/ajax/get-player?index=${sourceIndex}`;
-        console.error(`[STEP-3] API Sorgusu: ${apiUrl}`);
+        console.error(`[DEBUG] API Sorgusu Gönderiliyor: ${apiUrl}`);
 
+        // 2. API'den veriyi TEXT olarak çek (JSON hatasını önlemek için)
         const apiRes = await fetch(apiUrl, {
             headers: {
-                'X-Requested-With': 'XMLHttpRequest', // AJAX isteği olduğunu belirtir
-                'Referer': url
+                'X-Requested-With': 'XMLHttpRequest',
+                'Referer': url,
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
             }
         });
 
-        const apiData = await apiRes.json();
+        const apiRaw = await apiRes.text();
+        console.error(`[DEBUG] API'den Gelen Ham Yanıt: ${apiRaw.substring(0, 100)}...`);
+
+        // 3. Yanıtın içindeki linki ayıkla (Hem JSON hem HTML ihtimaline karşı)
+        let videoUrl = "";
         
-        // API genelde {status: true, link: "..."} veya direkt link döner
-        let videoUrl = apiData.link || apiData.url || apiData.video;
+        // Eğer yanıt JSON ise:
+        try {
+            const j = JSON.parse(apiRaw);
+            videoUrl = j.link || j.url || j.video || "";
+        } catch(e) {
+            // Eğer yanıt HTML ise içindeki ilk linki bulmaya çalış:
+            const linkMatch = apiRaw.match(/https?:\/\/[^"'\s]+/i);
+            if (linkMatch) videoUrl = linkMatch[0];
+        }
 
         if (videoUrl) {
-            console.error(`[STEP-4] API'den Link Geldi: ${videoUrl}`);
-            
-            // Eğer link Base64 ise çöz
+            // Base64 Kontrolü
             if (!videoUrl.startsWith('http')) {
-                videoUrl = atob(videoUrl);
-                console.error(`[STEP-5] Base64 Çözüldü: ${videoUrl}`);
+                try { videoUrl = atob(videoUrl); } catch(e) {}
             }
 
+            console.error(`[DEBUG] Final Link: ${videoUrl}`);
             return [{
-                name: "JetFilm - API",
-                title: `S${s} E${e} (Index: ${sourceIndex})`,
+                name: "JetFilmizle",
+                title: `S${s} E${e} (ID: ${sourceIndex})`,
                 url: videoUrl,
                 type: "embed"
             }];
         }
 
-        // 3. Eğer API boş dönerse (Yedek Plan)
-        console.error('[STEP-6] API boş döndü, alternatif tarama...');
-        const b64Regex = /["']([A-Za-z0-9+/]{40,}=*)["']/g;
-        let bMatch;
-        while ((bMatch = b64Regex.exec(html)) !== null) {
-            try {
-                const decoded = atob(bMatch[1]);
-                if (decoded.includes('http') && (decoded.includes('pixeldrain') || decoded.includes('vidmoly'))) {
-                    console.error(`[BULDUM] Kritik Link: ${decoded}`);
-                    return [{ name: "JetFilm-Alt", title: "Alternatif", url: decoded, type: "embed" }];
-                }
-            } catch (e) {}
-        }
-
+        console.error('[DEBUG] API yanıtında link bulunamadı.');
         return [];
 
     } catch (err) {
-        console.error(`[FATAL] Hata: ${err.message}`);
+        console.error(`[DEBUG] Kritik Hata: ${err.message}`);
         return [];
     }
 }
