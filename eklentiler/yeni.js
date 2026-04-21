@@ -1,6 +1,6 @@
 /**
  * JetFilmizle - Nuvio Provider
- * GİZLİ VERİ AVCI MODU (Sıfır API, %100 HTML Scan)
+ * GÜNCEL JETPLAYER SİSTEMİ (POST Method)
  */
 
 const BASE_URL = 'https://jetfilmizle.net';
@@ -8,71 +8,64 @@ const BASE_URL = 'https://jetfilmizle.net';
 async function getStreams(id, mediaType, season, episode) {
     const s = season || 1;
     const e = episode || 1;
-    const url = `${BASE_URL}/dizi/cobra-kai`;
-
-    console.error(`[AVCI] Tarama Başladı: S${s} E${e}`);
+    // Not: dizi sayfasının URL'si değişebilir, gerekirse burayı 'id' ile güncelle
+    const url = `${BASE_URL}/dizi/cobra-kai`; 
 
     try {
+        // 1. ADIM: Sayfadan Film ID ve Kaynak Index'ini çek
         const response = await fetch(url);
         const html = await response.text();
 
-        // 1. ADIM: Hedef indexi buton üzerinden yakala (Senin logdaki 21)
+        // Film ID'yi yakala (input name="film_id")
+        const filmIdMatch = html.match(/name=["']film_id["']\s*value=["'](\d+)["']/i);
+        // Sizin logdaki 21 numaralı index'i butondan yakala
         const btnRegex = new RegExp(`data-source-index=["'](\\d+)["'][^>]*data-season=["']${s}["'][^>]*data-episode=["']${e}["']`, 'i');
         const btnMatch = html.match(btnRegex);
-        if (!btnMatch) {
-            console.error('[AVCI-HATA] Buton bulunamadı.');
+
+        if (!filmIdMatch || !btnMatch) {
+            console.error('[JET-HATA] ID veya Index bulunamadı.');
             return [];
         }
+
+        const filmId = filmIdMatch[1];
         const sourceIndex = btnMatch[1];
-        console.error(`[AVCI-HEDEF] Index bulundu: ${sourceIndex}`);
+        const playerType = btnMatch[0].includes('dublaj') ? 'dublaj' : 'altyazili';
 
-        // 2. ADIM: Sayfa içindeki TÜM tırnak içindeki uzun Base64 stringlerini topla
-        // JetFilm artık 'player_sources' ismini kullanmıyor olabilir, bu yüzden 'kör tarama' yapıyoruz.
-        const b64Regex = /["']([A-Za-z0-9+/]{50,}=*)["']/g;
-        let match;
-        let foundLinks = [];
+        console.error(`[JET-DEBUG] İstek Hazırlanıyor: ID:${filmId} Index:${sourceIndex} Tip:${playerType}`);
 
-        while ((match = b64Regex.exec(html)) !== null) {
-            try {
-                const decoded = atob(match[1]);
-                // Eğer çözülen metin bir video hostu içeriyorsa listeye ekle
-                if (decoded.includes('http') && (decoded.includes('pixeldrain') || decoded.includes('vidmoly') || decoded.includes('ok.ru'))) {
-                    foundLinks.push(decoded);
-                }
-            } catch (e) { /* Base64 değilse geç */ }
-        }
+        // 2. ADIM: 'jetplayer' endpoint'ine POST isteği at (Sitenin yeni yöntemi)
+        const playerResponse = await fetch(`${BASE_URL}/jetplayer`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded',
+                'X-Requested-With': 'XMLHttpRequest'
+            },
+            body: `film_id=${filmId}&source_index=${sourceIndex}&player_type=${playerType}`
+        });
 
-        console.error(`[AVCI-BİLGİ] Toplam ${foundLinks.length} potansiyel kaynak deşifre edildi.`);
+        const playerHtml = await playerResponse.text();
 
-        // 3. ADIM: İndex ile eşleşen linki seç
-        // JetFilm'de butonlardaki index (21), sayfadaki gizli linklerin sırasıyla birebir eşleşir.
-        const finalUrl = foundLinks[sourceIndex];
+        // 3. ADIM: Gelen HTML içindeki iframe veya video linkini ayıkla
+        const iframeMatch = playerHtml.match(/src=["']([^"']+)["']/i);
+        
+        if (iframeMatch) {
+            let streamUrl = iframeMatch[1];
+            if (streamUrl.startsWith('//')) streamUrl = 'https:' + streamUrl;
 
-        if (finalUrl) {
-            console.error(`[AVCI-BAŞARI] Link Yakalandı: ${finalUrl}`);
+            console.error(`[JET-BAŞARI] Link Bulundu: ${streamUrl}`);
             return [{
                 name: "JetFilmizle",
                 title: `S${s} E${e} (Kaynak: ${sourceIndex})`,
-                url: finalUrl,
+                url: streamUrl,
                 type: "embed"
             }];
         }
 
-        // Eğer index tutmazsa tüm bulunanları göster (Yedek Plan)
-        if (foundLinks.length > 0) {
-            return foundLinks.slice(0, 3).map((link, i) => ({
-                name: "JetFilm - Otomatik",
-                title: `S${s} E${e} (Alt ${i + 1})`,
-                url: link,
-                type: "embed"
-            }));
-        }
-
-        console.error('[AVCI-HATA] Hiçbir geçerli link deşifre edilemedi.');
+        console.error('[JET-HATA] Player HTML içinde link bulunamadı.');
         return [];
 
     } catch (err) {
-        console.error(`[AVCI-KRİTİK] ${err.message}`);
+        console.error(`[JET-KRİTİK] ${err.message}`);
         return [];
     }
 }
