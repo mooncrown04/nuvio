@@ -1,5 +1,5 @@
 /**
- * JetFilmizle - Nuvio Provider (Hybrid API Mode)
+ * JetFilmizle - Nuvio Provider (Token & POST Mode)
  */
 
 const BASE_URL = 'https://jetfilmizle.net';
@@ -9,57 +9,55 @@ async function getStreams(id, mediaType, season, episode) {
     const e = episode || 1;
     const url = `${BASE_URL}/dizi/cobra-kai`;
 
-    console.error(`[DEBUG] Başlatıldı: S${s} E${e}`);
-
     try {
         const response = await fetch(url);
         const html = await response.text();
 
-        // 1. Index'i bul
+        // 1. CSRF Token ve Index Yakalama
+        const tokenMatch = html.match(/name="csrf-token"\s+content="([^"]+)"/) || html.match(/"csrf-token":"([^"]+)"/);
+        const token = tokenMatch ? tokenMatch[1] : "";
+        
         const btnRegex = new RegExp(`data-source-index=["'](\\d+)["'][^>]*data-season=["']${s}["'][^>]*data-episode=["']${e}["']`, 'i');
         const btnMatch = html.match(btnRegex);
         
-        if (!btnMatch) {
-            console.error('[DEBUG] Buton bulunamadı.');
-            return [];
-        }
-
+        if (!btnMatch) return [];
         const sourceIndex = btnMatch[1];
-        const apiUrl = `${BASE_URL}/ajax/get-player?index=${sourceIndex}`;
-        console.error(`[DEBUG] API Sorgusu Gönderiliyor: ${apiUrl}`);
 
-        // 2. API'den veriyi TEXT olarak çek (JSON hatasını önlemek için)
+        console.error(`[DEBUG] Token: ${token ? 'Alındı' : 'YOK!'} | Index: ${sourceIndex}`);
+
+        // 2. POST İsteği ile Gerçek Veriyi Zorla
+        const apiUrl = `${BASE_URL}/ajax/get-player`;
         const apiRes = await fetch(apiUrl, {
+            method: 'POST',
             headers: {
+                'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
                 'X-Requested-With': 'XMLHttpRequest',
-                'Referer': url,
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-            }
+                'X-CSRF-TOKEN': token,
+                'Referer': url
+            },
+            body: `index=${sourceIndex}`
         });
 
         const apiRaw = await apiRes.text();
-        console.error(`[DEBUG] API'den Gelen Ham Yanıt: ${apiRaw.substring(0, 100)}...`);
+        console.error(`[DEBUG] Ham Yanıt: ${apiRaw.substring(0, 50)}`);
 
-        // 3. Yanıtın içindeki linki ayıkla (Hem JSON hem HTML ihtimaline karşı)
+        // 3. Link Ayıklama (Analytics linklerini filtreleyerek)
         let videoUrl = "";
-        
-        // Eğer yanıt JSON ise:
         try {
             const j = JSON.parse(apiRaw);
             videoUrl = j.link || j.url || j.video || "";
         } catch(e) {
-            // Eğer yanıt HTML ise içindeki ilk linki bulmaya çalış:
-            const linkMatch = apiRaw.match(/https?:\/\/[^"'\s]+/i);
+            // HTML içinden sadece video hostlarını (pixeldrain/vidmoly) ara
+            const linkMatch = apiRaw.match(/https?:\/\/(?:pixeldrain|vidmoly|ok\.ru|mail\.ru)[^"'\s]+/i);
             if (linkMatch) videoUrl = linkMatch[0];
         }
 
-        if (videoUrl) {
-            // Base64 Kontrolü
+        if (videoUrl && !videoUrl.includes('googletagmanager')) {
             if (!videoUrl.startsWith('http')) {
                 try { videoUrl = atob(videoUrl); } catch(e) {}
             }
 
-            console.error(`[DEBUG] Final Link: ${videoUrl}`);
+            console.error(`[SUCCESS] Link: ${videoUrl}`);
             return [{
                 name: "JetFilmizle",
                 title: `S${s} E${e} (ID: ${sourceIndex})`,
@@ -68,11 +66,11 @@ async function getStreams(id, mediaType, season, episode) {
             }];
         }
 
-        console.error('[DEBUG] API yanıtında link bulunamadı.');
+        console.error('[DEBUG] Geçerli video linki bulunamadı.');
         return [];
 
     } catch (err) {
-        console.error(`[DEBUG] Kritik Hata: ${err.message}`);
+        console.error(`[ERROR] ${err.message}`);
         return [];
     }
 }
