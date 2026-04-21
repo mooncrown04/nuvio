@@ -1,129 +1,89 @@
 /**
- * JetFilmizle - Nuvio Ultra (v20 Final Force)
- * Videopark Titan ve Dahili Jet-Player kaynaklarını en derinden kazır.
+ * JetFilmizle - Nuvio Debugger
+ * Bu kod tahmin yapmaz, gelen veriyi loglara dökerek yolu bulur.
  */
 
 var BASE_URL = 'https://jetfilmizle.net';
 var TMDB_API_KEY = '500330721680edb6d5f7f12ba7cd9023';
 
-var HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Referer': 'https://jetfilmizle.net/',
-    'X-Requested-With': 'XMLHttpRequest'
-};
-
-function toSlug(t) {
-    if(!t) return "";
-    return t.toLowerCase()
-        .replace(/ğ/g,'g').replace(/ü/g,'u').replace(/ş/g,'s')
-        .replace(/ı/g,'i').replace(/İ/g,'i').replace(/ö/g,'o')
-        .replace(/ç/g,'c').replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'');
-}
-
 async function getStreams(id, mediaType, season, episode) {
-    console.error('[Hata-Nerede] 1: Islem Baslatildi');
-    var tmdbId = id.toString().replace(/[^0-9]/g, '');
-    var tmdbType = (mediaType === 'tv') ? 'tv' : 'movie';
-
+    console.error(`[DEBUG] Başlatıldı: ID:${id} | Type:${mediaType} | S:${season} E:${episode}`);
+    
     try {
-        const tmdbRes = await fetch(`https://api.themoviedb.org/3/${tmdbType}/${tmdbId}?api_key=${TMDB_API_KEY}&language=tr-TR`);
+        // 1. TMDB'den ismi al (Link oluşturmak için şart)
+        const tmdbType = (mediaType === 'tv') ? 'tv' : 'movie';
+        const tmdbRes = await fetch(`https://api.themoviedb.org/3/${tmdbType}/${id}?api_key=${TMDB_API_KEY}&language=tr-TR`);
         const info = await tmdbRes.json();
-        const name = info.name || info.title || info.original_name;
+        const slug = info.name ? info.name.toLowerCase().replace(/ /g, '-') : ""; // Basit slug
+
+        // Örnek linki dene
+        let targetUrl = (mediaType === 'tv') 
+            ? `${BASE_URL}/dizi/${slug}/sezon-${season}/bolum-${episode}`
+            : `${BASE_URL}/film/${slug}`;
+
+        console.error(`[DEBUG] Hedef URL: ${targetUrl}`);
+
+        const res = await fetch(targetUrl, {
+            headers: { 'User-Agent': 'Mozilla/5.0', 'Referer': BASE_URL }
+        });
         
-        const s = season || 1;
-        const e = episode || 1;
-        const slug = toSlug(name);
+        const html = await res.text();
         
-        let candidates = [];
-        if (mediaType === 'tv') {
-            candidates.push(`${BASE_URL}/dizi/${slug}-2018/sezon-${s}/bolum-${e}`);
-            candidates.push(`${BASE_URL}/dizi/${slug}/sezon-${s}/bolum-${e}`);
-            candidates.push(`${BASE_URL}/dizi/${slug}/sezon-${s}-bolum-${e}-izle`);
+        // --- ASIL ANALİZ BURADA ---
+        console.error(`[DEBUG] HTML Boyutu: ${html.length} karakter`);
+
+        // Sitedeki gizli player listesini (video-nav) ham metin olarak yakala
+        const navBlock = html.match(/<div class="video-nav">([\s\S]*?)<\/div>/);
+        if (navBlock) {
+            console.error(`[DEBUG] Video Nav Bloğu Bulundu: ${navBlock[1].substring(0, 200)}...`);
         } else {
-            candidates.push(`${BASE_URL}/film/${slug}`);
-            candidates.push(`${BASE_URL}/film/${slug}-izle`);
+            console.error(`[DEBUG] Video Nav Bloğu BULUNAMADI. Sayfa JS render bekliyor olabilir.`);
         }
 
-        let html = "";
-        for (let url of candidates) {
-            console.error(`[Hata-Nerede] 6: Sayfa Deneniyor -> ${url}`);
-            const res = await fetch(url, { headers: HEADERS });
-            if (res.status === 200) {
-                html = await res.text();
-                if (html.length > 2500) break;
-            }
+        // Senin verdiğin Videopark kodundaki _sd yapısını tüm sayfada tara
+        const anySd = html.match(/var\s+_sd\s*=\s*({[\s\S]*?});/);
+        if (anySd) {
+            console.error(`[DEBUG] Sayfada DOĞRUDAN _sd bulundu!`);
+            const data = JSON.parse(anySd[1]);
+            return [{
+                name: "Jet-Direct",
+                url: data.stream_url,
+                type: "hls"
+            }];
         }
 
-        if (!html) return [];
-
+        // Eğer ID'ler butonlardaysa, onları ham metinden cımbızla
         let streams = [];
-        const isDublaj = html.indexOf('dublaj') !== -1;
-        const label = isDublaj ? "Dublaj" : "Altyazı";
-
-        // 1. VIDEOPARK (TITAN) DERİN ARAMA
-        // Sadece ID formatına uyanları al (Örn: DFADXFgPDU4)
-        let titanIds = [];
-        const titanRegex = /(?:titan\/w\/|data-id=|data-video=)["']?(DFADX[a-zA-Z0-9_-]+|[a-zA-Z0-9_-]{11})["']?/gi;
+        const regex = /data-id=["']([a-zA-Z0-9_-]+)["']/g;
         let m;
-        while ((m = titanRegex.exec(html)) !== null) {
+        while ((m = regex.exec(html)) !== null) {
             let tId = m[1];
-            if (!tId.startsWith('G-') && !tId.includes('search') && titanIds.indexOf(tId) === -1) {
-                titanIds.push(tId);
-            }
-        }
-
-        console.error(`[TITAN] Bulunan Gecerli ID: ${titanIds.length}`);
-
-        for (let tId of titanIds) {
-            const playerUrl = `https://videopark.top/titan/w/${tId}`;
-            console.error(`[TITAN] Worker Cozuluyor: ${playerUrl}`);
-
-            try {
-                const pRes = await fetch(playerUrl, { headers: { 'Referer': 'https://jetfilmizle.net/', 'User-Agent': HEADERS['User-Agent'] } });
-                const pHtml = await pRes.text();
-                const sdMatch = pHtml.match(/var\s+_sd\s*=\s*({[\s\S]*?});/);
+            // analytics ve gereksizleri ele
+            if (tId.length > 10 && !tId.includes('G-')) {
+                console.error(`[DEBUG] Potansiyel ID Yakalandı: ${tId}`);
+                
+                // Hemen bu ID'yi Titan'a sor
+                const titanUrl = `https://videopark.top/titan/w/${tId}`;
+                const tRes = await fetch(titanUrl, { headers: { 'Referer': BASE_URL } });
+                const tHtml = await tRes.text();
+                const sdMatch = tHtml.match(/var\s+_sd\s*=\s*({[\s\S]*?});/);
                 
                 if (sdMatch) {
-                    const data = JSON.parse(sdMatch[1]);
-                    if (data.stream_url) {
-                        streams.push({
-                            name: "Videopark (Titan)",
-                            title: `⌜ ${label} ⌟`,
-                            url: data.stream_url,
-                            type: "hls",
-                            subtitles: data.subtitles ? data.subtitles.map(s => ({ url: s.file, language: s.label, format: "vtt" })) : [],
-                            headers: { 'Referer': 'https://videopark.top/', 'User-Agent': HEADERS['User-Agent'] }
-                        });
-                    }
+                    const d = JSON.parse(sdMatch[1]);
+                    streams.push({
+                        name: "Titan Worker",
+                        url: d.stream_url,
+                        type: "hls"
+                    });
                 }
-            } catch (e) { console.error("[TITAN-HATA] " + e.message); }
-        }
-
-        // 2. JET-PLAYER DIRECT (Eger Titan bulunamazsa)
-        if (streams.length === 0) {
-            const directSd = html.match(/var\s+_sd\s*=\s*({[\s\S]*?});/);
-            if (directSd) {
-                try {
-                    const d = JSON.parse(directSd[1]);
-                    if (d.stream_url) {
-                        streams.push({
-                            name: "Jet-Direct",
-                            title: `⌜ Standart: ${label} ⌟`,
-                            url: d.stream_url,
-                            type: "hls",
-                            headers: { 'Referer': 'https://videopark.top/' }
-                        });
-                    }
-                } catch(e) {}
             }
         }
 
-        console.error(`[Hata-Nerede] 10: Islem Bitti. Kaynak: ${streams.length}`);
-        // Bos dizi donerek Java tarafini koruyoruz
-        return streams.length > 0 ? streams : [];
+        console.error(`[DEBUG] İşlem Bitti. Bulunan: ${streams.length}`);
+        return streams;
 
     } catch (err) {
-        console.error(`[TITAN-KRITIK] Hata: ${err.message}`);
+        console.error(`[DEBUG] KRİTİK HATA: ${err.message}`);
         return [];
     }
 }
