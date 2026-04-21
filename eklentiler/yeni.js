@@ -1,6 +1,6 @@
 /**
- * JetFilmizle — Nuvio Provider (ULTRA COMPATIBLE)
- * Hem Film Hem Dizi - Hata Vermeyen Saf JS Sürümü
+ * JetFilmizle — Nuvio Provider
+ * DEBUG MODE: Hata kodları eklendi, her adım loglanır.
  */
 
 var BASE_URL = 'https://jetfilmizle.net';
@@ -12,15 +12,21 @@ var HEADERS = {
 };
 
 function getStreams(id, mediaType, season, episode) {
+    console.error('[Hata-Nerede] 1: Fonksiyon basladi');
+    
     var tmdbId = id.toString().replace(/[^0-9]/g, '');
     var type = (mediaType === 'tv') ? 'tv' : 'movie';
+    var urlTMDB = 'https://api.themoviedb.org/3/' + type + '/' + tmdbId + '?api_key=' + TMDB_API_KEY + '&language=tr-TR';
 
-    return fetch('https://api.themoviedb.org/3/' + type + '/' + tmdbId + '?api_key=' + TMDB_API_KEY + '&language=tr-TR')
-        .then(function(r) { return r.json(); })
+    return fetch(urlTMDB)
+        .then(function(r) { 
+            console.error('[Hata-Nerede] 2: TMDB cevabi geldi');
+            return r.json(); 
+        })
         .then(function(info) {
             var searchTitle = info.name || info.title;
+            console.error('[Hata-Nerede] 3: Aranan isim: ' + searchTitle);
             
-            // Object.assign HATASI ÇÖZÜMÜ: Manuel header
             var searchHeaders = {
                 'User-Agent': HEADERS['User-Agent'],
                 'Referer': HEADERS['Referer'],
@@ -31,108 +37,91 @@ function getStreams(id, mediaType, season, episode) {
                 method: 'POST',
                 headers: searchHeaders,
                 body: 's=' + encodeURIComponent(searchTitle)
-            })
-            .then(function(res) { return res.text(); })
-            .then(function(searchHtml) {
-                var regex = new RegExp('href="(https?://jetfilmizle\\.net/(film|dizi)/([^"/]+))"', 'i');
-                var m = regex.exec(searchHtml);
-                
-                var finalUrl = '';
-                if (m) {
-                    finalUrl = BASE_URL + '/' + m[2] + '/' + m[3];
-                    if (mediaType === 'tv') {
-                        finalUrl += '/sezon-' + (season || 1) + '/bolum-' + (episode || 1);
-                    }
-                }
-                
-                if (!finalUrl) return [];
-
-                console.error('[JetFilm] Gidilen URL: ' + finalUrl);
-                return fetch(finalUrl, { headers: HEADERS }).then(function(r) { return r.text(); });
             });
         })
+        .then(function(res) { 
+            console.error('[Hata-Nerede] 4: Arama yapildi');
+            return res.text(); 
+        })
+        .then(function(searchHtml) {
+            console.error('[Hata-Nerede] 5: Arama sonuclari taraniyor');
+            var regex = new RegExp('href="(https?://jetfilmizle\\.net/(film|dizi)/([^"/]+))"', 'i');
+            var m = regex.exec(searchHtml);
+            
+            var finalUrl = '';
+            if (m) {
+                finalUrl = BASE_URL + '/' + m[2] + '/' + m[3];
+                if (mediaType === 'tv') {
+                    finalUrl += '/sezon-' + (season || 1) + '/bolum-' + (episode || 1);
+                }
+            }
+            
+            if (!finalUrl) {
+                console.error('[Hata-Nerede] 6: URL bulunamadi');
+                return [];
+            }
+
+            console.error('[Hata-Nerede] 7: Gidiliyor -> ' + finalUrl);
+            return fetch(finalUrl, { headers: HEADERS }).then(function(r) { return r.text(); });
+        })
         .then(function(html) {
+            console.error('[Hata-Nerede] 8: Sayfa HTML okundu');
             if (!html || html.indexOf('Sayfa Bulunamadı') !== -1) return [];
 
             var streams = [];
             var dil = (html.indexOf('dublaj') !== -1) ? "Dublaj" : "Altyazı";
 
-            // 1. VIDEOPARK (TITAN) - Dizi ve Filmlerdeki Asıl Kaynak
+            // --- VIDEOPARK (TITAN) TARAMA ---
+            console.error('[Hata-Nerede] 9: Videopark taranıyor');
             var sdMatch = html.match(/var\s+_sd\s*=\s*({[\s\S]*?});/);
             if (sdMatch) {
                 try {
-                    var videoData = JSON.parse(sdMatch[1]);
-                    if (videoData.stream_url) {
-                        // map() yerine FOR döngüsü (Eski JS uyumu için)
-                        var subList = [];
-                        if (videoData.subtitles) {
-                            for (var i = 0; i < videoData.subtitles.length; i++) {
-                                var s = videoData.subtitles[i];
-                                subList.push({ url: s.file, language: s.label, format: 'vtt' });
-                            }
-                        }
-
+                    var vData = JSON.parse(sdMatch[1]);
+                    if (vData.stream_url) {
                         streams.push({
                             name: "JetFilmizle",
                             title: '⌜ Videopark ⌟ | 🇹🇷 ' + dil,
-                            url: videoData.stream_url,
+                            url: vData.stream_url,
                             type: 'hls',
                             quality: '1080p',
-                            subtitles: subList,
-                            headers: { 
-                                'Referer': 'https://videopark.top/', 
-                                'User-Agent': HEADERS['User-Agent'] 
-                            }
+                            headers: { 'Referer': 'https://videopark.top/', 'User-Agent': HEADERS['User-Agent'] }
                         });
                     }
-                } catch(e) {}
+                } catch(e) { console.error('[Hata-Nerede] 10: JSON Parse hatası'); }
             }
 
-            // 2. PIXELDRAIN & DİĞERLERİ
+            // --- DIGER KAYNAKLAR ---
+            console.error('[Hata-Nerede] 11: Diger kaynaklar taranıyor');
             var linkRe = /(?:src|data-src|href)="([^"]+)"/gi;
             var match;
             while ((match = linkRe.exec(html)) !== null) {
-                var url = match[1];
-
-                // Pixeldrain Yakala
-                if (url.indexOf('pixeldrain.com/u/') !== -1) {
-                    var pdId = url.split('/u/')[1].split('?')[0];
+                var u = match[1];
+                if (u.indexOf('pixeldrain.com/u/') !== -1) {
+                    var pid = u.split('/u/')[1].split('?')[0];
                     streams.push({
                         name: "JetFilmizle",
                         title: '⌜ Pixeldrain ⌟ | 🇹🇷 ' + dil,
-                        url: 'https://pixeldrain.com/api/file/' + pdId + '?download',
+                        url: 'https://pixeldrain.com/api/file/' + pid + '?download',
                         type: 'video',
-                        quality: '1080p',
-                        headers: { 'Referer': 'https://pixeldrain.com/' }
+                        quality: '1080p'
                     });
                 }
-
-                // Iframe Kaynakları (JetV, D2RS vb.)
-                if (url.indexOf('jetv') !== -1 || url.indexOf('d2rs') !== -1) {
+                if (u.indexOf('jetv') !== -1 || u.indexOf('d2rs') !== -1) {
                     streams.push({
                         name: "JetFilmizle",
                         title: '⌜ Hızlı Kaynak ⌟ | 🇹🇷 ' + dil,
-                        url: url.indexOf('//') === 0 ? 'https:' + url : url,
+                        url: (u.indexOf('//') === 0) ? 'https:' + u : u,
                         type: 'embed'
                     });
                 }
             }
 
-            // Mükerrer linkleri temizle (Eski usul filter)
-            var finalStreams = [];
-            var seen = {};
-            for (var j = 0; j < streams.length; j++) {
-                var sUrl = streams[j].url;
-                if (!seen[sUrl]) {
-                    finalStreams.push(streams[j]);
-                    seen[sUrl] = true;
-                }
-            }
-
-            return finalStreams;
+            console.error('[Hata-Nerede] 12: Islem tamam. Kaynak sayisi: ' + streams.length);
+            return streams;
         })
         .catch(function(e) {
-            console.error('[JetFilm-Error]: ' + e.message);
+            // HATAYI TAM OLARAK YAZDIR:
+            console.error('[JetFilm-Kritik-Hata]: ' + e.name + ' - ' + e.message);
             return [];
         });
 }
