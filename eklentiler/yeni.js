@@ -1,6 +1,6 @@
 /**
  * JetFilmizle - Nuvio Provider
- * FINAL STRIKE - SUCCESS MODE
+ * SMART LINK SELECTOR (No more embed.js trap)
  */
 
 const BASE_URL = 'https://jetfilmizle.net';
@@ -14,7 +14,7 @@ async function getStreams(id, mediaType, season, episode) {
         const response = await fetch(url);
         const html = await response.text();
 
-        // 1. Gerekli ID ve Tokenları yakala
+        // 1. Verileri Ayıkla
         const tokenMatch = html.match(/name="csrf-token"\s+content="([^"]+)"/i);
         const filmIdMatch = html.match(/data-film-id=["'](\d+)["']/i) || html.match(/name=["']film_id["']\s*value=["'](\d+)["']/i);
         const btnRegex = new RegExp(`data-source-index=["'](\\d+)["'][^>]*data-season=["']${s}["'][^>]*data-episode=["']${e}["']`, 'i');
@@ -27,7 +27,7 @@ async function getStreams(id, mediaType, season, episode) {
         const sourceIndex = btnMatch[1];
         const playerType = btnMatch[0].includes('dublaj') ? 'dublaj' : 'altyazili';
 
-        // 2. jetplayer isteği (Sitenin ana damarı)
+        // 2. jetplayer POST İsteği
         const playerResponse = await fetch(`${BASE_URL}/jetplayer`, {
             method: 'POST',
             headers: {
@@ -40,16 +40,29 @@ async function getStreams(id, mediaType, season, episode) {
         });
 
         const playerRaw = await playerResponse.text();
-
-        // 3. Linki ayıkla (Logda gördüğümüz iframe src'yi yakalıyoruz)
-        const iframeMatch = playerRaw.match(/src=['"]([^'"]+)['"]/i);
         
-        if (iframeMatch) {
-            let finalUrl = iframeMatch[1];
-            // Protokol eksikse tamamla
-            if (finalUrl.startsWith('//')) finalUrl = 'https:' + finalUrl;
+        // 3. SEÇİCİ LİNK AYIKLAMA (Strateji Değişikliği)
+        let finalUrl = "";
 
-            console.error(`[JET-BINGO] Link Yakalandı: ${finalUrl}`);
+        // ÖNCELİK 1: Gerçek video hostları (videopark, vidmoly, pixeldrain vb.)
+        const videoHostMatch = playerRaw.match(/src=['"](https?:\/\/(?:videopark|vidmoly|pixeldrain|ok\.ru|mail\.ru)[^'"]+)['"]/i);
+        
+        if (videoHostMatch) {
+            finalUrl = videoHostMatch[1];
+            console.error(`[JET-HOST] Video Hostu Yakalandı: ${finalUrl}`);
+        } 
+        // ÖNCELİK 2: Eğer host yoksa ama iframe varsa (herhangi bir src)
+        else {
+            const genericIframe = playerRaw.match(/iframe[^>]+src=['"]([^'"]+)['"]/i);
+            if (genericIframe && !genericIframe[1].includes('embed.js')) {
+                finalUrl = genericIframe[1];
+                console.error(`[JET-IFRAME] Iframe Yakalandı: ${finalUrl}`);
+            }
+        }
+
+        // 4. Protokol Tamamlama ve Sonuç
+        if (finalUrl) {
+            if (finalUrl.startsWith('//')) finalUrl = 'https:' + finalUrl;
 
             return [{
                 name: "JetFilmizle",
@@ -59,7 +72,7 @@ async function getStreams(id, mediaType, season, episode) {
             }];
         }
 
-        console.error('[JET-FAIL] Yanıt geldi ama iframe bulunamadı.');
+        console.error('[JET-HATA] Geçerli bir video kaynağı ayıklanamadı.');
         return [];
 
     } catch (err) {
