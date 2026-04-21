@@ -1,6 +1,6 @@
 /**
- * JetFilmizle — Nuvio Ultra
- * Arama motoruna takılmadan direkt URL tahmini ve Titan Cozucu
+ * JetFilmizle — Nuvio Pro (Final Link Fix)
+ * Dinamik URL yapısını çözen ve Titan ile birleştiren sürüm.
  */
 
 var BASE_URL = 'https://jetfilmizle.net';
@@ -11,14 +11,6 @@ var HEADERS = {
     'Referer': 'https://jetfilmizle.net/'
 };
 
-function toSlug(t) {
-    if(!t) return "";
-    return t.toLowerCase()
-        .replace(/ğ/g,'g').replace(/ü/g,'u').replace(/ş/g,'s')
-        .replace(/ı/g,'i').replace(/İ/g,'i').replace(/ö/g,'o')
-        .replace(/ç/g,'c').replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'');
-}
-
 function getStreams(id, mediaType, season, episode) {
     console.error('[Hata-Nerede] 1: Basladi');
     var tmdbId = id.toString().replace(/[^0-9]/g, '');
@@ -27,43 +19,64 @@ function getStreams(id, mediaType, season, episode) {
     return fetch('https://api.themoviedb.org/3/' + type + '/' + tmdbId + '?api_key=' + TMDB_API_KEY + '&language=tr-TR')
         .then(function(r) { return r.json(); })
         .then(function(info) {
-            var trName = info.name || info.title;
-            var enName = info.original_name || info.original_title;
-            console.error('[Hata-Nerede] 2: TMDB TR->' + trName + ' EN->' + enName);
+            var searchTitle = info.name || info.title;
+            console.error('[Hata-Nerede] 2: Arama -> ' + searchTitle);
             
-            // Arama motoruna sormadan önce en güçlü adayları belirle
-            var candidates = [];
-            if (mediaType === 'tv') {
-                var suffix = '/sezon-' + (season || 1) + '/bolum-' + (episode || 1);
-                candidates.push(BASE_URL + '/dizi/' + toSlug(trName) + suffix);
-                candidates.push(BASE_URL + '/dizi/' + toSlug(enName) + suffix);
-            } else {
-                candidates.push(BASE_URL + '/film/' + toSlug(trName));
-                candidates.push(BASE_URL + '/film/' + toSlug(enName));
-            }
-
-            // Bu adayları sırayla dene, hangisi 200 dönerse onu al
-            console.error('[Hata-Nerede] 3: Adaylar denenecek: ' + candidates[0]);
-            
-            return fetch(candidates[0], { headers: HEADERS }).then(function(res) {
-                if (res.status === 200) return res.text();
-                console.error('[Hata-Nerede] 4: Ilk aday tutmadi, ikinci deneniyor: ' + candidates[1]);
-                return fetch(candidates[1], { headers: HEADERS }).then(function(res2) {
-                    return res2.text();
-                });
+            // Arama motorundan gelen link en güvenlisidir çünkü manuel linkleri (12-maymun-2015 gibi) o bilir.
+            return fetch(BASE_URL + '/filmara.php', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'User-Agent': HEADERS['User-Agent'] },
+                body: 's=' + encodeURIComponent(searchTitle)
             });
         })
-        .then(function(html) {
-            if (!html || html.indexOf('Sayfa Bulunamadı') !== -1) {
-                console.error('[Hata-Nerede] 5: Hicbir URL sonuc vermedi.');
+        .then(function(res) { return res.text(); })
+        .then(function(searchHtml) {
+            // Arama sonucundan gelen linki cımbızla çek
+            var regex = /href=['"](https?:\/\/jetfilmizle\.net\/(film|dizi)\/([^'"]+))['"]/i;
+            var m = regex.exec(searchHtml);
+            
+            if (!m) {
+                console.error('[Hata-Nerede] 5: Sitede bulunamadı.');
                 return [];
             }
+
+            var finalUrl = m[1];
             
-            console.error('[Hata-Nerede] 6: HTML basariyla alindi');
+            // DIZI LINKLERINI DUZELTME MERKEZI
+            if (mediaType === 'tv') {
+                // Eğer link zaten bir bölüme gitmiyorsa (yani ana sayfaysa)
+                if (finalUrl.indexOf('sezon') === -1) {
+                    // Sonda slash varsa kaldır ve sezon/bölüm ekle
+                    finalUrl = finalUrl.replace(/\/$/, '') + '/sezon-' + (season || 1) + '/bolum-' + (episode || 1);
+                }
+            }
+            
+            console.error('[Hata-Nerede] 6: Gidilen URL -> ' + finalUrl);
+            return fetch(finalUrl, { headers: HEADERS }).then(function(r) { return r.text(); });
+        })
+        .then(function(html) {
+            if (!html) return [];
             var streams = [];
             var dil = (html.indexOf('dublaj') !== -1) ? "Dublaj" : "Altyazı";
 
-            // --- TITAN / VIDEOPARK TARAMA ---
+            // --- 1. FILMLER İÇİN DOĞRUDAN SD ---
+            if (html.indexOf('var _sd =') !== -1) {
+                try {
+                    var raw = html.split('var _sd =')[1].split('};')[0] + '}';
+                    var vData = JSON.parse(raw);
+                    if (vData.stream_url) {
+                        streams.push({
+                            name: "JetFilm (Hızlı)",
+                            url: vData.stream_url,
+                            type: 'hls',
+                            title: '⌜ Kaynak 1 ⌟ | 🇹🇷 ' + dil,
+                            headers: { 'Referer': 'https://videopark.top/' }
+                        });
+                    }
+                } catch(e) {}
+            }
+
+            // --- 2. DIZILER İÇİN TITAN PLAYER (Senin başarılı metodun) ---
             var playerUrls = [];
             var pRe = /(?:src|data-video|data-src)=['"](https?:\/\/videopark\.top\/titan\/w\/[^'"]+)['"]/gi;
             var match;
@@ -73,11 +86,12 @@ function getStreams(id, mediaType, season, episode) {
 
             var promises = [];
             for (var i = 0; i < playerUrls.length; i++) {
-                console.error('[Hata-Nerede] 9: Titan Linki Bulundu -> ' + playerUrls[i]);
+                console.error('[Hata-Nerede] 9: Titan Cozuluyor -> ' + playerUrls[i]);
                 promises.push(
                     fetch(playerUrls[i], { headers: HEADERS })
                     .then(function(r) { return r.text(); })
                     .then(function(p_html) {
+                        // Senin daha önce sonuç aldığın meşhur regex
                         var sdMatch = p_html.match(/var\s+_sd\s*=\s*({[\s\S]*?});/);
                         if (sdMatch) {
                             var data = JSON.parse(sdMatch[1]);
@@ -98,22 +112,17 @@ function getStreams(id, mediaType, season, episode) {
                 for (var j = 0; j < results.length; j++) {
                     if (results[j]) streams.push(results[j]);
                 }
-
-                // Filmler için doğrudan _sd (Sayfa içindeyse)
-                if (html.indexOf('var _sd =') !== -1) {
-                    try {
-                        var raw = html.split('var _sd =')[1].split('};')[0] + '}';
-                        var vData = JSON.parse(raw);
-                        if (vData.stream_url && streams.length === 0) {
-                            streams.push({
-                                name: "JetFilm (Direct)",
-                                url: vData.stream_url,
-                                type: 'hls',
-                                title: '⌜ Kaynak 1 ⌟',
-                                headers: { 'Referer': 'https://videopark.top/' }
-                            });
-                        }
-                    } catch(e) {}
+                
+                // Pixeldrain (Sağlam yedek)
+                var pdRe = /href=['"](https?:\/\/pixeldrain\.com\/u\/([^'"]+))['"]/g;
+                var pdM;
+                while ((pdM = pdRe.exec(html)) !== null) {
+                    streams.push({
+                        name: "JetFilmizle",
+                        title: '⌜ Pixeldrain ⌟ | 🇹🇷 ' + dil,
+                        url: 'https://pixeldrain.com/api/file/' + pdM[2] + '?download',
+                        type: 'video'
+                    });
                 }
 
                 console.error('[Hata-Nerede] 10: Bitti. Kaynak: ' + streams.length);
