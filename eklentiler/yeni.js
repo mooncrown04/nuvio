@@ -1,6 +1,6 @@
 /**
- * JetFilmizle — Nuvio Pro (Final Link Fix)
- * Dinamik URL yapısını çözen ve Titan ile birleştiren sürüm.
+ * JetFilmizle — Nuvio Pro
+ * Arama motoru bozulsa bile URL tahmin eden ve Titan ile çözen sürüm.
  */
 
 var BASE_URL = 'https://jetfilmizle.net';
@@ -11,6 +11,14 @@ var HEADERS = {
     'Referer': 'https://jetfilmizle.net/'
 };
 
+function toSlug(t) {
+    if(!t) return "";
+    return t.toLowerCase()
+        .replace(/ğ/g,'g').replace(/ü/g,'u').replace(/ş/g,'s')
+        .replace(/ı/g,'i').replace(/İ/g,'i').replace(/ö/g,'o')
+        .replace(/ç/g,'c').replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'');
+}
+
 function getStreams(id, mediaType, season, episode) {
     console.error('[Hata-Nerede] 1: Basladi');
     var tmdbId = id.toString().replace(/[^0-9]/g, '');
@@ -19,47 +27,51 @@ function getStreams(id, mediaType, season, episode) {
     return fetch('https://api.themoviedb.org/3/' + type + '/' + tmdbId + '?api_key=' + TMDB_API_KEY + '&language=tr-TR')
         .then(function(r) { return r.json(); })
         .then(function(info) {
-            var searchTitle = info.name || info.title;
-            console.error('[Hata-Nerede] 2: Arama -> ' + searchTitle);
+            var trName = info.name || info.title;
+            var enName = info.original_name || info.original_title;
+            var year = (info.first_air_date || info.release_date || "").split("-")[0];
             
-            // Arama motorundan gelen link en güvenlisidir çünkü manuel linkleri (12-maymun-2015 gibi) o bilir.
+            console.error('[Hata-Nerede] 2: TMDB -> ' + trName);
+
+            // ARAMA MOTORUNA SOR (BİRİNCİ YOL)
             return fetch(BASE_URL + '/filmara.php', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'User-Agent': HEADERS['User-Agent'] },
-                body: 's=' + encodeURIComponent(searchTitle)
-            });
-        })
-        .then(function(res) { return res.text(); })
-        .then(function(searchHtml) {
-            // Arama sonucundan gelen linki cımbızla çek
-            var regex = /href=['"](https?:\/\/jetfilmizle\.net\/(film|dizi)\/([^'"]+))['"]/i;
-            var m = regex.exec(searchHtml);
-            
-            if (!m) {
-                console.error('[Hata-Nerede] 5: Sitede bulunamadı.');
-                return [];
-            }
-
-            var finalUrl = m[1];
-            
-            // DIZI LINKLERINI DUZELTME MERKEZI
-            if (mediaType === 'tv') {
-                // Eğer link zaten bir bölüme gitmiyorsa (yani ana sayfaysa)
-                if (finalUrl.indexOf('sezon') === -1) {
-                    // Sonda slash varsa kaldır ve sezon/bölüm ekle
-                    finalUrl = finalUrl.replace(/\/$/, '') + '/sezon-' + (season || 1) + '/bolum-' + (episode || 1);
+                body: 's=' + encodeURIComponent(trName)
+            }).then(function(res) { return res.text(); }).then(function(searchHtml) {
+                var regex = /href=['"](https?:\/\/jetfilmizle\.net\/(film|dizi)\/([^'"]+))['"]/i;
+                var m = regex.exec(searchHtml);
+                
+                var targetUrls = [];
+                if (m) {
+                    targetUrls.push(m[1]); // Arama motoru bulursa ilk sıraya koy
                 }
-            }
-            
-            console.error('[Hata-Nerede] 6: Gidilen URL -> ' + finalUrl);
-            return fetch(finalUrl, { headers: HEADERS }).then(function(r) { return r.text(); });
+                
+                // TAHMİNİ URL'LER (SENİN VERDİĞİN ÖRNEKLERE GÖRE)
+                var slugTr = toSlug(trName);
+                var slugEn = toSlug(enName);
+                
+                if (mediaType === 'tv') {
+                    var suffix = '/sezon-' + (season || 1) + '/bolum-' + (episode || 1);
+                    targetUrls.push(BASE_URL + '/dizi/' + slugTr + suffix);
+                    targetUrls.push(BASE_URL + '/dizi/' + slugEn + suffix);
+                    targetUrls.push(BASE_URL + '/dizi/' + slugEn + '-' + year + suffix); // Constantine-2014 örneği için
+                } else {
+                    targetUrls.push(BASE_URL + '/film/' + slugTr);
+                    targetUrls.push(BASE_URL + '/film/' + slugEn);
+                    targetUrls.push(BASE_URL + '/film/' + slugEn + '-' + year);
+                }
+
+                // Bulunan veya tahmin edilen her linki dene
+                return fetchLinkSequentially(targetUrls, 0);
+            });
         })
         .then(function(html) {
             if (!html) return [];
             var streams = [];
             var dil = (html.indexOf('dublaj') !== -1) ? "Dublaj" : "Altyazı";
 
-            // --- 1. FILMLER İÇİN DOĞRUDAN SD ---
+            // FİLMLER İÇİN DOĞRUDAN _SD (Seninle bulduğumuz yöntem)
             if (html.indexOf('var _sd =') !== -1) {
                 try {
                     var raw = html.split('var _sd =')[1].split('};')[0] + '}';
@@ -76,7 +88,7 @@ function getStreams(id, mediaType, season, episode) {
                 } catch(e) {}
             }
 
-            // --- 2. DIZILER İÇİN TITAN PLAYER (Senin başarılı metodun) ---
+            // DİZİLER İÇİN TİTAN (Seninle başardığımız yöntem)
             var playerUrls = [];
             var pRe = /(?:src|data-video|data-src)=['"](https?:\/\/videopark\.top\/titan\/w\/[^'"]+)['"]/gi;
             var match;
@@ -91,7 +103,6 @@ function getStreams(id, mediaType, season, episode) {
                     fetch(playerUrls[i], { headers: HEADERS })
                     .then(function(r) { return r.text(); })
                     .then(function(p_html) {
-                        // Senin daha önce sonuç aldığın meşhur regex
                         var sdMatch = p_html.match(/var\s+_sd\s*=\s*({[\s\S]*?});/);
                         if (sdMatch) {
                             var data = JSON.parse(sdMatch[1]);
@@ -112,19 +123,6 @@ function getStreams(id, mediaType, season, episode) {
                 for (var j = 0; j < results.length; j++) {
                     if (results[j]) streams.push(results[j]);
                 }
-                
-                // Pixeldrain (Sağlam yedek)
-                var pdRe = /href=['"](https?:\/\/pixeldrain\.com\/u\/([^'"]+))['"]/g;
-                var pdM;
-                while ((pdM = pdRe.exec(html)) !== null) {
-                    streams.push({
-                        name: "JetFilmizle",
-                        title: '⌜ Pixeldrain ⌟ | 🇹🇷 ' + dil,
-                        url: 'https://pixeldrain.com/api/file/' + pdM[2] + '?download',
-                        type: 'video'
-                    });
-                }
-
                 console.error('[Hata-Nerede] 10: Bitti. Kaynak: ' + streams.length);
                 return streams;
             });
@@ -133,6 +131,16 @@ function getStreams(id, mediaType, season, episode) {
             console.error('[JetFilm-KRITIK]: ' + e.message);
             return [];
         });
+}
+
+// Yardımcı fonksiyon: Linkleri sırayla dener, çalışanı (200) döner
+function fetchLinkSequentially(urls, index) {
+    if (index >= urls.length) return Promise.resolve(null);
+    console.error('[Hata-Nerede] 6: Deneniyor -> ' + urls[index]);
+    return fetch(urls[index], { headers: HEADERS }).then(function(res) {
+        if (res.status === 200) return res.text();
+        return fetchLinkSequentially(urls, index + 1);
+    });
 }
 
 module.exports = { getStreams: getStreams };
