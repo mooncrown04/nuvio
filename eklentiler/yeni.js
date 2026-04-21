@@ -1,6 +1,6 @@
 /**
- * JetFilmizle - Nuvio Ultra (Worker/Titan Bypass)
- * Dizilerdeki dinamik Worker yapısını ve Videopark Titan akışını çözer.
+ * JetFilmizle - Nuvio Ultra (v19 Smart Filter)
+ * Gereksiz ID'leri ayıklar ve sadece gerçek Videopark kaynaklarına odaklanır.
  */
 
 var BASE_URL = 'https://jetfilmizle.net';
@@ -34,7 +34,6 @@ async function getStreams(id, mediaType, season, episode) {
         const e = episode || 1;
         const slug = toSlug(name);
         
-        // Aday URL'ler (Worker'ın tetiklendiği ana sayfalar)
         let candidates = [];
         if (mediaType === 'tv') {
             candidates.push(`${BASE_URL}/dizi/${slug}-2018/sezon-${s}/bolum-${e}`);
@@ -60,69 +59,54 @@ async function getStreams(id, mediaType, season, episode) {
         let streams = [];
         const dil = (html.indexOf('dublaj') !== -1) ? "Dublaj" : "Altyazı";
 
-        // 1. WORKER ID YAKALAYICI (En Geniş Kapsam)
-        // Hem data-id'leri hem de ham script içindeki ID'leri toplar
-        let titanIds = [];
-        const titanRegex = /(?:titan\/w\/|data-id=|data-video=|id=)["']?([a-zA-Z0-9_-]{10,15})/gi;
+        // 1. ANALİZ VE FİLTRELEME
+        let rawIds = [];
+        // Videopark ID'leri genelde 11 karakterdir ve içinde 'G-P2W' gibi Analytics kalıpları olmaz.
+        const titanRegex = /(?:titan\/w\/|data-id=|data-video=)["']?([a-zA-Z0-9_-]{10,15})/gi;
         let m;
         while ((m = titanRegex.exec(html)) !== null) {
-            if (titanIds.indexOf(m[1]) === -1) titanIds.push(m[1]);
-        }
-
-        // Eğer Worker/AJAX ile geliyorsa ve HTML'de ID yoksa, 
-        // sayfa içindeki "video-nav-item" butonlarını manuel kazı
-        if (titanIds.length === 0) {
-            const navMatch = html.match(/video-nav-item.*?data-id=["'](.*?)["']/gi);
-            if (navMatch) {
-                navMatch.forEach(item => {
-                    const idMatch = item.match(/data-id=["'](.*?)["']/i);
-                    if (idMatch && titanIds.indexOf(idMatch[1]) === -1) titanIds.push(idMatch[1]);
-                });
+            let foundId = m[1];
+            // FİLTRE: Analytics, CSS sınıfları ve anlamsız kelimeleri ele
+            if (foundId.startsWith('G-') || foundId.includes('search') || foundId.includes('input') || foundId.length < 10) {
+                continue;
             }
+            if (rawIds.indexOf(foundId) === -1) rawIds.push(foundId);
         }
 
-        console.error(`[TITAN] Worker'dan Çekilen ID Sayısı: ${titanIds.length}`);
+        console.error(`[TITAN] Filtrelenmiş ID Sayısı: ${rawIds.length} (Gerçek Kaynaklar Aranıyor)`);
 
-        for (let tId of titanIds) {
-            // Senin paylaştığın başarılı bypass mantığı
+        for (let tId of rawIds) {
             const playerUrl = `https://videopark.top/titan/w/${tId}`;
-            console.error(`[TITAN] Worker Akışı Çözülüyor: ${playerUrl}`);
+            console.error(`[TITAN] Deneniyor: ${playerUrl}`);
 
-            const pRes = await fetch(playerUrl, { 
-                headers: { 
-                    'Referer': 'https://jetfilmizle.net/',
-                    'User-Agent': HEADERS['User-Agent']
-                } 
-            });
-            const pHtml = await pRes.text();
-            
-            const sdMatch = pHtml.match(/var\s+_sd\s*=\s*({[\s\S]*?});/);
-            if (sdMatch) {
-                try {
+            try {
+                const pRes = await fetch(playerUrl, { headers: { 'Referer': 'https://jetfilmizle.net/', 'User-Agent': HEADERS['User-Agent'] } });
+                const pHtml = await pRes.text();
+                
+                const sdMatch = pHtml.match(/var\s+_sd\s*=\s*({[\s\S]*?});/);
+                if (sdMatch) {
                     const data = JSON.parse(sdMatch[1]);
                     if (data.stream_url) {
+                        console.error(`[TITAN-SUCCESS] Kaynak Bulundu: ${tId}`);
                         streams.push({
-                            name: "Videopark (Worker)",
-                            title: `⌜ Titan ⌟ | ${dil}`,
+                            name: "Videopark",
+                            title: `⌜ Titan Worker ⌟ | ${dil}`,
                             url: data.stream_url,
                             type: "hls",
                             subtitles: data.subtitles ? data.subtitles.map(s => ({ url: s.file, language: s.label, format: "vtt" })) : [],
-                            headers: { 
-                                'Referer': 'https://videopark.top/',
-                                'User-Agent': HEADERS['User-Agent']
-                            }
+                            headers: { 'Referer': 'https://videopark.top/', 'User-Agent': HEADERS['User-Agent'] }
                         });
                     }
-                } catch(e) {}
-            }
+                }
+            } catch (e) { continue; }
         }
 
-        // Fallback: Filmlerdeki standart yapı
+        // 2. Sayfa içi doğrudan _sd kontrolü (Yedek)
         if (streams.length === 0) {
-            const pageSd = html.match(/var\s+_sd\s*=\s*({[\s\S]*?});/);
-            if (pageSd) {
+            const directSd = html.match(/var\s+_sd\s*=\s*({[\s\S]*?});/);
+            if (directSd) {
                 try {
-                    const d = JSON.parse(pageSd[1]);
+                    const d = JSON.parse(directSd[1]);
                     if (d.stream_url) {
                         streams.push({ name: "JetFilm", title: "Standart | " + dil, url: d.stream_url, type: 'hls', headers: { 'Referer': 'https://videopark.top/' } });
                     }
@@ -130,8 +114,9 @@ async function getStreams(id, mediaType, season, episode) {
             }
         }
 
-        console.error(`[Hata-Nerede] 10: Bitti. Kaynak: ${streams.length}`);
-        return streams;
+        // BOŞ DİZİ DÖNME KURALI (Java Engine Crash Fix)
+        console.error(`[Hata-Nerede] 10: Bitti. Toplam: ${streams.length}`);
+        return streams.length > 0 ? streams : [];
 
     } catch (err) {
         console.error(`[TITAN-KRITIK] Hata: ${err.message}`);
