@@ -1,69 +1,57 @@
 /**
- * JetFilmizle & Videopark - Universal Stream Extractor
- * Hem m3u8 linklerini hem de gizli JS değişkenlerini yakalar.
+ * Videopark Titan Unpacker
+ * Gizli JavaScript bloklarını deşifre eder.
  */
 
 async function getStreams(id, mediaType, season, episode) {
-    // Videopark'ın tarayıcıda çalışan o meşhur linki
     const playerUrl = "https://videopark.top/titan/w/DFADXFgPDU4";
 
     try {
-        console.error(`[EXTRACTOR] Analiz Başladı: ${playerUrl}`);
+        console.error(`[UNPACKER] Sayfa çekiliyor: ${playerUrl}`);
 
         const response = await fetch(playerUrl, {
             headers: {
                 'Referer': 'https://jetfilmizle.net/',
-                'User-Agent': 'Mozilla/5.0 (Linux; Android 10; TV Box) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8'
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
             }
         });
         
         const html = await response.text();
 
-        // STRATEJİ 1: JSON formatında saklanan 'file' parametresi
-        let videoUrl = html.match(/["']?file["']?\s*:\s*["']([^"']+\.m3u8[^"']*)["']/i)?.[1] ||
-                       html.match(/["']?src["']?\s*:\s*["']([^"']+\.m3u8[^"']*)["']/i)?.[1];
-
-        // STRATEJİ 2: Eğer m3u8 doğrudan yoksa, sayfa içindeki Base64 veya Packed veriyi tara
-        if (!videoUrl) {
-            console.error("[EXTRACTOR] Doğrudan link yok, derin tarama yapılıyor...");
-            
-            // Videopark bazen linki bir JS değişkenine atar (Örn: var stream = "...")
-            const scripts = html.match(/<script\b[^>]*>([\s\S]*?)<\/script>/gm);
-            scripts?.forEach((s) => {
-                // 'eval' içeren veya çok uzun tek satırlı scriptleri logla
-                if (s.length > 500 && (s.includes('eval') || s.includes('p,a,c,k,e,d'))) {
-                    console.error(`[GIZLI-KOD] ${s.substring(0, 1000)}`);
-                }
-                
-                // Gizli m3u8 linklerini her ihtimale karşı regex ile tekrar tara
-                const innerMatch = s.match(/(https?:\/\/[^"']+\.m3u8[^"']*)/i);
-                if (innerMatch) videoUrl = innerMatch[1];
-            });
+        // KRİTİK: Tüm script bloklarını yakala
+        const scripts = html.match(/<script\b[^>]*>([\s\S]*?)<\/script>/gm);
+        
+        if (!scripts) {
+            console.error("[UNPACKER-HATA] Sayfada script bulunamadı!");
+            return [];
         }
 
-        if (videoUrl) {
-            // Linki temizle ve protokol ekle
-            if (videoUrl.startsWith('//')) videoUrl = 'https:' + videoUrl;
+        console.error(`[UNPACKER] ${scripts.length} adet script bloğu bulundu.`);
 
-            console.error(`[BULUNDU] Video Adresi: ${videoUrl}`);
-            
-            return [{
-                name: "Videopark HLS",
-                url: videoUrl,
-                type: "hls",
-                headers: {
-                    'Referer': 'https://videopark.top/',
-                    'User-Agent': 'Mozilla/5.0 (Linux; Android 10; TV Box)'
+        scripts.forEach((s, i) => {
+            // Eğer script içinde 'eval', 'p,a,c,k,e,d' veya 'Base64' geçiyorsa bu linkin saklandığı yerdir
+            if (s.includes('eval') || s.includes('p,a,c,k,e,d') || s.length > 500) {
+                // Logcat satır sınırına takılmamak için scripti parçalayarak basalım
+                const cleanScript = s.replace(/<script\b[^>]*>/, '').replace(/<\/script>/, '').trim();
+                console.error(`[GIZLI-BLOK-${i}] START`);
+                console.error(cleanScript.substring(0, 800)); // İlk 800 karakter
+                if (cleanScript.length > 800) {
+                    console.error(cleanScript.substring(800, 1600)); // Sonraki 800 karakter
                 }
-            }];
+                console.error(`[GIZLI-BLOK-${i}] END`);
+            }
+        });
+
+        // Alternatif: Direkt 'configs' veya 'sources' araması
+        const configMatch = html.match(/var\s+configs\s*=\s*({.*?});/i);
+        if (configMatch) {
+            console.error(`[CONFIG-BULDUM] ${configMatch[1]}`);
         }
 
-        console.error("[HATA] Sayfa çekildi ama video linki ayıklanamadı.");
-        return [];
+        return []; // Linki henüz dönmüyoruz, önce logları görmeliyiz
 
     } catch (err) {
-        console.error(`[KRITIK-HATA] ${err.message}`);
+        console.error(`[UNPACKER-KRITIK] ${err.message}`);
         return [];
     }
 }
