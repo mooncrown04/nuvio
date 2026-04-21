@@ -1,5 +1,5 @@
 /**
- * JetFilmizle - Nuvio Provider (Debug Mode)
+ * JetFilmizle - Nuvio Provider (Advanced Debug)
  */
 
 const BASE_URL = 'https://jetfilmizle.net';
@@ -9,79 +9,78 @@ async function getStreams(id, mediaType, season, episode) {
     const e = episode || 1;
     const url = `${BASE_URL}/dizi/cobra-kai`;
 
-    console.error(`[DEBUG-BAŞLADI] Hedef: S${s} E${e} | URL: ${url}`);
+    console.error(`[STEP-1] Başladı: S${s} E${e}`);
 
     try {
         const response = await fetch(url);
         const html = await response.text();
 
-        if (!html) {
-            console.error('[DEBUG-HATA] Sayfa içeriği boş döndü!');
-            return [];
-        }
-
-        // 1. ADIM: Buton Arama Debug
-        const btnPattern = `data-source-index=["'](\\d+)["'][^>]*data-season=["']${s}["'][^>]*data-episode=["']${e}["']`;
-        const btnRegex = new RegExp(btnPattern, 'i');
+        // 1. İndeks Bulma
+        const btnRegex = new RegExp(`data-source-index=["'](\\d+)["'][^>]*data-season=["']${s}["'][^>]*data-episode=["']${e}["']`, 'i');
         const btnMatch = html.match(btnRegex);
-
+        
         if (!btnMatch) {
-            console.error(`[DEBUG-HATA] Buton bulunamadı! HTML içinde S${s} E${e} için 'data-episode' arandı ama eşleşme yok.`);
-            // Alternatif: Sayfadaki tüm source-indexleri logla ki neyi gördüğümüzü bilelim
-            const allIndices = html.match(/data-source-index="\d+"/g);
-            console.error(`[DEBUG-BİLGİ] Sayfada bulunan tüm indexler: ${allIndices ? allIndices.join(', ') : 'Yok'}`);
+            console.error('[ERR] Buton bulunamadı');
             return [];
         }
 
         const sourceIndex = btnMatch[1];
-        console.error(`[DEBUG-BAŞARI] Kaynak Indexi: ${sourceIndex}`);
+        console.error(`[STEP-2] İndeks: ${sourceIndex}`);
 
-        // 2. ADIM: JSON ve Link Debug
-        const jsonRegex = /var\s+player_sources\s*=\s*({[^;]+});/;
-        const jsonMatch = html.match(jsonRegex);
+        // 2. Gizli Veriyi Arama (Regex genişletildi)
+        // Bazı siteler JSON'ı tek tırnakla veya boşluksuz yazar
+        const jsonPatterns = [
+            /player_sources\s*=\s*({.+?});/,
+            /sources\s*=\s*({.+?});/,
+            /video_data\s*=\s*({.+?});/
+        ];
 
-        if (!jsonMatch) {
-            console.error('[DEBUG-HATA] HTML içinde "player_sources" değişkeni bulunamadı!');
-            return [];
-        }
-
-        const sources = JSON.parse(jsonMatch[1]);
-        let videoUrl = sources[sourceIndex];
-
-        if (!videoUrl) {
-            console.error(`[DEBUG-HATA] JSON bulundu ama index "${sourceIndex}" için link boş!`);
-            return [];
-        }
-
-        console.error(`[DEBUG-HAM-LİNK] ${videoUrl}`);
-
-        // 3. ADIM: Çözme (Decryption) Debug
-        if (!videoUrl.startsWith('http')) {
-            try {
-                const decoded = atob(videoUrl);
-                console.error(`[DEBUG-ÇÖZÜLDÜ] ${decoded}`);
-                videoUrl = decoded;
-            } catch (decErr) {
-                console.error(`[DEBUG-HATA] Base64 çözülemedi: ${decErr.message}`);
+        let foundSources = null;
+        for (let p of jsonPatterns) {
+            const m = html.match(p);
+            if (m) {
+                console.error(`[STEP-3] Veri Bloğu Yakalandı: ${p}`);
+                foundSources = JSON.parse(m[1]);
+                break;
             }
         }
 
-        return [{
-            name: "JetFilm - Debug",
-            title: `S${s} E${e} (ID: ${sourceIndex})`,
-            url: videoUrl,
-            type: "embed"
-        }];
+        if (foundSources && foundSources[sourceIndex]) {
+            let link = foundSources[sourceIndex];
+            console.error(`[STEP-4] Ham Link: ${link}`);
+            
+            if (!link.startsWith('http')) {
+                link = atob(link);
+                console.error(`[STEP-5] Çözüldü: ${link}`);
+            }
+
+            return [{ name: "JetFilm", title: "Kaynak " + sourceIndex, url: link, type: "embed" }];
+        }
+
+        // 3. EĞER YUKARIDAKİLER ÇALIŞMAZSA: Sayfadaki tüm Base64 metinleri tara
+        console.error('[STEP-6] JSON bulunamadı, Base64 taraması yapılıyor...');
+        const b64Regex = /["']([A-Za-z0-9+/]{30,}=*)["']/g;
+        let bMatch;
+        while ((bMatch = b64Regex.exec(html)) !== null) {
+            try {
+                const decoded = atob(bMatch[1]);
+                if (decoded.includes('http') && (decoded.includes('pixeldrain') || decoded.includes('vidmoly'))) {
+                    console.error(`[STEP-7] KRİTİK BULGU (Base64 içinde): ${decoded}`);
+                    // Buradaki mantık: Eğer çözülen şey bir linkse ve aradığımız index ile bir şekilde bağdaşıyorsa...
+                    // Şimdilik tüm bulunanları döndürelim:
+                    return [{ name: "JetFilm-B64", title: "Bulunan Kaynak", url: decoded, type: "embed" }];
+                }
+            } catch (e) {}
+        }
+
+        console.error('[ERR] Hiçbir kaynak bulunamadı.');
+        return [];
 
     } catch (err) {
-        console.error(`[DEBUG-KRİTİK-HATA] ${err.message}`);
+        console.error(`[FATAL] ${err.message}`);
         return [];
     }
 }
 
-// Export yapısı
-if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { getStreams };
-} else {
-    globalThis.getStreams = getStreams;
-}
+if (typeof module !== 'undefined') module.exports = { getStreams };
+else globalThis.getStreams = getStreams;
