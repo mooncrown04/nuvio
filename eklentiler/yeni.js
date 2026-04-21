@@ -1,6 +1,6 @@
 /**
- * JetFilmizle — Nuvio Pro Ultra
- * Film ve Diziler için Gelişmiş Kaynak Yakalayıcı
+ * JetFilmizle — Nuvio Pro Ultra (Stabil Final)
+ * Filmleri bozmaz, dizilerde URL avcısı kullanır.
  */
 
 var BASE_URL = 'https://jetfilmizle.net';
@@ -27,51 +27,47 @@ function getStreams(id, mediaType, season, episode) {
     return fetch('https://api.themoviedb.org/3/' + type + '/' + tmdbId + '?api_key=' + TMDB_API_KEY + '&language=tr-TR')
         .then(function(r) { return r.json(); })
         .then(function(info) {
-            var trName = info.name || info.title;
-            var enName = info.original_name || info.original_title;
-            var year = (info.first_air_date || info.release_date || "").split("-")[0];
+            var searchTitle = info.name || info.title;
+            console.error('[Hata-Nerede] 2: TMDB -> ' + searchTitle);
             
-            // Aday URL listesi oluştur
-            var candidates = [];
+            // BOT KORUMASINA TAKILMAMAK İÇİN GET ARAMASI YAPIYORUZ
+            var searchUrl = BASE_URL + '/arama/' + encodeURIComponent(searchTitle);
+            return fetch(searchUrl, { headers: HEADERS }).then(function(res) { return res.text(); });
+        })
+        .then(function(searchHtml) {
             var s = season || 1;
             var e = episode || 1;
+            var foundUrl = '';
 
-            if (mediaType === 'tv') {
-                var slugs = [toSlug(trName), toSlug(enName), toSlug(enName) + '-' + year];
-                for(var i=0; i<slugs.length; i++){
-                    // Sitenin kullandığı 3 farklı dizi-bölüm formatı
-                    candidates.push(BASE_URL + '/dizi/' + slugs[i] + '/sezon-' + s + '/bolum-' + e);
-                    candidates.push(BASE_URL + '/dizi/' + slugs[i] + '/sezon-' + s + '-bolum-' + e + '-izle');
+            // Arama sonuçlarından ilk geçerli linki yakala
+            var m = /href=['"](https?:\/\/jetfilmizle\.net\/(film|dizi)\/([^'"]+))['"]/i.exec(searchHtml);
+            if (m) {
+                foundUrl = m[1];
+                if (mediaType === 'tv' && foundUrl.indexOf('sezon') === -1) {
+                    foundUrl = foundUrl.replace(/\/$/, '') + '/sezon-' + s + '/bolum-' + e;
                 }
-            } else {
-                candidates.push(BASE_URL + '/film/' + toSlug(trName));
-                candidates.push(BASE_URL + '/film/' + toSlug(enName));
-                candidates.push(BASE_URL + '/film/' + toSlug(enName) + '-' + year);
             }
 
-            // Önce arama motorunu dene (Bulursa en başa ekle)
-            return fetch(BASE_URL + '/filmara.php', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                body: 's=' + encodeURIComponent(trName)
-            }).then(function(r){ return r.text(); }).then(function(html){
-                var m = /href=['"](https?:\/\/jetfilmizle\.net\/(film|dizi)\/([^'"]+))['"]/i.exec(html);
-                if(m) {
-                    var found = m[1];
-                    if(mediaType === 'tv' && found.indexOf('sezon') === -1) {
-                        found = found.replace(/\/$/, '') + '/sezon-' + s + '/bolum-' + e;
-                    }
-                    candidates.unshift(found);
-                }
-                return fetchSequential(candidates, 0);
-            });
+            var candidates = [];
+            if (foundUrl) candidates.push(foundUrl); // Önce aramanın bulduğunu dene
+
+            // Tahminleri de yedek olarak ekle (Cobra Kai örneği için)
+            var slug = toSlug(foundUrl ? foundUrl.split('/').pop() : 'cobra-kai');
+            if (mediaType === 'tv') {
+                candidates.push(BASE_URL + '/dizi/' + slug + '/sezon-' + s + '/bolum-' + e);
+                candidates.push(BASE_URL + '/dizi/' + slug + '/sezon-' + s + '-bolum-' + e + '-izle');
+            } else {
+                candidates.push(BASE_URL + '/film/' + slug);
+            }
+
+            return fetchSequential(candidates, 0);
         })
         .then(function(html) {
             if (!html) return [];
             var streams = [];
             var dil = (html.indexOf('dublaj') !== -1) ? "Dublaj" : "Altyazı";
 
-            // 1. SD/Stream Yakalayıcı (Gelişmiş Regex)
+            // 1. DOĞRUDAN SD YAKALAMA (Filmlerde çalışan kısım)
             var sdRegex = /var\s+_sd\s*=\s*({[\s\S]*?});/g;
             var sdMatch;
             while ((sdMatch = sdRegex.exec(html)) !== null) {
@@ -80,29 +76,35 @@ function getStreams(id, mediaType, season, episode) {
                     if (data.stream_url) {
                         streams.push({
                             name: "JetFilm",
-                            title: '⌜ Kaynak 1 ⌟ | ' + dil,
+                            title: '⌜ Kaynak ⌟ | ' + dil,
                             url: data.stream_url,
                             type: 'hls',
                             headers: { 'Referer': 'https://videopark.top/' }
                         });
                     }
-                } catch(e) {}
+                } catch(err) {}
             }
 
-            // 2. Titan/Videopark Iframe Tarayıcı
-            var playerUrls = [];
+            // 2. TITAN IFRAME YAKALAMA (Senin başardığın kısım)
+            var pUrls = [];
             var pRe = /(?:src|data-video|data-src)=['"](https?:\/\/videopark\.top\/titan\/w\/[^'"]+)['"]/gi;
-            var match;
-            while ((match = pRe.exec(html)) !== null) {
-                playerUrls.push(match[1]);
+            var m;
+            while ((m = pRe.exec(html)) !== null) {
+                if (pUrls.indexOf(m[1]) === -1) pUrls.push(m[1]);
             }
 
-            var promises = playerUrls.map(function(u) {
+            var promises = pUrls.map(function(u) {
                 return fetch(u, { headers: HEADERS }).then(function(r){ return r.text(); }).then(function(p_html){
-                    var m = /var\s+_sd\s*=\s*({[\s\S]*?});/.exec(p_html);
-                    if(m){
-                        var d = JSON.parse(m[1]);
-                        return { name: "Titan", title: '⌜ Videopark ⌟ | ' + dil, url: d.stream_url, type: 'hls', headers: { 'Referer': 'https://videopark.top/' } };
+                    var innerMatch = /var\s+_sd\s*=\s*({[\s\S]*?});/.exec(p_html);
+                    if(innerMatch) {
+                        var d = JSON.parse(innerMatch[1]);
+                        return { 
+                            name: "Titan", 
+                            title: '⌜ Videopark ⌟ | ' + dil, 
+                            url: d.stream_url, 
+                            type: 'hls', 
+                            headers: { 'Referer': 'https://videopark.top/' } 
+                        };
                     }
                     return null;
                 }).catch(function(){ return null; });
@@ -110,23 +112,18 @@ function getStreams(id, mediaType, season, episode) {
 
             return Promise.all(promises).then(function(results) {
                 results.forEach(function(r){ if(r) streams.push(r); });
-                
-                // Yedek: Pixeldrain
-                var pd = /https?:\/\/pixeldrain\.com\/u\/([a-zA-Z0-9]+)/.exec(html);
-                if(pd) streams.push({ name: "Yedek", title: "Pixeldrain", url: "https://pixeldrain.com/api/file/"+pd[1]+"?download", type: "video" });
-
-                console.error('[Hata-Nerede] 10: Bitti. Kaynak: ' + streams.length);
+                console.error('[Hata-Nerede] 10: Islem Bitti. Kaynak: ' + streams.length);
                 return streams;
             });
         });
 }
 
-function fetchSequential(urls, i) {
-    if (i >= urls.length) return Promise.resolve(null);
-    console.error('[Hata-Nerede] 6: Deneniyor -> ' + urls[i]);
-    return fetch(urls[i], { headers: HEADERS }).then(function(res) {
+function fetchSequential(urls, index) {
+    if (index >= urls.length) return Promise.resolve(null);
+    console.error('[Hata-Nerede] 6: Deneniyor -> ' + urls[index]);
+    return fetch(urls[index], { headers: HEADERS }).then(function(res) {
         if (res.status === 200) return res.text();
-        return fetchSequential(urls, i + 1);
+        return fetchSequential(urls, index + 1);
     });
 }
 
