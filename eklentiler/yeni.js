@@ -1,5 +1,5 @@
 /**
- * JetFilmizle - Nuvio Provider
+ * JetFilmizle - Nuvio Provider (Debug Mode)
  */
 
 const BASE_URL = 'https://jetfilmizle.net';
@@ -7,72 +7,80 @@ const BASE_URL = 'https://jetfilmizle.net';
 async function getStreams(id, mediaType, season, episode) {
     const s = season || 1;
     const e = episode || 1;
-    
-    // Slug oluşturma (Cobra Kai örneği)
     const url = `${BASE_URL}/dizi/cobra-kai`;
+
+    console.error(`[DEBUG-BAŞLADI] Hedef: S${s} E${e} | URL: ${url}`);
 
     try {
         const response = await fetch(url);
         const html = await response.text();
 
-        if (!html) return [];
-
-        // 1. ADIM: Doğru butonun source-index değerini yakala
-        const pattern = `data-source-index=["'](\\d+)["'][^>]*data-season=["']${s}["'][^>]*data-episode=["']${e}["']`;
-        const regex = new RegExp(pattern, 'i');
-        const match = html.match(regex);
-
-        if (!match) {
-            console.error('[JetFilm] Bölüm butonu bulunamadı.');
+        if (!html) {
+            console.error('[DEBUG-HATA] Sayfa içeriği boş döndü!');
             return [];
         }
 
-        const sourceIndex = match[1];
-        console.error(`[JetFilm] Hedef Index Bulundu: ${sourceIndex}`);
+        // 1. ADIM: Buton Arama Debug
+        const btnPattern = `data-source-index=["'](\\d+)["'][^>]*data-season=["']${s}["'][^>]*data-episode=["']${e}["']`;
+        const btnRegex = new RegExp(btnPattern, 'i');
+        const btnMatch = html.match(btnRegex);
 
-        // 2. ADIM: Sayfa içindeki player_sources JSON bloğunu bul
-        // JetFilm linkleri şu formatta saklar: var player_sources = {"21": "https://...", ...}
-        const playerSourcesRegex = /var\s+player_sources\s*=\s*({[^;]+});/;
-        const playerMatch = html.match(playerSourcesRegex);
+        if (!btnMatch) {
+            console.error(`[DEBUG-HATA] Buton bulunamadı! HTML içinde S${s} E${e} için 'data-episode' arandı ama eşleşme yok.`);
+            // Alternatif: Sayfadaki tüm source-indexleri logla ki neyi gördüğümüzü bilelim
+            const allIndices = html.match(/data-source-index="\d+"/g);
+            console.error(`[DEBUG-BİLGİ] Sayfada bulunan tüm indexler: ${allIndices ? allIndices.join(', ') : 'Yok'}`);
+            return [];
+        }
 
-        if (playerMatch) {
+        const sourceIndex = btnMatch[1];
+        console.error(`[DEBUG-BAŞARI] Kaynak Indexi: ${sourceIndex}`);
+
+        // 2. ADIM: JSON ve Link Debug
+        const jsonRegex = /var\s+player_sources\s*=\s*({[^;]+});/;
+        const jsonMatch = html.match(jsonRegex);
+
+        if (!jsonMatch) {
+            console.error('[DEBUG-HATA] HTML içinde "player_sources" değişkeni bulunamadı!');
+            return [];
+        }
+
+        const sources = JSON.parse(jsonMatch[1]);
+        let videoUrl = sources[sourceIndex];
+
+        if (!videoUrl) {
+            console.error(`[DEBUG-HATA] JSON bulundu ama index "${sourceIndex}" için link boş!`);
+            return [];
+        }
+
+        console.error(`[DEBUG-HAM-LİNK] ${videoUrl}`);
+
+        // 3. ADIM: Çözme (Decryption) Debug
+        if (!videoUrl.startsWith('http')) {
             try {
-                const sources = JSON.parse(playerMatch[1]);
-                const videoUrl = sources[sourceIndex];
-
-                if (videoUrl) {
-                    return [{
-                        name: "JetFilmizle",
-                        title: `S${s} E${e} (Kaynak: ${sourceIndex})`,
-                        url: videoUrl,
-                        type: "embed"
-                    }];
-                }
-            } catch (e) {
-                console.error('[JetFilm] JSON Ayrıştırma Hatası');
+                const decoded = atob(videoUrl);
+                console.error(`[DEBUG-ÇÖZÜLDÜ] ${decoded}`);
+                videoUrl = decoded;
+            } catch (decErr) {
+                console.error(`[DEBUG-HATA] Base64 çözülemedi: ${decErr.message}`);
             }
         }
 
-        // 3. ADIM: Yedek Plan - Sayfa içindeki tüm iframe ve dış linkleri tara
-        const allLinksRegex = /https?:\/\/(?:pixeldrain\.com|vidmoly\.to|ok\.ru|mail\.ru)\/[^\s"']+/gi;
-        const allLinks = html.match(allLinksRegex) || [];
-        const uniqueLinks = [...new Set(allLinks)];
-
-        return uniqueLinks.map((link, i) => ({
-            name: "JetFilm - Kaynak",
-            title: `S${s} E${e} (Alternatif ${i + 1})`,
-            url: link,
+        return [{
+            name: "JetFilm - Debug",
+            title: `S${s} E${e} (ID: ${sourceIndex})`,
+            url: videoUrl,
             type: "embed"
-        }));
+        }];
 
     } catch (err) {
-        console.error('[JetFilm] Fetch Hatası: ' + err);
+        console.error(`[DEBUG-KRİTİK-HATA] ${err.message}`);
         return [];
     }
 }
 
-// CloudStream/Nuvio uyumluluğu için kritik dışa aktarma
-if (typeof module !== 'undefined') {
+// Export yapısı
+if (typeof module !== 'undefined' && module.exports) {
     module.exports = { getStreams };
 } else {
     globalThis.getStreams = getStreams;
