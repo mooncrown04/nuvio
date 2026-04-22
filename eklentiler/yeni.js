@@ -1,6 +1,6 @@
 /**
- * JetFilmizle - Analytics & Trap Bypass
- * Odak: G- ile başlayan Analytics kodlarını ve YouTube fragmanlarını elemek.
+ * JetFilmizle - Kesin Sonuç Çözücü
+ * Odak: Doğru anahtarı (05b44f317d2a vb.) Videopark'ın kabul edeceği tüm varyasyonlarla denemek.
  */
 
 async function getStreams(id, mediaType, season, episode) {
@@ -16,83 +16,75 @@ async function getStreams(id, mediaType, season, episode) {
         });
         const html = await res.text();
 
-        // --- TUZAKLARI ELE ---
-        const forbiddenKeys = [
-            'G-P2W3FQ2F7', // Senin logdaki Analytics kodu
-            'xCwwxNbtK6Y', // Fragman kodu
-            'jetfilmizle'
-        ];
-
+        // --- GELİŞMİŞ ANAHTAR YAKALAMA ---
         let key = null;
-
-        // 1. ÖNCELİK: Sayfa içinde videopark/titan linkini doğrudan ara (En güvenli yol)
-        const directLinkMatch = html.match(/videopark\.top\/titan\/(?:w|p)\/([a-zA-Z0-9_-]{11,12})/);
-        if (directLinkMatch) {
-            key = directLinkMatch[1];
-        } 
-
-        // 2. ÖNCELİK: Eğer link yoksa, 11-12 haneli karışık kodları tara ama tuzakları filtrele
-        if (!key) {
-            const potentialKeys = html.match(/[a-zA-Z0-9_-]{11,12}/g) || [];
-            for (let k of potentialKeys) {
-                // Filtre: Yasaklı listede olmasın VE "G-" ile başlamasın (Analytics engeli)
-                if (!forbiddenKeys.includes(k) && !k.startsWith('G-')) {
-                    // Ve gerçek bir anahtar gibi hem harf hem rakam içersin
-                    if (/[a-zA-Z]/.test(k) && /[0-9]/.test(k)) {
-                        key = k;
-                        break;
-                    }
-                }
-            }
+        // 12 haneli hex-benzeri yapıları yakala (Örn: 05b44f317d2a)
+        const hexMatch = html.match(/[a-f0-9]{12}/); 
+        if (hexMatch) {
+            key = hexMatch[0];
+        } else {
+            // Alternatif: Tırnak içindeki 11-12 haneli yapıları ara
+            const altMatch = html.match(/["']([a-zA-Z0-9_-]{11,12})["']/);
+            key = altMatch ? altMatch[1] : null;
         }
 
-        if (!key) {
-            console.error("[HATA-02] Gerçek video anahtarı bulunamadı.");
+        if (!key || key.startsWith('G-')) {
+            console.error("[HATA-02] Geçerli anahtar bulunamadı.");
             return [];
         }
 
-        console.log(`[BİLGİ] Doğru Anahtar Filtrelendi: ${key}`);
+        console.log(`[BİLGİ] Anahtar Deneniyor: ${key}`);
 
-        // --- VİDEOPARK SORGUSU ---
-        const playerUrl = `https://videopark.top/titan/w/${key}`;
-        const playerRes = await fetch(playerUrl, {
-            headers: {
-                'Referer': 'https://jetfilmizle.net/',
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
-                'X-Requested-With': 'XMLHttpRequest'
-            }
-        });
-
-        const playerHtml = await playerRes.text();
+        // --- VARYASYONLU SORGULAMA ---
+        // Bazı içerikler 'w' (watch), bazıları 'p' (player) ile çalışır.
+        const paths = ['titan/w', 'titan/p', 'ttn/w', 'ttn/p'];
         
-        // Videopark'tan gelen stream verisini ayıkla
-        const sourceMatch = playerHtml.match(/var\s+_(?:sd|file)\s*=\s*({[\s\S]*?}|"https:[^"]+");/);
-        
-        if (sourceMatch) {
-            let streamUrl = "";
-            if (sourceMatch[1].startsWith('{')) {
-                const data = JSON.parse(sourceMatch[1]);
-                streamUrl = data.stream_url || data.file;
-            } else {
-                streamUrl = sourceMatch[1].replace(/"/g, '');
-            }
+        for (let path of paths) {
+            const playerUrl = `https://videopark.top/${path}/${key}`;
+            console.log(`[DENEME] Sorgulanıyor: ${playerUrl}`);
 
-            return [{
-                name: "Titan-Secure-Server",
-                url: streamUrl,
-                type: "hls",
+            const playerRes = await fetch(playerUrl, {
                 headers: {
-                    'Referer': 'https://videopark.top/',
-                    'User-Agent': 'Mozilla/5.0'
+                    'Referer': 'https://jetfilmizle.net/',
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+                    'X-Requested-With': 'XMLHttpRequest'
                 }
-            }];
+            });
+
+            const playerHtml = await playerRes.text();
+            
+            // Videopark içindeki kaynak değişkenlerini tara
+            const sourceMatch = playerHtml.match(/var\s+_(?:sd|file|v)\s*=\s*({[\s\S]*?}|"https:[^"]+");/);
+            
+            if (sourceMatch) {
+                let streamUrl = "";
+                if (sourceMatch[1].startsWith('{')) {
+                    const data = JSON.parse(sourceMatch[1]);
+                    streamUrl = data.stream_url || data.file || data.url;
+                } else {
+                    streamUrl = sourceMatch[1].replace(/"/g, '');
+                }
+
+                if (streamUrl) {
+                    console.log(`[BAŞARI] Link söküldü: ${path}`);
+                    return [{
+                        name: `Titan (${path.toUpperCase()})`,
+                        url: streamUrl,
+                        type: "hls",
+                        headers: {
+                            'Referer': 'https://videopark.top/',
+                            'User-Agent': 'Mozilla/5.0'
+                        }
+                    }];
+                }
+            }
         }
 
-        console.error(`[HATA-04] Link sökülemedi. Anahtar: ${key}`);
+        console.error(`[HATA-04] Hiçbir varyasyon sonuç vermedi. Anahtar: ${key}`);
         return [];
 
     } catch (e) {
-        console.error(`[SİSTEM] Hata: ${e.message}`);
+        console.error(`[HATA] ${e.message}`);
         return [];
     }
 }
