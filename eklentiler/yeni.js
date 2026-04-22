@@ -1,7 +1,7 @@
 /**
- * JetFilmizle - Nuvio Ultra (v47 Turbo)
- * Sadece dizilere odaklanır. 
- * 7 aday arasından en hızlı cevabı veren "Titan"ı yakalar.
+ * JetFilmizle - Nuvio Ultra (v48 Final Series)
+ * RAM dostu, sadece en güçlü Titan koduna odaklanır.
+ * Amazon Fire/TV sistemlerini yormaz.
  */
 
 var BASE_URL = 'https://jetfilmizle.net';
@@ -21,33 +21,29 @@ async function getStreams(id, mediaType, season, episode) {
         const pageRes = await fetch(targetUrl, { headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' } });
         const html = await pageRes.text();
 
-        // 1. ADIM: "Ham Veri" tespiti (Logda gördüğümüz o 7 aday)
-        // DFADX ile başlayanlar her zaman en önceliklidir
-        const titanPattern = /DFADX[a-zA-Z0-9]{5,20}/g;
-        const fallbackPattern = /[a-zA-Z0-9]{11,12}/g;
+        // 1. ADIM: 7 aday arasından "En Güçlü" olanı seç (Genelde DFADX ile başlar)
+        const titanMatches = html.match(/DFADX[a-zA-Z0-9]{5,20}/g) || [];
+        const generalMatches = html.match(/[a-zA-Z0-9]{11,12}/g) || [];
         
-        let matches = html.match(titanPattern) || [];
-        if (matches.length === 0) matches = html.match(fallbackPattern) || [];
-
-        let uniqueKeys = [...new Set(matches)].filter(k => 
+        // Önce DFADX olanları, yoksa diğerlerini al. Sadece benzersizleri tut.
+        let allCandidates = [...new Set([...titanMatches, ...generalMatches])].filter(k => 
             /[0-9]/.test(k) && /[A-Z]/.test(k) && k.length > 8
-        ).slice(0, 7); // Logdaki 7 adayı sınırla
+        );
 
-        console.error(`[TURBO] Hedeflenen 7 aday sorgulanıyor...`);
+        // KRİTİK: Sadece son 2 adayı al (Çünkü güncel olanlar genelde sayfa sonunda olur)
+        let primaryCandidates = allCandidates.slice(-2); 
 
-        // 2. ADIM: Eşzamanlı (Parallel) değil, Sıralı (Sequential) ama Hızlı Tarama
-        // Cihazın şişmemesi için 2'şerli gruplar halinde deneyelim
-        for (let i = 0; i < uniqueKeys.length; i++) {
-            const wId = uniqueKeys[i];
+        console.error(`[FINAL] 7 adaydan elenen en güçlü 2 hedef: ${primaryCandidates.join(', ')}`);
+
+        for (let wId of primaryCandidates) {
             try {
-                const playerUrl = `https://videopark.top/titan/w/${wId}`;
-                
-                const response = await fetch(playerUrl, {
+                // Senin kanıt kodundaki o meşhur endpoint ve referer
+                const response = await fetch(`https://videopark.top/titan/w/${wId}`, {
                     headers: {
-                        'Referer': BASE_URL + '/', // Bazı sunucular sondaki '/' işaretini arar
+                        'Referer': BASE_URL + '/',
                         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
                     },
-                    timeout: 4000 // 4 saniyede cevap gelmezse diğer adaya geç
+                    timeout: 3000 // Çok hızlı cevap bekliyoruz
                 });
                 
                 const playerHtml = await response.text();
@@ -56,10 +52,10 @@ async function getStreams(id, mediaType, season, episode) {
                     const sdMatch = playerHtml.match(/var\s+_sd\s*=\s*({[\s\S]*?});/);
                     if (sdMatch) {
                         const data = JSON.parse(sdMatch[1]);
-                        console.error(`[TURBO-BAŞARILI] Akış Yayında: ${wId}`);
+                        console.error(`[FINAL-SUCCESS] Akış Yakalandı: ${wId}`);
 
                         return [{
-                            name: "Jet-Turbo (Videopark)",
+                            name: "Jet-Titan (Dizi)",
                             url: data.stream_url,
                             type: "hls",
                             subtitles: data.subtitles ? data.subtitles.map(s => ({
@@ -75,7 +71,7 @@ async function getStreams(id, mediaType, season, episode) {
                     }
                 }
             } catch (e) {
-                console.error(`[TURBO] Aday ${i+1} başarısız: ${wId}`);
+                console.error(`[FINAL] Başarısız: ${wId}`);
             }
         }
 
