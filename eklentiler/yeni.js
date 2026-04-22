@@ -1,7 +1,7 @@
 /**
- * JetFilmizle - Nuvio Ultra (v62 Forensic Scanner)
- * Bu kod sadece "DFADX" ve benzeri yapıların sayfada 
- * nasıl saklandığını (Base64, Plain, JSON) tespit eder.
+ * JetFilmizle - Nuvio Ultra (v63 Derin Analiz)
+ * DFADX'i üreten gizli değişkenleri ve 
+ * Base64 ile gizlenmiş player parametrelerini avlar.
  */
 
 var BASE_URL = 'https://jetfilmizle.net';
@@ -14,50 +14,45 @@ async function getStreams(id, mediaType, season, episode) {
         const tmdbId = id.toString().replace(/[^0-9]/g, '');
         const tmdbRes = await fetch(`https://api.themoviedb.org/3/tv/${tmdbId}?api_key=${TMDB_API_KEY}&language=tr-TR`);
         const info = await tmdbRes.json();
-        const slug = (info.name || "").toLowerCase().replace(/ğ/g,'g').replace(/ü/g,'u').replace(/ş/g,'s').replace(/ı/g,'i').replace(/ö/g,'o').replace(/ç/g,'c').replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'');
+        const slug = (info.name || "").toLowerCase().replace(/[^a-z0-9]+/g,'-');
         const targetUrl = `${BASE_URL}/dizi/${slug}/sezon-${season}/bolum-${episode}`;
 
-        console.error(`[FORENSIC] Taranıyor: ${targetUrl}`);
-        const pageRes = await fetch(targetUrl, { headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' } });
+        const pageRes = await fetch(targetUrl, { headers: { 'User-Agent': 'Mozilla/5.0' } });
         const html = await pageRes.text();
 
-        // TEST 1: Doğrudan Metin Olarak mı Duruyor?
-        const directMatch = html.match(/DFADX[a-zA-Z0-9]+/);
-        if (directMatch) {
-            console.error(`[FORENSIC] BULDUM (Düz Metin): ${directMatch[0]}`);
-        }
+        console.error(`[DEEP-INSPECT] Analiz Başladı: ${targetUrl}`);
 
-        // TEST 2: Base64 Şifreli mi? (DFADX'in Base64 karşılığı 'REZA')
-        const base64Match = html.match(/REZA[a-zA-Z0-9+/=]+/);
-        if (base64Match) {
-            try {
-                const decoded = Buffer.from(base64Match[0], 'base64').toString('utf-8');
-                console.error(`[FORENSIC] BULDUM (Base64): ${base64Match[0]} -> ${decoded}`);
-            } catch(e) {}
-        }
+        // 1. ADIM: Gizli Input (Hidden) ve Data Attribute avı
+        const hiddenData = html.match(/value="([A-Za-z0-9]{30,})"/g) || [];
+        hiddenData.forEach(h => console.error(`[DEEP-INSPECT] Gizli Veri: ${h.substring(0, 50)}...`));
 
-        // TEST 3: Iframe veya Script Src içinde mi?
-        const srcMatch = html.match(/src="([^"]*videopark[^"]*)"/i);
-        if (srcMatch) {
-            console.error(`[FORENSIC] BULDUM (URL İçinde): ${srcMatch[1]}`);
-        }
+        // 2. ADIM: "MTc3" gibi Base64 yapılarını tek tek decode etmeyi dene
+        const b64s = html.match(/[A-Za-z0-9+/]{20,}/g) || [];
+        b64s.forEach(b => {
+            if (!/google|manager|script/i.test(b)) {
+                try {
+                    let dec = Buffer.from(b, 'base64').toString('utf-8');
+                    if (dec.includes('http') || dec.length > 5) {
+                        console.error(`[DEEP-INSPECT] Çözülen B64: ${dec}`);
+                    }
+                } catch(e) {}
+            }
+        });
 
-        // TEST 4: JSON Konfigürasyonu mu?
-        const jsonMatch = html.match(/data-config='([^']+)'/) || html.match(/playerConfig\s*=\s*({[^;]+})/);
-        if (jsonMatch) {
-            console.error(`[FORENSIC] BULDUM (JSON/Config): ${jsonMatch[0].substring(0, 50)}...`);
-        }
+        // 3. ADIM: Sayfadaki tüm script src'lerini listele (Hangi JS dosyası şifreliyor?)
+        const scripts = html.match(/src="([^"]+\.js[^"]*)"/g) || [];
+        scripts.forEach(s => console.error(`[DEEP-INSPECT] JS Dosyası: ${s}`));
 
-        // Eğer hiçbir şey bulamazsak, tüm JS bloklarını görelim
-        if (!directMatch && !base64Match) {
-            console.error(`[FORENSIC] Kritik: "DFADX" izine rastlanamadı. Şifreleme farklı olabilir.`);
-        }
+        // 4. ADIM: "ajax", "post", "get_player" gibi kelimelerin geçtiği satırları yakala
+        const lines = html.split('\n');
+        lines.forEach(l => {
+            if (l.includes('get_player') || l.includes('titan') || l.includes('post(')) {
+                console.error(`[DEEP-INSPECT] Şüpheli Satır: ${l.trim().substring(0, 100)}`);
+            }
+        });
 
-        return []; // Sadece analiz yapıyoruz
-    } catch (err) {
-        console.error(`[FORENSIC] Hata: ${err.message}`);
-        return [];
-    }
+        return []; 
+    } catch (err) { return []; }
 }
 
 module.exports = { getStreams };
