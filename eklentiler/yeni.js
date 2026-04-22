@@ -1,6 +1,6 @@
 /**
- * JetFilmizle - Titan Debugger
- * Odak: HATA-04 anında yakalanan anahtarı ve sayfa durumunu görmek.
+ * JetFilmizle - Filtreli Titan Sökücü
+ * Odak: Yanlış anahtar (jetfilmizle) yerine GERÇEK anahtarı yakalamak.
  */
 
 async function getStreams(id, mediaType, season, episode) {
@@ -17,29 +17,34 @@ async function getStreams(id, mediaType, season, episode) {
 
         const html = await res.text();
 
-        const patterns = [
-            /(?:titan|ttn)\/(?:w|p)\/([a-zA-Z0-9_-]{11})/,
-            /["'](?:id|key|data-id|data-film-id)["']\s*[:=]\s*["']([a-zA-Z0-9_-]{11})["']/,
-            /\/([a-zA-Z0-9_-]{11})(?:["']|\?|&)/
-        ];
-
+        // --- GELİŞMİŞ FİLTRELİ CIMBIZ ---
+        // 'jetfilmizle' kelimesini ve 11 hane olmayanları otomatik eler.
+        const allMatches = html.matchAll(/(?:titan|ttn)\/(?:w|p)\/([a-zA-Z0-9_-]{11})|["'](?:id|key|data-id|data-film-id)["']\s*[:=]\s*["']([a-zA-Z0-9_-]{11})["']/g);
+        
         let key = null;
-        for (let pattern of patterns) {
-            const match = html.match(pattern);
-            if (match) {
-                key = match[1];
+        for (const match of allMatches) {
+            let tempKey = match[1] || match[2];
+            // Eğer yakalanan şey 'jetfilmizle' ise veya sayıdan ibaretse pas geç, gerçeğini ara
+            if (tempKey && tempKey.toLowerCase() !== 'jetfilmizle' && tempKey.length === 11) {
+                key = tempKey;
                 break; 
             }
         }
 
+        // Eğer hala bulunamadıysa iframe src'lerine daha dikkatli bak
         if (!key) {
-            console.error(`[HATA-02] Anahtar bulunamadı. Sayfa: ${targetUrl}`);
+            const iframeMatch = html.match(/iframe[^>]+src="[^"]+(?:titan|ttn)\/(?:w|p)\/([a-zA-Z0-9_-]{11})/);
+            if (iframeMatch) key = iframeMatch[1];
+        }
+
+        if (!key) {
+            console.error(`[HATA-02] Gerçek anahtar bulunamadı. Filtreye takılmış olabilir.`);
             return [];
         }
 
-        // --- ANAHTAR TEŞHİSİ ---
-        console.log(`[BİLGİ] Yakalanan Anahtar: ${key}`);
+        console.log(`[BİLGİ] Gerçek Anahtar Yakalandı: ${key}`);
 
+        // --- VİDEOPARK SORGUSU ---
         const playerUrl = `https://videopark.top/titan/w/${key}`;
         const playerRes = await fetch(playerUrl, {
             headers: {
@@ -50,33 +55,28 @@ async function getStreams(id, mediaType, season, episode) {
         });
 
         const playerHtml = await playerRes.text();
-        
         const sdMatch = playerHtml.match(/var\s+_sd\s*=\s*({[\s\S]*?});/);
-        const directM3u8 = playerHtml.match(/["'](http[^"']+\.m3u8[^"']*)["']/);
-
-        let finalUrl = null;
+        
         if (sdMatch) {
             const data = JSON.parse(sdMatch[1]);
-            finalUrl = data.stream_url;
-        } else if (directM3u8) {
-            finalUrl = directM3u8[1];
+            return [{
+                name: "Titan-Fixed",
+                url: data.stream_url,
+                type: "hls",
+                subtitles: data.subtitles ? data.subtitles.map(s => ({
+                    url: s.file,
+                    language: s.label,
+                    format: "vtt"
+                })) : [],
+                headers: {
+                    'Referer': 'https://videopark.top/',
+                    'User-Agent': 'Mozilla/5.0'
+                }
+            }];
         }
 
-        if (!finalUrl) {
-            // HATA-04 BURADA: Hem anahtarı hem de Videopark'ın verdiği tepkiyi logluyoruz.
-            console.error(`[HATA-04] Link sökülemedi! Kullanılan Anahtar: ${key} | Videopark Yanıt Başlangıcı: ${playerHtml.substring(0, 80).replace(/\n/g, '')}`);
-            return [];
-        }
-
-        return [{
-            name: "Titan-Debug",
-            url: finalUrl,
-            type: "hls",
-            headers: {
-                'Referer': 'https://videopark.top/',
-                'User-Agent': 'Mozilla/5.0'
-            }
-        }];
+        console.error(`[HATA-04] Link sökülemedi! Anahtar: ${key} | Yanıt: ${playerHtml.substring(0, 50)}`);
+        return [];
 
     } catch (e) {
         console.error(`[KRİTİK] ${e.message}`);
