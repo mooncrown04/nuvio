@@ -1,7 +1,7 @@
 /**
- * JetFilmizle - Nuvio Ultra (v34 The Harvester)
- * Filtreleri çöpe atar. Sayfadaki her tırnak içini potansiyel ID kabul eder,
- * ama sadece Videopark'tan GERÇEK video linki döndürenleri kabul eder.
+ * JetFilmizle - Nuvio Ultra (v35 Turbo Shredder)
+ * Sayfadaki her şeyi toplar, 10'arlı gruplar halinde (Batch) seri tarama yapar.
+ * Bu sayede hem her şeyi görürüz hem de sistemi dondurmayız.
  */
 
 var BASE_URL = 'https://jetfilmizle.net';
@@ -20,69 +20,60 @@ async function getStreams(id, mediaType, season, episode) {
             ? `${BASE_URL}/dizi/${slug}/sezon-${season}/bolum-${episode}`
             : `${BASE_URL}/film/${slug}`;
 
-        // 1. ADIM: Sayfanın TÜM ham metnini çek
         const pageRes = await fetch(targetUrl, { headers: { 'User-Agent': 'Mozilla/5.0' } });
         const html = await pageRes.text();
 
-        // 2. ADIM: "SIFIR FİLTRE" - Tırnak içindeki her şeyi topla (8-20 karakter arası)
-        // Bu hem DFADX'leri, hem şifreli ID'leri, hem de çöpleri toplar.
-        const allPossibleIds = html.match(/["']([a-zA-Z0-9_-]{8,20})["']/g) || [];
-        
-        // Temizlik: Sadece tırnakları kaldır ve benzersiz yap
+        // 1. ADIM: Sayfadaki her tırnak içini (8-25 karakter) süpür
+        const allPossibleIds = html.match(/["']([a-zA-Z0-9_-]{8,25})["']/g) || [];
         let candidates = [...new Set(allPossibleIds.map(m => m.replace(/["']/g, '')))];
         
-        console.error(`[HARVESTER] Toplam Aday Sayısı: ${candidates.length} (Filtresiz)`);
+        // 2. ADIM: Çok bariz çöpleri hızla ele (İşlem yükünü azaltmak için)
+        candidates = candidates.filter(c => !/^(http|https|google|jetfilmizle|ImageObject|viewport|charset|Permissions|accelerometer|autoplay|clipboard|gyroscope|magnetometer|payment|usb|true|false|hidden|visible|search|index|follow|width|initial|maximum|minimum|user-scalable|yes|no|content|meta|link|script|style|div|span|button|input|form|label|table|tbody|tr|td|th|thead|tfoot|section|header|footer|aside|article|nav|main|canvas|video|audio|source|track|embed|object|param|iframe|img|picture|svg|path|circle|rect|line|polyline|polygon|ellipse|text|tspan|defs|g|symbol|use|clipPath|mask|pattern|linearGradient|radialGradient|stop|filter|feFlood|feColorMatrix|feComponentTransfer|feComposite|feConvolveMatrix|feDiffuseLighting|feDisplacementMap|feDistantLight|feDropShadow|feGaussianBlur|feImage|feMerge|feMergeNode|feMorphology|feOffset|fePointLight|feSpecularLighting|feSpotLight|feTile|feTurbulence)$/i.test(c));
+
+        console.error(`[SHREDDER] Net Aday Sayısı: ${candidates.length}`);
 
         let streams = [];
         
-        // 3. ADIM: HIZLI TARAMA (Paralel İşleme)
-        // Her adayı Videopark Titan'a soruyoruz. Filtreyi kodda değil, sunucu cevabında yapıyoruz.
-        const pool = candidates.slice(0, 50); // İlk 50 en güçlü aday (Performans için limitli)
+        // 3. ADIM: GRUPLAMA (Batching)
+        // 94 isteği aynı anda atmak yerine 10'arlı gruplar halinde atıyoruz.
+        // İlk grupta videoyu bulursak diğerlerini hiç sormuyoruz (Hız kazandırır).
+        const batchSize = 10;
+        for (let i = 0; i < candidates.length; i += batchSize) {
+            const currentBatch = candidates.slice(i, i + batchSize);
+            console.error(`[SHREDDER] Grup ${Math.floor(i/batchSize) + 1} taranıyor...`);
 
-        const results = await Promise.allSettled(pool.map(async (wId) => {
-            // Bilinen çöpleri anında ele (Fetch trafiğini azaltmak için)
-            if (/^(true|false|hidden|visible|ImageObject|JetFilmizle|search|UTF-8)$/i.test(wId)) return null;
-
-            try {
-                const wRes = await fetch(`https://videopark.top/titan/w/${wId}`, { 
-                    headers: { 'Referer': BASE_URL, 'User-Agent': 'Mozilla/5.0' } 
-                });
-                const wHtml = await wRes.text();
-                
-                // Eğer cevapta gerçek bir video linki (_sd değişkeni) varsa, Bingo!
-                const sdMatch = wHtml.match(/var\s+_sd\s*=\s*({[\s\S]*?});/);
-                if (sdMatch) {
-                    const data = JSON.parse(sdMatch[1]);
-                    if (data.stream_url) {
-                        return {
-                            name: "Jet-Harvest",
-                            url: data.stream_url,
-                            type: "hls",
-                            headers: { 'Referer': 'https://videopark.top/' }
-                        };
+            const batchResults = await Promise.all(currentBatch.map(async (wId) => {
+                try {
+                    const wRes = await fetch(`https://videopark.top/titan/w/${wId}`, { 
+                        headers: { 'Referer': BASE_URL, 'User-Agent': 'Mozilla/5.0' } 
+                    });
+                    const wHtml = await wRes.text();
+                    const sdMatch = wHtml.match(/var\s+_sd\s*=\s*({[\s\S]*?});/);
+                    if (sdMatch) {
+                        const data = JSON.parse(sdMatch[1]);
+                        if (data.stream_url) {
+                            return {
+                                name: `Jet-Harvest-${wId.substring(0,4)}`,
+                                url: data.stream_url,
+                                type: "hls",
+                                headers: { 'Referer': 'https://videopark.top/' }
+                            };
+                        }
                     }
-                }
-            } catch (e) {}
-            return null;
-        }));
+                } catch (e) {}
+                return null;
+            }));
 
-        // 4. ADIM: Sadece başarılı olanları süz
-        streams = results
-            .filter(r => r.status === 'fulfilled' && r.value !== null)
-            .map(r => r.value);
-
-        console.error(`[HARVESTER] Bulunan Geçerli Kaynak: ${streams.length}`);
-        
-        // Klasik yedek (Eğer brute-force başarısız olursa)
-        if (streams.length === 0) {
-            const sdDirect = html.match(/var\s+_sd\s*=\s*({[\s\S]*?});/);
-            if (sdDirect) streams.push({ name: "Jet-Direct", url: JSON.parse(sdDirect[1]).stream_url, type: "hls" });
+            const foundInBatch = batchResults.filter(r => r !== null);
+            if (foundInBatch.length > 0) {
+                streams.push(...foundInBatch);
+                console.error(`[SHREDDER] Kaynak bulundu, tarama durduruluyor.`);
+                break; // İlk bulduğumuz grupta videoyu alıp çıkıyoruz!
+            }
         }
 
         return streams;
-    } catch (err) {
-        return [];
-    }
+    } catch (err) { return []; }
 }
 
 module.exports = { getStreams };
