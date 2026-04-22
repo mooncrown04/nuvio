@@ -1,109 +1,101 @@
 /**
- * JetFilmizle — Nuvio Provider (MoOnCrOwN - V26)
- * Titan / Videopark Worker Desteği Eklendi.
+ * JetFilmizle — Nuvio Provider (MoOnCrOwN - V28)
+ * Analitik ve Bot korumasını atlayarak doğrudan hedefe odaklanır.
  */
 
 var BASE_URL     = 'https://jetfilmizle.net';
 var TMDB_API_KEY = '500330721680edb6d5f7f12ba7cd9023';
 
 var HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Linux; Android 9; Fire TV Stick 4K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-    'Referer': BASE_URL + '/'
+    'User-Agent': 'Mozilla/5.0 (Linux; Android 10; BRAVIA 4K VH2) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+    'Referer': 'https://www.google.com/',
+    'Accept-Language': 'tr-TR,tr;q=0.9'
 };
 
-function getStreams(id, mediaType, season, episode) {
+function cleanSlug(t) {
+    return (t || '').toLowerCase()
+        .replace(/ğ/g,'g').replace(/ü/g,'u').replace(/ş/g,'s')
+        .replace(/ı/g,'i').replace(/İ/g,'i').replace(/ö/g,'o')
+        .replace(/ç/g,'c')
+        .replace(/[^a-z0-9]+/g,'-')
+        .replace(/^-+|-+$/g,'');
+}
+
+async function getStreams(id, mediaType, season, episode) {
     var tmdbId = id.toString().replace(/[^0-9]/g, '');
     var type = (mediaType === 'tv') ? 'tv' : 'movie';
 
-    return fetch('https://api.themoviedb.org/3/' + type + '/' + tmdbId + '?api_key=' + TMDB_API_KEY + '&language=tr-TR')
-        .then(function(r) { return r.json(); })
-        .then(function(info) {
-            var originalTitle = info.name || info.title;
+    try {
+        // 1. TMDB'den orijinal ismi al
+        const tmdbRes = await fetch('https://api.themoviedb.org/3/' + type + '/' + tmdbId + '?api_key=' + TMDB_API_KEY + '&language=tr-TR');
+        const info = await tmdbRes.json();
+        
+        // Jetfilm genellikle orijinal ismi (İngilizce) veya Türkçe ismi slug yapar.
+        // İkisini de denemek için bir dizi oluşturuyoruz.
+        const titleToTry = info.name || info.title;
+        const slug = cleanSlug(titleToTry);
+        
+        let targetUrl = (mediaType === 'tv') 
+            ? `${BASE_URL}/dizi/${slug}/${season}-sezon-${episode}-bolum`
+            : `${BASE_URL}/film/${slug}`;
+
+        console.error('[JetFilm-V28] Tahmin URL: ' + targetUrl);
+
+        // 2. Sayfayı çek
+        const response = await fetch(targetUrl, { headers: HEADERS });
+        const html = await response.text();
+        console.error('[JetFilm-V28] HTML Boyutu: ' + html.length);
+
+        const streams = [];
+
+        // 3. TİTAN & WORKER ANALİZİ
+        const titanHashRe = /videopark\.top\/titan\/w\/([a-zA-Z0-9_-]+)/;
+        const hashMatch = titanHashRe.exec(html);
+
+        if (hashMatch) {
+            console.error('[JetFilm-V28] Hash Bulundu: ' + hashMatch[1]);
+            const titanUrl = 'https://videopark.top/titan/w/' + hashMatch[1];
             
-            // 1. Sitede Aramayı Başlat (404 koruması)
-            return fetch(BASE_URL + '/filmara.php', {
-                method: 'POST',
-                headers: Object.assign({}, HEADERS, { 'Content-Type': 'application/x-www-form-urlencoded' }),
-                body: 's=' + encodeURIComponent(originalTitle)
-            })
-            .then(function(res) { return res.text(); })
-            .then(function(searchHtml) {
-                var regex = new RegExp('href="(https?://jetfilmizle\\.net/(film|dizi)/([^"/]+))"', 'i');
-                var m = regex.exec(searchHtml);
-                
-                var targetUrl = '';
-                if (m) {
-                    targetUrl = BASE_URL + '/' + m[2] + '/' + m[3];
-                    if (mediaType === 'tv') {
-                        // Sezon ve Bölüm yapısını Jetfilm formatına çeviriyoruz
-                        targetUrl += '/' + season + '-sezon-' + episode + '-bolum';
-                    }
-                }
-                
-                console.error('[JetFilm-V26] Hedef URL: ' + targetUrl);
-                return fetch(targetUrl, { headers: HEADERS });
-            });
-        })
-        .then(function(r) { return r.text(); })
-        .then(function(html) {
-            // Bot koruması kontrolü (58361)
-            if (html.length < 60000) {
-                console.error('[JetFilm-V26] Bot engeli yakalandı, sayfa eksik.');
-            }
+            const titanRes = await fetch(titanUrl, { headers: { 'Referer': targetUrl } });
+            const titanHtml = await titanRes.text();
 
-            var streams = [];
+            // Senin bulduğun o uzun Worker kodunu yakalayalım
+            const workerRe = /workers\.dev\/[i|e]\/([a-zA-Z0-9_-]{40,})/i;
+            const wm = workerRe.exec(titanHtml);
 
-            // --- TİTAN & WORKER YAKALAYICI (Senin bulduğun yöntem) ---
-            var titanHashRe = /videopark\.top\/titan\/w\/([a-zA-Z0-9_-]+)/;
-            var hashMatch = titanHashRe.exec(html);
-
-            if (hashMatch) {
-                var titanUrl = 'https://videopark.top/titan/w/' + hashMatch[1];
-                
-                // Titan sayfasından Worker linkini çekiyoruz
-                return fetch(titanUrl, { headers: { 'Referer': BASE_URL + '/' } })
-                    .then(function(tr) { return tr.text(); })
-                    .then(function(titanHtml) {
-                        // Senin bulduğun /i/ veya /e/ kodunu yakala
-                        var workerRe = /workers\.dev\/[i|e]\/([a-zA-Z0-9_-]{50,})/i;
-                        var wm = workerRe.exec(titanHtml);
-                        
-                        if (wm) {
-                            streams.push({
-                                name: "JetFilmizle",
-                                title: '⌜ Titan Worker ⌟ | 🇹🇷 HLS',
-                                url: 'https://videopark.erikkalinina1994.workers.dev/i/' + wm[1],
-                                type: 'video',
-                                quality: '1080p',
-                                headers: { 
-                                    'Referer': 'https://videopark.top/',
-                                    'Origin': 'https://videopark.top'
-                                }
-                            });
-                        }
-                        return streams;
-                    });
-            }
-
-            // Pixeldrain ve diğer kaynaklar (Eskisi gibi devam)
-            var pdRe = /href="(https?:\/\/pixeldrain\.com\/u\/([^"]+))"/g;
-            var m;
-            while ((m = pdRe.exec(html)) !== null) {
+            if (wm) {
                 streams.push({
                     name: "JetFilmizle",
-                    title: '⌜ Pixeldrain ⌟',
-                    url: 'https://pixeldrain.com/api/file/' + m[2] + '?download',
+                    title: '⌜ Titan Worker ⌟ | 1080p',
+                    url: 'https://videopark.erikkalinina1994.workers.dev/i/' + wm[1],
                     type: 'video',
-                    quality: '1080p'
+                    quality: '1080p',
+                    headers: { 
+                        'Referer': 'https://videopark.top/',
+                        'Origin': 'https://videopark.top'
+                    }
                 });
             }
+        }
 
-            return streams;
-        })
-        .catch(function(e) {
-            console.error('[JetFilm-V26 Error]: ' + e.message);
-            return [];
-        });
+        // Eğer Titan yoksa Pixeldrain ara
+        const pdRe = /href="(https?:\/\/pixeldrain\.com\/u\/([^"]+))"/g;
+        let m;
+        while ((m = pdRe.exec(html)) !== null) {
+            streams.push({
+                name: "JetFilmizle",
+                title: '⌜ Pixeldrain ⌟',
+                url: 'https://pixeldrain.com/api/file/' + m[2] + '?download',
+                type: 'video'
+            });
+        }
+
+        return streams;
+
+    } catch (e) {
+        console.error('[JetFilm-V28 Error]: ' + e.message);
+        return [];
+    }
 }
 
 module.exports = { getStreams: getStreams };
