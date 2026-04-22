@@ -1,5 +1,5 @@
 /**
- * JetFilmizle — Nuvio Provider (FULL LOGGING & DEBUG)
+ * JetFilmizle — Nuvio Provider (Search & Fallback Fix)
  */
 
 var BASE_URL     = 'https://jetfilmizle.net';
@@ -11,8 +11,18 @@ var HEADERS = {
     'X-Requested-With': 'XMLHttpRequest'
 };
 
+function titleToSlug(t) {
+    return (t || '').toLowerCase()
+        .trim()
+        .replace(/ğ/g,'g').replace(/ü/g,'u').replace(/ş/g,'s')
+        .replace(/ı/g,'i').replace(/İ/g,'i').replace(/ö/g,'o')
+        .replace(/ç/g,'c')
+        .replace(/[^a-z0-9]+/g,'-')
+        .replace(/^-+|-+$/g,'');
+}
+
 function getStreams(id, mediaType, season, episode) {
-    console.error('[JetFilm-Debug] İşlem Başladı. Tip: ' + mediaType + ' S:' + season + ' E:' + episode);
+    console.error('[JetFilm-Debug] İşlem Başladı: ' + mediaType + ' S:' + season + ' E:' + episode);
     
     var tmdbId = id.toString().replace(/[^0-9]/g, '');
     var type = (mediaType === 'tv') ? 'tv' : 'movie';
@@ -21,31 +31,32 @@ function getStreams(id, mediaType, season, episode) {
         .then(function(r) { return r.json(); })
         .then(function(info) {
             var originalTitle = info.name || info.title;
-            console.error('[JetFilm-Debug] TMDB Başlık: ' + originalTitle);
+            var slug = titleToSlug(originalTitle);
+            console.error('[JetFilm-Debug] Aranan Başlık: ' + originalTitle + ' | Slug: ' + slug);
             
+            // Arama yapıyoruz ama sonuç gelmezse diye tahmin ettiğimiz URL'yi de hazırda tutuyoruz
+            var fallbackUrl = BASE_URL + '/' + (mediaType === 'tv' ? 'dizi' : 'film') + '/' + slug;
+
             return fetch(BASE_URL + '/filmara.php', {
                 method: 'POST',
                 headers: Object.assign({}, HEADERS, { 'Content-Type': 'application/x-www-form-urlencoded' }),
                 body: 's=' + encodeURIComponent(originalTitle)
+            })
+            .then(function(res) { return res.text(); })
+            .then(function(searchHtml) {
+                var regex = new RegExp('href="(https?://jetfilmizle\\.net/(film|dizi)/([^"/]+))"', 'i');
+                var m = regex.exec(searchHtml);
+                
+                var finalUrl = m ? m[1] : fallbackUrl; // Arama bulamazsa tahmine güven
+                console.error('[JetFilm-Debug] Hedef URL: ' + finalUrl);
+                
+                return fetch(finalUrl, { headers: HEADERS });
             });
         })
-        .then(function(res) { return res.text(); })
-        .then(function(searchHtml) {
-            var regex = new RegExp('href="(https?://jetfilmizle\\.net/(film|dizi)/([^"/]+))"', 'i');
-            var m = regex.exec(searchHtml);
-            
-            var finalUrl = m ? m[1] : null;
-            if (!finalUrl) {
-                console.error('[JetFilm-Debug] HATA: Site üzerinde dizi/film bulunamadı.');
-                return [];
-            }
-
-            console.error('[JetFilm-Debug] Gidilen Sayfa: ' + finalUrl);
-            return fetch(finalUrl, { headers: HEADERS }).then(function(r) { return r.text(); });
-        })
+        .then(function(r) { return r.text(); })
         .then(function(html) {
             if (!html || html.length < 500) {
-                console.error('[JetFilm-Debug] HATA: Sayfa boş veya yüklenemedi.');
+                console.error('[JetFilm-Debug] HATA: Sayfa içeriği hala boş!');
                 return [];
             }
 
@@ -54,21 +65,16 @@ function getStreams(id, mediaType, season, episode) {
 
             if (mediaType === 'tv' && filmIdM) {
                 var filmId = filmIdM[1];
-                console.error('[JetFilm-Debug] Dizi Modu Aktif. FilmID: ' + filmId);
+                console.error('[JetFilm-Debug] Dizi Modu. FilmID: ' + filmId);
                 
-                var ajaxBody = 'action=get_player_source&film_id=' + filmId + 
-                               '&season=' + (season || 1) + 
-                               '&episode=' + (episode || 1) + 
-                               '&type=dublaj';
-
                 return fetch(BASE_URL + '/wp-admin/admin-ajax.php', {
                     method: 'POST',
                     headers: Object.assign({}, HEADERS, { 'Content-Type': 'application/x-www-form-urlencoded' }),
-                    body: ajaxBody
+                    body: 'action=get_player_source&film_id=' + filmId + '&season=' + (season || 1) + '&episode=' + (episode || 1) + '&type=dublaj'
                 })
                 .then(function(res) { return res.text(); })
                 .then(function(text) {
-                    console.error('[JetFilm-Debug] AJAX Yanıtı (İlk 100 Karakter): ' + text.substring(0, 100));
+                    console.error('[JetFilm-Debug] AJAX Ham Yanıt: ' + text.substring(0, 50));
                     try {
                         var json = JSON.parse(text);
                         if (json && json.data && json.data.video_url) {
@@ -79,15 +85,13 @@ function getStreams(id, mediaType, season, episode) {
                                 type: 'embed'
                             });
                         }
-                    } catch(e) {
-                        console.error('[JetFilm-Debug] AJAX JSON Parse Hatası: ' + e.message);
+                    } catch(e) { 
+                        console.error('[JetFilm-Debug] JSON Parse Hatası: ' + e.message);
                     }
-                    return streams;
+                    return scanStatic(html, streams); // AJAX sonrası statikleri de ekle
                 });
             }
 
-            // Film ise veya AJAX başarısızsa statik tarama
-            console.error('[JetFilm-Debug] Statik Tarama Yapılıyor...');
             return scanStatic(html, streams);
         })
         .catch(function(err) {
@@ -102,15 +106,17 @@ function scanStatic(html, streams) {
     while ((m = videoRe.exec(html)) !== null) {
         var src = m[1];
         if (src.indexOf('jetv') !== -1 || src.indexOf('d2rs') !== -1 || src.indexOf('videopark') !== -1 || src.indexOf('titan') !== -1) {
-            streams.push({
-                name: "JetFilmizle",
-                title: '⌜ Kaynak ⌟',
-                url: src.startsWith('//') ? 'https:' + src : src,
-                type: 'embed'
-            });
+            if (!streams.some(function(s) { return s.url === src; })) {
+                streams.push({
+                    name: "JetFilmizle",
+                    title: '⌜ Kaynak ⌟',
+                    url: src.startsWith('//') ? 'https:' + src : src,
+                    type: 'embed'
+                });
+            }
         }
     }
-    console.error('[JetFilm-Debug] Bulunan Toplam Kaynak: ' + streams.length);
+    console.error('[JetFilm-Debug] Toplam Kaynak: ' + streams.length);
     return streams;
 }
 
