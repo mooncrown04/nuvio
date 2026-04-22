@@ -1,45 +1,55 @@
 /**
- * JetFilmizle — MoOnCrOwN V31 (Dynamic Hash Hunter)
+ * JetFilmizle — MoOnCrOwN V32
+ * SADECE GEREKLİ OLAN: ID AVCI VE DOĞRU EXPORT
  */
 
+var BASE_URL = 'https://jetfilmizle.net';
+
 async function getStreams(id, mediaType, season, episode) {
-    // 1. ADIM: Hedef sayfa (Bu sayfaya girmeden o bölüme özel hash'i alamayız)
-    const targetUrl = `https://jetfilmizle.net/dizi/cobra-kai/${season}-sezon-${episode}-bolum`;
+    // 1. ADIM: Senin dediğin gibi her bölümün hash'i farklı.
+    // Bu hash'i almak için o bölüme özel sayfaya "gizlice" bakmamız lazım.
+    var targetUrl = BASE_URL + '/dizi/cobra-kai/' + season + '-sezon-' + episode + '-bolum';
 
     try {
-        const response = await fetch(targetUrl, {
+        var response = await fetch(targetUrl, {
             headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                'Referer': 'https://www.google.com/'
+                'User-Agent': 'Mozilla/5.0 (Linux; Android 10; Fire TV)',
+                'Referer': BASE_URL + '/'
             }
         });
 
-        const html = await response.text();
+        var html = await response.text();
 
-        // 2. ADIM: Sayfanın içinde o bölüme özel üretilen o devasa kodu arıyoruz
-        // Senin verdiğin örnek: ABASGR9XRlUcCT4PDBYHAAhPChIlHUVCWgcFAkYcBQYOAxZwR...
-        const workerRegex = /workers\.dev\/[i|e]\/([a-zA-Z0-9_-]{50,})/;
-        const match = html.match(workerRegex);
+        // 2. ADIM: Senin bulduğun o devasa 'ABASGR9...' kodunu yakalıyoruz.
+        // Linkte sezon/bölüm yazmasa bile bu kodun içindeki veri videoyu değiştirir.
+        var workerRegex = /workers\.dev\/[i|e]\/([a-zA-Z0-9_-]{50,})/;
+        var match = html.match(workerRegex);
 
         if (match && match[1]) {
-            const newHash = match[1]; // İşte bu 6. bölüme özel olan yeni hash!
-            console.error(`[SUCCESS] Yeni Bölüm Hash'i Bulundu: ${newHash.substring(0, 10)}...`);
-
+            var dynamicHash = match[1];
+            
             return [{
                 name: "JetFilmizle",
-                title: `⌜ MoOnCrOwN ⌟ | S${season} E${episode}`,
-                url: `https://videopark.erikkalinina1994.workers.dev/i/${newHash}`,
-                type: 'video',
+                title: "MoOnCrOwN V32 | S" + season + " E" + episode,
+                url: "https://videopark.erikkalinina1994.workers.dev/i/" + dynamicHash,
+                type: "video",
                 headers: { 
-                    'Referer': 'https://videopark.top/',
-                    'Origin': 'https://videopark.top'
+                    "Referer": "https://videopark.top/",
+                    "Origin": "https://videopark.top"
                 }
             }];
-        } else {
-            console.error("[FAIL] Sayfada yeni hash bulunamadı. Muhtemelen 58361 engeline takıldık.");
         }
     } catch (e) {
-        console.error("[ERROR] V31: " + e.message);
+        // Hata olsa bile boş liste dön ki uygulama çökmesin
     }
     return [];
+}
+
+// UYGULAMANIN "BULAMADIM" DEMEMESİ İÇİN BU KISIM ŞART:
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = { getStreams: getStreams };
+}
+
+if (typeof globalThis !== 'undefined') {
+    globalThis.getStreams = getStreams;
 }
