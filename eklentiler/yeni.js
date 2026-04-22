@@ -1,79 +1,75 @@
 /**
- * JetFilmizle - Videopark Button & Ajax Simulator
- * Odak: /titan/w/ linkindeki buton etkileşimini simüle ederek m3u8'i çekmek.
+ * JetFilmizle - Videopark Titan "Dynamic Season/Episode" Resolver
  */
 
 async function getStreams(id, mediaType, season, episode) {
-    try {
-        // Senin verdiğin çalışan örnek anahtar üzerinden gidelim
-        const masterKey = "DFADXFgPDU4"; 
-        const playerUrl = `https://videopark.top/titan/w/${masterKey}`;
-        
-        console.log(`[İŞLEM] Player sayfası yükleniyor: ${playerUrl}`);
+    // Videopark'ın ana giriş kapısı (Master Key)
+    const masterKey = "DFADXFgPDU4"; 
+    const playerUrl = `https://videopark.top/titan/w/${masterKey}`;
 
-        const playerRes = await fetch(playerUrl, {
+    try {
+        console.log(`[TITAN] Sezon ${season} Bölüm ${episode} aranıyor...`);
+
+        const response = await fetch(playerUrl, {
             headers: {
                 'Referer': 'https://jetfilmizle.net/',
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
             }
         });
-
-        const playerHtml = await playerRes.text();
-
-        // --- BUTON TETİKLEME / AJAX SİMÜLASYONU ---
-        // Videopark butonlara basıldığında genellikle /api/get_source veya benzeri bir yere gider.
-        // Ama bazen tüm bölümlerin linkleri JSON olarak 'var _data' içinde saklıdır.
         
-        let streamUrl = "";
+        const html = await response.text();
 
-        // 1. İhtimal: Sayfa içinde gömülü m3u8 (Butona basılmış gibi arıyoruz)
-        const m3u8Match = playerHtml.match(/["'](https?:\/\/[^"']+\.m3u8[^"']*)["']/);
+        // 1. ADIM: Sayfadaki tüm sezon/bölüm verilerini içeren devasa JSON bloğunu bul
+        // Videopark'ta bu genellikle 'var _data = ...' veya 'var _seasons = ...' içindedir.
+        const dataMatch = html.match(/var\s+_data\s*=\s*({[\s\S]*?});/);
         
-        // 2. İhtimal: Bölüm verilerini içeren büyük bir JSON bloğu
-        const dataMatch = playerHtml.match(/var\s+_data\s*=\s*({[\s\S]*?});/);
-
         if (dataMatch) {
-            const videoData = JSON.parse(dataMatch[1]);
-            // Sezon ve bölüm eşleşmesi yap (Örn: S1 E1 -> "1-1")
-            const targetKey = `${season}-${episode}`;
-            if (videoData[targetKey]) {
-                streamUrl = videoData[targetKey].file || videoData[targetKey].url;
-                console.log(`[BAŞARI] Bölüm ${targetKey} verisi JSON içinden çekildi.`);
+            const allData = JSON.parse(dataMatch[1]);
+            
+            // 2. ADIM: İstediğin bölümün anahtarını oluştur (Örn: "1-1", "2-5" gibi)
+            const episodeKey = `${season}-${episode}`;
+            const targetEpisode = allData[episodeKey];
+
+            if (targetEpisode) {
+                console.log(`[TITAN] Bölüm bulundu: ${episodeKey}`);
+                
+                // Altyazıları formatla
+                const subtitles = targetEpisode.subtitles ? targetEpisode.subtitles.map(s => ({
+                    url: s.file,
+                    language: s.label,
+                    format: "vtt"
+                })) : [];
+
+                return [{
+                    name: `Videopark S${season}E${episode}`,
+                    url: targetEpisode.file || targetEpisode.stream_url,
+                    type: "hls",
+                    subtitles: subtitles,
+                    headers: {
+                        'Referer': 'https://videopark.top/',
+                        'User-Agent': 'Mozilla/5.0'
+                    }
+                }];
             }
         }
 
-        if (!streamUrl && m3u8Match) {
-            streamUrl = m3u8Match[1].replace(/\\/g, '');
-        }
-
-        // --- 3. İHTİMAL: BASE64 ÇÖZÜCÜ (Eğer veri gizliyse) ---
-        if (!streamUrl) {
-            const b64Source = playerHtml.match(/atob\(['"]([a-zA-Z0-9+/=]+)['"]\)/);
-            if (b64Source) {
-                // Base64 decode simülasyonu (Plugin ortamında atob mevcuttur)
-                streamUrl = Buffer.from(b64Source[1], 'base64').toString('utf-8');
-            }
-        }
-
-        if (streamUrl) {
+        // 3. ADIM: Eğer JSON yoksa (Tek bölümlük veya farklı yapı), mevcut _sd objesine bak
+        const sdMatch = html.match(/var\s+_sd\s*=\s*({[\s\S]*?});/);
+        if (sdMatch) {
+            const sdData = JSON.parse(sdMatch[1]);
             return [{
-                name: `Videopark S${season}E${episode}`,
-                url: streamUrl,
+                name: "Videopark (Varsayılan)",
+                url: sdData.stream_url,
                 type: "hls",
-                headers: {
-                    'Referer': 'https://videopark.top/',
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
-                    'Origin': 'https://videopark.top'
-                }
+                headers: { 'Referer': 'https://videopark.top/' }
             }];
         }
 
-        console.error(`[HATA-04] Link sökülemedi. Sayfa buton etkileşimi bekliyor olabilir.`);
+        console.error("[TITAN] Aranan bölüm verisi sayfada bulunamadı.");
         return [];
 
-    } catch (e) {
-        console.error(`[SİSTEM] Kritik Hata: ${e.message}`);
+    } catch (err) {
+        console.error(`[TITAN-KRİTİK] Hata: ${err.message}`);
         return [];
     }
 }
