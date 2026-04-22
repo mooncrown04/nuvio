@@ -1,7 +1,7 @@
 /**
- * JetFilmizle - Nuvio Ultra (v60 Worker Hunter)
- * MTc3... gibi Base64 kodlarını decode eder ve 
- * Player'ın gizlediği asıl m3u8 kaynağına ulaşır.
+ * JetFilmizle - Nuvio Ultra (v62 Forensic Scanner)
+ * Bu kod sadece "DFADX" ve benzeri yapıların sayfada 
+ * nasıl saklandığını (Base64, Plain, JSON) tespit eder.
  */
 
 var BASE_URL = 'https://jetfilmizle.net';
@@ -17,68 +17,47 @@ async function getStreams(id, mediaType, season, episode) {
         const slug = (info.name || "").toLowerCase().replace(/ğ/g,'g').replace(/ü/g,'u').replace(/ş/g,'s').replace(/ı/g,'i').replace(/ö/g,'o').replace(/ç/g,'c').replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'');
         const targetUrl = `${BASE_URL}/dizi/${slug}/sezon-${season}/bolum-${episode}`;
 
-        const pageRes = await fetch(targetUrl, { headers: { 'User-Agent': 'Mozilla/5.0' } });
+        console.error(`[FORENSIC] Taranıyor: ${targetUrl}`);
+        const pageRes = await fetch(targetUrl, { headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' } });
         const html = await pageRes.text();
 
-        // 1. ADIM: Logdaki o meşhur Base64 (MTc3...) ve XLD kodlarını yakala
-        const pattern = /[a-zA-Z0-9]{11,15}/g;
-        let matches = html.match(pattern) || [];
-        let vId = matches.reverse().find(k => /[0-9]/.test(k) && /[A-Z]/.test(k) && !/google|manager/i.test(k));
+        // TEST 1: Doğrudan Metin Olarak mı Duruyor?
+        const directMatch = html.match(/DFADX[a-zA-Z0-9]+/);
+        if (directMatch) {
+            console.error(`[FORENSIC] BULDUM (Düz Metin): ${directMatch[0]}`);
+        }
 
-        if (!vId) return [];
-        console.error(`[HUNTER] Yakalanan ID: ${vId}`);
-
-        // 2. ADIM: Base64 Çözücü (Özellikle 1. bölümdeki MTc3 için)
-        let finalKey = vId;
-        if (vId.startsWith('MTc3')) {
+        // TEST 2: Base64 Şifreli mi? (DFADX'in Base64 karşılığı 'REZA')
+        const base64Match = html.match(/REZA[a-zA-Z0-9+/=]+/);
+        if (base64Match) {
             try {
-                // Base64'ü çözüp içindeki sayısal veya string ID'yi alıyoruz
-                finalKey = Buffer.from(vId, 'base64').toString('utf-8');
-                console.error(`[HUNTER] Base64 Çözüldü: ${finalKey}`);
+                const decoded = Buffer.from(base64Match[0], 'base64').toString('utf-8');
+                console.error(`[FORENSIC] BULDUM (Base64): ${base64Match[0]} -> ${decoded}`);
             } catch(e) {}
         }
 
-        // 3. ADIM: Player Sayfasını oku ve içindeki _sd objesini zorla
-        // Bu sefer Referer olarak targetUrl'yi (Dizi Bölüm URL'si) kullanıyoruz
-        const response = await fetch(`https://videopark.top/titan/w/${vId}`, {
-            headers: {
-                'Referer': targetUrl,
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
-            }
-        });
-        
-        const content = await response.text();
-
-        // Eğer hala HTML geliyorsa (< token hatası), içeriği regex ile tara
-        if (content.includes('_sd')) {
-            const data = JSON.parse(content.match(/var\s+_sd\s*=\s*({[\s\S]*?});/)[1]);
-            console.error(`[SUCCESS] Akış Bulundu: ${vId}`);
-            
-            return [{
-                name: "Jet-Worker (Titan)",
-                url: data.stream_url,
-                type: "hls",
-                headers: { 
-                    'Referer': 'https://videopark.top/',
-                    'User-Agent': 'Mozilla/5.0' 
-                }
-            }];
-        } else if (content.includes('file:')) {
-            // Alternatif Player formatı (file: "http...")
-            const fileMatch = content.match(/file\s*:\s*"(.*?)"/);
-            if (fileMatch) {
-                console.error(`[SUCCESS] Alternatif Link Bulundu`);
-                return [{
-                    name: "Jet-Direct",
-                    url: fileMatch[1],
-                    type: "hls",
-                    headers: { 'Referer': 'https://videopark.top/' }
-                }];
-            }
+        // TEST 3: Iframe veya Script Src içinde mi?
+        const srcMatch = html.match(/src="([^"]*videopark[^"]*)"/i);
+        if (srcMatch) {
+            console.error(`[FORENSIC] BULDUM (URL İçinde): ${srcMatch[1]}`);
         }
 
+        // TEST 4: JSON Konfigürasyonu mu?
+        const jsonMatch = html.match(/data-config='([^']+)'/) || html.match(/playerConfig\s*=\s*({[^;]+})/);
+        if (jsonMatch) {
+            console.error(`[FORENSIC] BULDUM (JSON/Config): ${jsonMatch[0].substring(0, 50)}...`);
+        }
+
+        // Eğer hiçbir şey bulamazsak, tüm JS bloklarını görelim
+        if (!directMatch && !base64Match) {
+            console.error(`[FORENSIC] Kritik: "DFADX" izine rastlanamadı. Şifreleme farklı olabilir.`);
+        }
+
+        return []; // Sadece analiz yapıyoruz
+    } catch (err) {
+        console.error(`[FORENSIC] Hata: ${err.message}`);
         return [];
-    } catch (err) { return []; }
+    }
 }
 
 module.exports = { getStreams };
