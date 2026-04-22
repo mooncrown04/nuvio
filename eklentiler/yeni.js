@@ -1,49 +1,49 @@
 /**
- * JetFilmizle - Videopark "Worker Generator" Bypass
- * Buton tetiklemesini ve Worker yönlendirmesini simüle eder.
+ * JetFilmizle - Universal Titan Resolver
+ * Buton etkileşimini ve Worker yönlendirmesini otomatikleştirir.
  */
 
 async function getStreams(id, mediaType, season, episode) {
     try {
-        // 1. ADIM: Dizinin ana sayfasından "Master Key"i bul
+        // 1. Dizinin JetFilmizle sayfasından Master Key'i yakala
         const targetUrl = `https://jetfilmizle.net/dizi/${id}`;
-        const mainRes = await fetch(targetUrl, {
+        const res = await fetch(targetUrl, {
             headers: { 'User-Agent': 'Mozilla/5.0', 'Referer': 'https://jetfilmizle.net/' }
         });
-        const mainHtml = await mainRes.text();
+        const html = await res.text();
 
-        const masterKeyMatch = mainHtml.match(/videopark\.top\/(?:titan|ttn)\/w\/([a-zA-Z0-9_-]{10,15})/);
+        const masterKeyMatch = html.match(/videopark\.top\/(?:titan|ttn)\/w\/([a-zA-Z0-9_-]{10,15})/);
         const masterKey = masterKeyMatch ? masterKeyMatch[1] : null;
 
-        if (!masterKey) return [];
+        if (!masterKey) {
+            console.error(`[TITAN-HATA] Anahtar bulunamadı: ${id}`);
+            return [];
+        }
 
-        // 2. ADIM: Player sayfasına git (Butonların olduğu yer)
+        // 2. Titan Player sayfasından Worker verilerini çek
         const playerUrl = `https://videopark.top/titan/w/${masterKey}`;
-        const playerRes = await fetch(playerUrl, {
+        const pRes = await fetch(playerUrl, {
             headers: { 'Referer': targetUrl, 'User-Agent': 'Mozilla/5.0' }
         });
-        const playerHtml = await playerRes.text();
+        const pHtml = await pRes.text();
 
-        // 3. ADIM: Buton verisini (Worker linklerini) çek
-        // Videopark'ta butonlar 'var _data' veya 'var _sources' içinde worker linklerini tutar.
-        const dataMatch = playerHtml.match(/var\s+_(?:data|sd|sources)\s*=\s*({[\s\S]*?});/);
+        // Butonların arkasındaki JSON verisini cımbızla çek
+        const dataMatch = pHtml.match(/var\s+_(?:data|sd|sources)\s*=\s*({[\s\S]*?});/);
         
         if (dataMatch) {
             const allData = JSON.parse(dataMatch[1]);
-            const episodeKey = `${season}-${episode}`;
+            const targetKey = `${season}-${episode}`;
             
-            // Eğer bastığımız bölüm listede varsa, onun Worker verisini alalım
-            const target = allData[episodeKey] || allData;
-            
-            // 4. ADIM: Worker'dan stream_url al (Tetikleme sonrası gelen link)
-            let finalUrl = target.stream_url || target.file;
+            // Seçilen bölüme ait Worker verisi
+            const target = allData[targetKey] || allData;
+            const streamUrl = target.stream_url || target.file;
 
-            if (finalUrl) {
-                // Eğer link bir "Worker Proxy" ise (genelde /worker/ veya /v/ ile başlar)
-                // Cloudstream'in bunu oynatabilmesi için gerekli header'ları ekliyoruz.
+            if (streamUrl) {
+                console.error(`[TITAN-OK] Worker Linki: ${streamUrl}`);
+                
                 return [{
-                    name: `Videopark Worker (S${season}E${episode})`,
-                    url: finalUrl,
+                    name: `Videopark S${season}E${episode}`,
+                    url: streamUrl,
                     type: "hls",
                     subtitles: target.subtitles ? target.subtitles.map(s => ({
                         url: s.file, language: s.label, format: "vtt"
@@ -57,7 +57,7 @@ async function getStreams(id, mediaType, season, episode) {
             }
         }
 
-        console.error("[HATA] Worker linki oluşturulamadı.");
+        console.error("[TITAN-HATA] Worker verisi ayıklanamadı.");
         return [];
 
     } catch (err) {
@@ -66,7 +66,7 @@ async function getStreams(id, mediaType, season, episode) {
     }
 }
 
-// Global Export (Kritik: Hata almamak için)
+// Global Export - Cloudstream/Plugin uyumluluğu için
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = { getStreams };
 } else {
