@@ -1,14 +1,11 @@
 /**
- * JetFilmizle - Universal Titan Resolver
- * Her dizi için anahtarı otomatik bulur ve bölümlere ulaşmanı sağlar.
+ * JetFilmizle - Universal Titan Resolver (Auto-Key)
  */
 
 async function getStreams(id, mediaType, season, episode) {
     try {
-        // 1. ADIM: Dizinin JetFilmizle sayfasına git (Anahtarı oradan çalacağız)
-        let slug = id; 
-        const targetUrl = `https://jetfilmizle.net/dizi/${slug}`;
-        
+        // 1. ADIM: Dizinin JetFilmizle sayfasına gidip anahtarı (Master Key) çekelim
+        const targetUrl = `https://jetfilmizle.net/dizi/${id}`;
         const res = await fetch(targetUrl, {
             headers: {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
@@ -17,59 +14,42 @@ async function getStreams(id, mediaType, season, episode) {
         });
         const html = await res.text();
 
-        // 2. ADIM: Sayfadaki Titan Master Key'i bul
-        // Genellikle 11-12 haneli karışık harf/rakamdır (Örn: DFADXFgPDU4 veya 05b44f317d2a)
-        let masterKey = null;
-
-        // Önce iframe veya data-id içindeki temiz anahtarı ara
+        // 2. ADIM: Sayfadaki Titan anahtarını bul (DFADXFgPDU4 gibi)
         const iframeMatch = html.match(/videopark\.top\/titan\/w\/([a-zA-Z0-9_-]{10,15})/);
-        if (iframeMatch) {
-            masterKey = iframeMatch[1];
-        } else {
-            // Alternatif: Sayfadaki 11-12 haneli hex/string kodlarını tara, Analytics (G-) kodlarını ele
-            const potentialKeys = html.match(/[a-zA-Z0-9_-]{11,12}/g) || [];
-            masterKey = potentialKeys.find(k => !k.startsWith('G-') && /[a-zA-Z]/.test(k) && /[0-9]/.test(k));
-        }
+        const masterKey = iframeMatch ? iframeMatch[1] : null;
 
         if (!masterKey) {
-            console.error("[HATA] Bu dizi için Titan anahtarı bulunamadı.");
+            console.error("[TITAN] Anahtar bulunamadı.");
             return [];
         }
 
-        // 3. ADIM: Bulduğumuz anahtarı senin o "çalışan" sistemine sokalım
+        // 3. ADIM: Bulunan anahtarla Videopark'a bağlan
         const playerUrl = `https://videopark.top/titan/w/${masterKey}`;
-        console.error(`[TITAN] Otomatik Anahtar Bulundu (${masterKey}). Bağlanılıyor...`);
-
         const response = await fetch(playerUrl, {
             headers: {
                 'Referer': 'https://jetfilmizle.net/',
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
             }
         });
         
         const playerHtml = await response.text();
 
-        // 4. ADIM: Senin yöntemle _sd veya _data objesini çek (Bölüm eşleme dahil)
-        // Eğer çoklu bölüm varsa _data, tek bölümlük bir yapıysa _sd kullanılır
+        // 4. ADIM: Veriyi (Bölüm listesi veya tekil sd) ayıkla
         const dataMatch = playerHtml.match(/var\s+_(?:data|sd)\s*=\s*({[\s\S]*?});/);
         
         if (dataMatch) {
-            const parsedData = JSON.parse(dataMatch[1]);
+            const parsed = JSON.parse(dataMatch[1]);
             
-            // Eğer _data (bölüm listesi) geldiyse, istediğimiz bölüme zıplayalım
-            const episodeKey = `${season}-${episode}`;
-            const targetData = parsedData[episodeKey] || parsedData; // Eğer liste değilse direkt objeyi al
-
-            const streamUrl = targetData.stream_url || targetData.file;
+            // Bölüm seçimi (Örn: 1-1)
+            const target = parsed[`${season}-${episode}`] || parsed;
+            const streamUrl = target.stream_url || target.file;
 
             if (streamUrl) {
-                console.error(`[TITAN-BAŞARILI] Akış Yakalandı: ${streamUrl}`);
-                
                 return [{
-                    name: `Videopark (S${season}E${episode})`,
+                    name: "Videopark (Auto-Titan)",
                     url: streamUrl,
                     type: "hls",
-                    subtitles: targetData.subtitles ? targetData.subtitles.map(s => ({
+                    subtitles: target.subtitles ? target.subtitles.map(s => ({
                         url: s.file, language: s.label, format: "vtt"
                     })) : [],
                     headers: {
@@ -80,11 +60,17 @@ async function getStreams(id, mediaType, season, episode) {
             }
         }
 
-        console.error("[TITAN-HATA] Video verisi ayıklanamadı.");
         return [];
 
     } catch (err) {
-        console.error(`[TITAN-KRITIK] Hata: ${err.message}`);
+        console.error(`[TITAN-HATA] ${err.message}`);
         return [];
     }
+}
+
+// --- KRİTİK NOKTA: EXPORTS HATASINI ÇÖZEN KISIM ---
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = { getStreams };
+} else {
+    globalThis.getStreams = getStreams;
 }
