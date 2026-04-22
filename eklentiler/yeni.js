@@ -1,14 +1,10 @@
 /**
- * JetFilmizle — Nuvio Provider (Titan-Hunter)
+ * JetFilmizle - Videopark "Titan" Full Debug Edition
+ * Tüm aşamalar console.error ile loglanır.
  */
 
-var BASE_URL     = 'https://jetfilmizle.net';
+var BASE_URL = 'https://jetfilmizle.net';
 var TMDB_API_KEY = '500330721680edb6d5f7f12ba7cd9023';
-
-var HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36',
-    'Referer': BASE_URL + '/'
-};
 
 function titleToSlug(t) {
     return (t || '').toLowerCase().trim()
@@ -18,89 +14,89 @@ function titleToSlug(t) {
 }
 
 async function getStreams(id, mediaType, season, episode) {
-    console.error('[JetFilm-Debug] Titan-Hunter Devrede: S' + season + ' E' + episode);
-    
-    try {
-        var tmdbId = id.toString().replace(/[^0-9]/g, '');
-        var type = (mediaType === 'tv') ? 'tv' : 'movie';
+    console.error(`[DEBUG-START] İşlem Başladı: ID=${id}, Tip=${mediaType}, S=${season}, E=${episode}`);
 
-        const tmdbRes = await fetch('https://api.themoviedb.org/3/' + type + '/' + tmdbId + '?api_key=' + TMDB_API_KEY + '&language=tr-TR');
+    try {
+        // 1. TMDB Aşaması
+        const tmdbUrl = `https://api.themoviedb.org/3/${mediaType === 'tv' ? 'tv' : 'movie'}/${id}?api_key=${TMDB_API_KEY}&language=tr-TR`;
+        console.error(`[DEBUG-TMDB] İstek Atılıyor: ${tmdbUrl}`);
+        
+        const tmdbRes = await fetch(tmdbUrl);
         const info = await tmdbRes.json();
         const slug = titleToSlug(info.name || info.title);
-        const finalUrl = BASE_URL + '/' + (mediaType === 'tv' ? 'dizi' : 'film') + '/' + slug;
-
-        const pageRes = await fetch(finalUrl, { headers: HEADERS });
-        const html = await pageRes.text();
         
-        var streams = [];
+        // 2. JetFilmizle Sayfa Aşaması
+        const pagePath = (mediaType === 'tv') ? `dizi/${slug}/${season}-sezon-${episode}-bolum` : `film/${slug}`;
+        const finalUrl = `${BASE_URL}/${pagePath}`;
+        console.error(`[DEBUG-PAGE] JetFilm Sayfasına Gidiliyor: ${finalUrl}`);
 
-        // 1. ADIM: Sayfadaki tüm scriptleri ve değişkenleri süpür
-        // Jetfilm linkleri bazen 'var video_sources = [...]' içinde şifreli tutar.
-        const sourcePatterns = [
-            /["']?file["']?\s*:\s*["']([^"']+)["']/gi,
-            /["']?link["']?\s*:\s*["']([^"']+)["']/gi,
-            /["']?source["']?\s*:\s*["']([^"']+)["']/gi
-        ];
+        const pageRes = await fetch(finalUrl, { 
+            headers: { 'Referer': BASE_URL, 'User-Agent': 'Mozilla/5.0' } 
+        });
+        const pageHtml = await pageRes.text();
+        console.error(`[DEBUG-HTML] Sayfa indirildi, karakter uzunluğu: ${pageHtml.length}`);
 
-        sourcePatterns.forEach(pattern => {
-            let m;
-            while ((m = pattern.exec(html)) !== null) {
-                let u = m[1].replace(/\\/g, '');
-                if ((u.includes('titan') || u.includes('jetv') || u.includes('vcdn')) && !u.includes('youtube')) {
-                    if (!streams.some(s => s.url === u)) {
-                        streams.push({ name: "JetFilmizle", title: "⌜ Titan HD ⌟", url: u.startsWith('//') ? 'https:' + u : u, type: "embed" });
-                    }
-                }
+        // 3. Hash Yakalama Aşaması
+        const hashMatch = pageHtml.match(/videopark\.top\/titan\/w\/([a-zA-Z0-9_-]+)/);
+        let playerHash = "DFADXFgPDU4"; // Senin çalışan sabit kodun (fallback)
+
+        if (hashMatch) {
+            playerHash = hashMatch[1];
+            console.error(`[DEBUG-HASH] Sayfadan Yeni Hash Yakalandı: ${playerHash}`);
+        } else {
+            console.error(`[DEBUG-HASH] Sayfada hash bulunamadı, SABİT KOD kullanılıyor: ${playerHash}`);
+        }
+
+        // 4. Videopark / Titan Aşaması
+        const playerUrl = `https://videopark.top/titan/w/${playerHash}`;
+        console.error(`[DEBUG-PLAYER] Videopark API'ye Gidiliyor: ${playerUrl}`);
+
+        const response = await fetch(playerUrl, {
+            headers: {
+                'Referer': 'https://jetfilmizle.net/',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
             }
         });
+        
+        const html = await response.text();
+        console.error(`[DEBUG-PLAYER-HTML] Player içeriği alındı.`);
 
-        // 2. ADIM: Titan Player'ın bilinen API yapısını "Force" et
-        // Bazı Jetfilm versiyonları /p/ veya /v/ klasörünü kullanır.
-        var postIDM = html.match(/post_id\s*:\s*(\d+)/) || html.match(/id="film_id" value="(\d+)"/);
-        if (postIDM && streams.length === 0) {
-            let pid = postIDM[1];
-            console.error('[JetFilm-Debug] Post ID ile Manuel Tarama: ' + pid);
-            
-            // Jetfilm'in kullandığı muhtemel player endpointleri
-            const possibleEndpoints = [
-                `${BASE_URL}/wp-json/titan/v1/get-source?id=${pid}&s=${season}&e=${episode}`,
-                `${BASE_URL}/player/index.php?id=${pid}&s=${season}&e=${episode}`
-            ];
+        // 5. _sd Objesi ve Stream URL Aşaması
+        const sdMatch = html.match(/var\s+_sd\s*=\s*({[\s\S]*?});/);
+        
+        if (sdMatch) {
+            console.error(`[DEBUG-JSON] _sd objesi metin olarak yakalandı.`);
+            const data = JSON.parse(sdMatch[1]);
+            const streamUrl = data.stream_url;
 
-            for (let endpoint of possibleEndpoints) {
-                try {
-                    const res = await fetch(endpoint, { headers: HEADERS });
-                    if (res.status === 200) {
-                        const txt = await res.text();
-                        if (txt.includes('http')) {
-                             streams.push({ name: "JetFilmizle", title: "⌜ API Kaynağı ⌟", url: endpoint, type: "embed" });
-                        }
-                    }
-                } catch(e) {}
-            }
-        }
+            console.error(`[DEBUG-SUCCESS] ASIL YAYIN URL: ${streamUrl}`);
 
-        // 3. ADIM: Son Çare - Tüm URL'leri filtrele
-        if (streams.length === 0) {
-            const allUrls = html.match(/(?:https?:)?\/\/[^\s"'<>]+/gi) || [];
-            allUrls.forEach(u => {
-                if (/titan|jetv|videopark|d2rs/i.test(u) && !u.includes('google') && !u.includes('youtube')) {
-                    let clean = u.replace(/\\/g, '').split(/[\\"']/)[0];
-                    if (!streams.some(s => s.url === clean)) {
-                        streams.push({ name: "JetFilmizle", title: "⌜ Otomatik ⌟", url: clean, type: "embed" });
-                    }
+            const subtitles = data.subtitles ? data.subtitles.map(s => {
+                console.error(`[DEBUG-SUB] Altyazı Bulundu: ${s.label} -> ${s.file}`);
+                return { url: s.file, language: s.label, format: "vtt" };
+            }) : [];
+
+            return [{
+                name: "Videopark (Titan-Worker)",
+                url: streamUrl,
+                type: "hls",
+                subtitles: subtitles,
+                headers: {
+                    'Referer': 'https://videopark.top/',
+                    'Origin': 'https://videopark.top',
+                    'User-Agent': 'Mozilla/5.0'
                 }
-            });
+            }];
         }
 
-        console.error('[JetFilm-Debug] Hunter Sonuç: ' + streams.length);
-        return streams;
+        console.error("[DEBUG-FAIL] _sd objesi bulunamadı! Sayfa yapısı değişmiş veya IP engellenmiş olabilir.");
+        return [];
 
     } catch (err) {
-        console.error('[JetFilm-Debug] HATA: ' + err.message);
+        console.error(`[DEBUG-CRITICAL] KRİTİK HATA: ${err.message}`);
         return [];
     }
 }
 
-if (typeof module !== 'undefined' && module.exports) { module.exports = { getStreams: getStreams }; }
-if (typeof globalThis !== 'undefined') { globalThis.getStreams = getStreams; }
+if (typeof module !== 'undefined') module.exports = { getStreams };
+else globalThis.getStreams = getStreams;
