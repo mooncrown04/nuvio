@@ -1,5 +1,5 @@
 /**
- * JetFilmizle — Nuvio Provider (Fixed Export & Pure URL)
+ * JetFilmizle — Nuvio Provider (Dizi AJAX Çözümü)
  */
 
 var BASE_URL     = 'https://jetfilmizle.net';
@@ -25,7 +25,6 @@ function getStreams(id, mediaType, season, episode) {
         .then(function(r) { return r.json(); })
         .then(function(info) {
             var originalTitle = info.name || info.title;
-            console.error('[JetFilm-Debug] Aranan: ' + originalTitle);
             
             return fetch(BASE_URL + '/filmara.php', {
                 method: 'POST',
@@ -37,32 +36,48 @@ function getStreams(id, mediaType, season, episode) {
                 var regex = new RegExp('href="(https?://jetfilmizle\\.net/(film|dizi)/([^"/]+))"', 'i');
                 var m = regex.exec(searchHtml);
                 
-                var finalUrl = '';
-                if (m) {
-                    // ARTIK HİÇBİR EKLEME YAPMIYORUZ - TERTEMİZ URL
-                    finalUrl = m[1]; 
-                } else {
-                    var fallbackSlug = titleToSlug(originalTitle);
-                    finalUrl = BASE_URL + '/' + (mediaType === 'tv' ? 'dizi' : 'film') + '/' + fallbackSlug;
-                }
-
-                console.error('[JetFilm-Debug] Gidilen URL: ' + finalUrl);
+                var finalUrl = m ? m[1] : (BASE_URL + '/' + (mediaType === 'tv' ? 'dizi' : 'film') + '/' + titleToSlug(originalTitle));
                 return fetch(finalUrl, { headers: HEADERS });
             });
         })
         .then(function(r) { return r.text(); })
         .then(function(html) {
-            if (html.indexOf('Sayfa Bulunamadı') !== -1 || html.length < 500) {
-                return [];
+            var streams = [];
+            var filmIdM = html.match(/name="film_id" value="(\d+)"/);
+            
+            // DİZİ İSE AJAX İLE KAYNAK ÇEK
+            if (mediaType === 'tv' && filmIdM) {
+                var filmId = filmIdM[1];
+                var ajaxUrl = BASE_URL + '/wp-admin/admin-ajax.php';
+                var body = 'action=get_player_source&film_id=' + filmId + 
+                           '&season=' + (season || 1) + 
+                           '&episode=' + (episode || 1) + 
+                           '&type=dublaj'; // Veya altyazı
+
+                return fetch(ajaxUrl, {
+                    method: 'POST',
+                    headers: Object.assign({}, HEADERS, { 'Content-Type': 'application/x-www-form-urlencoded' }),
+                    body: body
+                })
+                .then(function(res) { return res.json(); })
+                .then(function(json) {
+                    if (json && json.data && json.data.video_url) {
+                        streams.push({
+                            name: "JetFilmizle",
+                            title: '⌜ Titan Player ⌟ | 🇹🇷 Dublaj',
+                            url: json.data.video_url,
+                            type: 'embed'
+                        });
+                    }
+                    return streams;
+                });
             }
 
-            var streams = [];
+            // FİLM İSE NORMAL SCAN YAP (Senin çalışan mantığın)
             var dil = (html.indexOf('dublaj') !== -1) ? "Dublaj" : "Altyazı";
-
-            // 1. Iframe/Titan Yakala
-            var iframeRe = /<iframe[^>]+src="([^"]+)"/gi;
+            var videoRe = /(?:iframe[^>]+src|data-src|data-link)="([^"]+)"/gi;
             var m;
-            while ((m = iframeRe.exec(html)) !== null) {
+            while ((m = videoRe.exec(html)) !== null) {
                 var src = m[1];
                 if (src.indexOf('jetv') !== -1 || src.indexOf('d2rs') !== -1 || src.indexOf('videopark') !== -1) {
                     streams.push({
@@ -74,7 +89,6 @@ function getStreams(id, mediaType, season, episode) {
                 }
             }
 
-            // 2. Pixeldrain Yakala
             var pdRe = /href="(https?:\/\/pixeldrain\.com\/u\/([^"]+))"/g;
             while ((m = pdRe.exec(html)) !== null) {
                 streams.push({
@@ -89,15 +103,9 @@ function getStreams(id, mediaType, season, episode) {
             return streams;
         })
         .catch(function(e) {
-            console.error('[JetFilm-Error]: ' + e.message);
             return [];
         });
 }
 
-// BU KISIM ÇOK ÖNEMLİ: Hatanın sebebi bu satırlardı.
-if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { getStreams: getStreams };
-}
-if (typeof globalThis !== 'undefined') {
-    globalThis.getStreams = getStreams;
-}
+if (typeof module !== 'undefined' && module.exports) { module.exports = { getStreams: getStreams }; }
+if (typeof globalThis !== 'undefined') { globalThis.getStreams = getStreams; }
