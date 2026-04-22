@@ -1,92 +1,66 @@
-/**
- * JetFilmizle - Videopark "Titan" MoOnCrOwN V34
- * Dinamik Sezon/Bölüm Takibi ve Titan Hash Avcısı
- */
+var TMDB_API_KEY = '500330721680edb6d5f7f12ba7cd9023';
+var VERSION      = "9.0.0-ONLY-MIXDROP";
 
-async function getStreams(id, mediaType, season, episode) {
-    const BASE_URL = "https://jetfilmizle.net";
-    const TMDB_API = "https://api.themoviedb.org/3";
-    const API_KEY  = "500330721680edb6d5f7f12ba7cd9023";
-
+async function getStreams(tmdbId, mediaType, season, episode) {
     try {
-        // 1. TMDB'den doğru ismi alıp slug yapıyoruz
-        const type = (mediaType === 'tv') ? 'tv' : 'movie';
-        const tmdbRes = await fetch(`${TMDB_API}/${type}/${id}?api_key=${API_KEY}&language=tr-TR`);
-        const info = await tmdbRes.json();
-        const title = info.name || info.title;
+        // 1. TMDB Verisini Çek
+        const typePath = (mediaType === 'movie') ? 'movie' : 'tv';
+        const tmdbUrl = `https://api.themoviedb.org/3/${typePath}/${tmdbId}?api_key=${TMDB_API_KEY}&language=tr-TR&append_to_response=external_ids`;
         
-        const slug = title.toLowerCase()
-            .replace(/ğ/g,'g').replace(/ü/g,'u').replace(/ş/g,'s')
-            .replace(/ı/g,'i').replace(/İ/g,'i').replace(/ö/g,'o')
-            .replace(/ç/g,'c').replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'');
-
-        // 2. O bölüme özel Jetfilm sayfa URL'sini oluşturuyoruz
-        const targetUrl = (mediaType === 'tv') 
-            ? `${BASE_URL}/dizi/${slug}/${season}-sezon-${episode}-bolum`
-            : `${BASE_URL}/film/${slug}`;
-
-        console.error(`[V34] Sayfa taranıyor: ${targetUrl}`);
-
-        const pageRes = await fetch(targetUrl, {
-            headers: { 'User-Agent': 'Mozilla/5.0 (Linux; Android 10)', 'Referer': BASE_URL + '/' }
-        });
-        const html = await pageRes.text();
-
-        // 3. KRİTİK NOKTA: Sayfa içindeki Titan Hash'ini (DFADX... gibi olanı) buluyoruz
-        const titanHashMatch = html.match(/videopark\.top\/titan\/w\/([a-zA-Z0-9_-]+)/);
+        const tmdbRes = await fetch(tmdbUrl);
+        const d = await tmdbRes.json();
         
-        if (!titanHashMatch) {
-            console.error("[V34] Titan Hash bulunamadı! Sayfa boyutu: " + html.length);
-            return [];
+        const imdbId = d.external_ids ? d.external_ids.imdb_id : null;
+        const title = d.title || d.name || "İçerik";
+        
+        if (!imdbId || !imdbId.startsWith('tt')) return [];
+
+        // 2. Formatı Belirle (Film/Dizi)
+        let suffix = "";
+        let displayTitle = title;
+
+        if (mediaType === 'movie') {
+            const releaseYear = (d.release_date || '').slice(0, 4);
+            displayTitle += releaseYear ? ` (${releaseYear})` : "";
+        } else {
+            let sStr = "s" + season;
+            let eStr = "e" + (episode < 10 ? "0" + episode : episode);
+            suffix = `/${sStr}/${eStr}`;
+            displayTitle += ` - ${sStr.toUpperCase()}${eStr.toUpperCase()}`;
         }
 
-        const foundHash = titanHashMatch[1]; // O bölüme özel hash artık elimizde
-        const playerUrl = `https://videopark.top/titan/w/${foundHash}`;
+        // 3. SADECE MIXDROP KONTROLÜ
+        // Genellikle vidmody.com/mx/tt... veya vidmody.com/mix/tt... kullanılır
+        const mixdropUrl = `https://vidmody.com/mx/${imdbId}${suffix}`;
 
-        console.error(`[V34] Dinamik Link Üretildi: ${playerUrl}`);
-
-        // 4. Senin verdiğin Bypass mantığı başlıyor
-        const response = await fetch(playerUrl, {
-            headers: {
-                'Referer': 'https://jetfilmizle.net/',
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
+        try {
+            const checkRes = await fetch(mixdropUrl, { 
+                method: 'HEAD',
+                headers: { 'Referer': 'https://vidmody.com/' }
+            });
+            
+            if (checkRes.status === 200) {
+                return [{
+                    url: mixdropUrl,
+                    name: "Mixdrop", // Uygulama ekranında görünecek isim
+                    title: displayTitle,
+                    quality: "1080p",
+                    headers: {
+                        'Referer': 'https://vidmody.com/',
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36'
+                    }
+                }];
             }
-        });
-        
-        const playerHtml = await response.text();
-        const sdMatch = playerHtml.match(/var\s+_sd\s*=\s*({[\s\S]*?});/);
-        
-        if (sdMatch) {
-            const data = JSON.parse(sdMatch[1]);
-            const streamUrl = data.stream_url;
-
-            const subtitles = data.subtitles ? data.subtitles.map(s => ({
-                url: s.file,
-                language: s.label,
-                format: "vtt"
-            })) : [];
-
-            return [{
-                name: "JetFilmizle (Titan)",
-                title: `⌜ MoOnCrOwN ⌟ | S${season} E${episode}`,
-                url: streamUrl,
-                type: "hls",
-                subtitles: subtitles,
-                headers: {
-                    'Referer': 'https://videopark.top/',
-                    'User-Agent': 'Mozilla/5.0'
-                }
-            }];
+        } catch (err) {
+            console.log("Mixdrop linki bulunamadı veya erişilemedi.");
         }
 
-        return [];
+        return []; // Hiçbir şey bulunamazsa boş liste dön
 
-    } catch (err) {
-        console.error(`[V34-HATA] ${err.message}`);
+    } catch (e) {
+        console.error(`[V${VERSION}] HATA: ${e.message}`);
         return [];
     }
 }
 
-// Nuvio/Cloudstream Export
 if (typeof module !== 'undefined') module.exports = { getStreams };
-else globalThis.getStreams = getStreams;
