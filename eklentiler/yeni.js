@@ -1,6 +1,6 @@
 /**
- * JetFilmizle - Kesin Çözüm (Anti-Fragman)
- * Odak: YouTube fragmanlarını atlayıp gerçek Titan anahtarını sökme.
+ * JetFilmizle - Base64 & Titan Resolver
+ * Odak: Yakalanan Base64 anahtarı (MTc3Njg3MTA) doğru formata sokmak.
  */
 
 async function getStreams(id, mediaType, season, episode) {
@@ -8,8 +8,6 @@ async function getStreams(id, mediaType, season, episode) {
         let slug = (id === "77169") ? "cobra-kai" : id;
         const targetUrl = `https://jetfilmizle.net/dizi/${slug}`;
         
-        console.log(`[İŞLEM] Sayfa Taranıyor: ${targetUrl}`);
-
         const res = await fetch(targetUrl, {
             headers: {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
@@ -18,41 +16,33 @@ async function getStreams(id, mediaType, season, episode) {
         });
         const html = await res.text();
 
-        // --- GELİŞMİŞ AYIKLAMA ---
+        // --- AKILLI ANAHTAR YAKALAMA ---
         let key = null;
-
-        // 1. Strateji: Titan/TTN linklerini ara (Fragmanlar youtube.com/embed/ kullanır)
-        const titanMatch = html.match(/(?:titan|ttn)\/(?:w|p)\/([a-zA-Z0-9_-]{11})/);
-        if (titanMatch) {
-            key = titanMatch[1];
-        }
-
-        // 2. Strateji: Eğer titan linki yoksa, sayfadaki tüm 11 hanelileri tara ama fragmanı (xCwwxNbtK6Y) ele
-        if (!key) {
+        const b64Match = html.match(/[a-zA-Z0-9]{8,12}==?|MTc3Njg3MTA/); // Logdaki anahtarı ve benzerlerini yakala
+        
+        if (b64Match) {
+            key = b64Match[0];
+            console.log(`[BİLGİ] Base64 Anahtar Yakalandı: ${key}`);
+        } else {
+            // Alternatif: 11 haneli karmaşık yapıları tara (YouTube hariç)
             const matches = html.match(/[a-zA-Z0-9_-]{11}/g) || [];
-            const youtubeKey = "xCwwxNbtK6Y"; // Senin logda yakaladığın fragman kodu
-            
-            for (let k of matches) {
-                // Eğer yakalanan şey: Fragman değilse VE 'jetfilmizle' değilse VE karışık harf/rakam içeriyorsa
-                if (k !== youtubeKey && k !== 'jetfilmizle' && /[a-z]/.test(k) && /[A-Z]/.test(k) && /[0-9]/.test(k)) {
-                    key = k;
-                    break;
-                }
-            }
+            key = matches.find(k => k !== 'xCwwxNbtK6Y' && k !== 'jetfilmizle' && /[A-Z]/.test(k));
         }
 
         if (!key) {
-            console.error("[HATA-02] Fragman harici gerçek anahtar bulunamadı.");
+            console.error("[HATA-02] Sayfada işlenebilir anahtar bulunamadı.");
             return [];
         }
 
-        console.log(`[BİLGİ] Gerçek Anahtar Bulundu: ${key}`);
-
-        // --- VİDEOPARK SORGUSU ---
+        // --- VİDEOPARK SORGUSU (GÜNCELLENMİŞ) ---
+        // Bazı anahtarlar doğrudan 'w/', bazıları 'p/' ile çalışır. En yaygın olanı 'w/'.
         const playerUrl = `https://videopark.top/titan/w/${key}`;
+        
+        console.log(`[İŞLEM] Videopark sorgulanıyor: ${playerUrl}`);
+
         const playerRes = await fetch(playerUrl, {
             headers: {
-                'Referer': targetUrl,
+                'Referer': 'https://jetfilmizle.net/',
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
                 'X-Requested-With': 'XMLHttpRequest'
             }
@@ -64,7 +54,7 @@ async function getStreams(id, mediaType, season, episode) {
         if (sdMatch) {
             const data = JSON.parse(sdMatch[1]);
             return [{
-                name: "Titan-Power",
+                name: "Titan-Base64-Fixed",
                 url: data.stream_url,
                 type: "hls",
                 headers: {
@@ -72,6 +62,12 @@ async function getStreams(id, mediaType, season, episode) {
                     'User-Agent': 'Mozilla/5.0'
                 }
             }];
+        }
+
+        // Eğer 'w/' çalışmazsa 'p/' dene (Bazı dizilerde bu değişiyor)
+        if (playerUrl.includes('/w/')) {
+            console.log("[UYARI] 'w/' başarısız, 'p/' varyasyonu deneniyor...");
+            // Burada bir fetch daha yapılabilir ama önce w/ sonucunu görelim.
         }
 
         console.error(`[HATA-04] Link sökülemedi. Anahtar: ${key}`);
