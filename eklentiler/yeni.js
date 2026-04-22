@@ -1,79 +1,96 @@
 /**
- * JetFilmizle - Titan Final Resolver
- * Odak: HATA-04 (Videopark Veri Çekme Sorunu)
+ * JetFilmizle - Ultra Resolver
+ * Odak: HATA-02 (Cımbızın kaçırdığı gizli anahtarlar)
  */
 
 async function getStreams(id, mediaType, season, episode) {
     try {
-        // Uygulamanın gönderdiği 77169'u cobra-kai'ye çeviriyoruz
+        // ID 77169 ise cobra-kai yap, değilse id'yi olduğu gibi kullan
         let slug = (id === "77169") ? "cobra-kai" : id;
+        
+        // Uygulamanın bizi getirdiği o meşhur anahtar sayfası
         const targetUrl = `https://jetfilmizle.net/dizi/${slug}`;
         
-        const headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Referer': 'https://jetfilmizle.net/'
-        };
+        console.log(`[İŞLEM] Hedef sayfa kazınıyor: ${targetUrl}`);
 
-        // 1. ADIM: Ana Sayfadan Anahtarı Al
-        const res = await fetch(targetUrl, { headers });
+        const res = await fetch(targetUrl, {
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+                'Referer': 'https://jetfilmizle.net/',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8'
+            }
+        });
+
         const html = await res.text();
 
-        // Her türlü varyasyonu yakalayan cımbız
-        const keyMatch = html.match(/(?:titan|ttn)\/(?:w|p)\/([a-zA-Z0-9_-]{11})/);
-        if (!keyMatch) {
-            console.error("[HATA-02] Anahtar bulunamadı.");
+        // --- ULTRA AGRESİF CIMBIZ (REGEX) ---
+        // 1. Klasik titan/w/ veya ttn/w/
+        // 2. data-id, data-key veya player-id içindeki 11 haneler
+        // 3. Iframe src içindeki 11 haneler
+        const patterns = [
+            /(?:titan|ttn)\/(?:w|p)\/([a-zA-Z0-9_-]{11})/,
+            /["'](?:id|key|data-id|data-film-id)["']\s*[:=]\s*["']([a-zA-Z0-9_-]{11})["']/,
+            /\/([a-zA-Z0-9_-]{11})(?:["']|\?|&)/
+        ];
+
+        let key = null;
+        for (let pattern of patterns) {
+            const match = html.match(pattern);
+            if (match) {
+                key = match[1];
+                break; 
+            }
+        }
+
+        if (!key) {
+            // Eğer hala bulunamadıysa, sayfa içeriğinin ilk 100 karakterini logla (Bot engeli var mı bakmak için)
+            console.error(`[HATA-02] Anahtar yok. Sayfa başı: ${html.substring(0, 100).replace(/\n/g, '')}`);
             return [];
         }
-        const key = keyMatch[1];
-        console.log(`[BİLGİ] Anahtar Yakalandı: ${key}`);
 
-        // 2. ADIM: Videopark'tan Veriyi Söküp Al (HATA-04 Çözümü)
-        // Burada 'Referer' hayati önem taşıyor, eksik olursa _sd gelmez.
+        console.log(`[BİLGİ] Anahtar ele geçirildi: ${key}`);
+
+        // --- VİDEOPARK SORGUSU ---
         const playerUrl = `https://videopark.top/titan/w/${key}`;
         const playerRes = await fetch(playerUrl, {
             headers: {
-                'User-Agent': headers['User-Agent'],
-                'Referer': targetUrl, // Jetfilmizle'den geliyormuş gibi yapıyoruz
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+                'Referer': targetUrl,
                 'X-Requested-With': 'XMLHttpRequest'
             }
         });
 
         const playerHtml = await playerRes.text();
-
-        // _sd verisini ayıkla (Boşluklara ve farklı yazımlara duyarlı regex)
-        const sdMatch = playerHtml.match(/var\s+_sd\s*=\s*({[\s\S]*?});/);
         
-        if (!sdMatch) {
-            // Eğer _sd yoksa, alternatif olarak sayfa içindeki m3u8 linkini arayalım
-            const backupMatch = playerHtml.match(/["'](http[^"']+\.m3u8[^"']*)["']/);
-            if (backupMatch) {
-                console.log("[BAŞARILI] Alternatif link yakalandı.");
-                return [{ name: "Titan-Direct", url: backupMatch[1], type: "hls" }];
-            }
-            console.error("[HATA-04] Videopark veriyi gizledi veya Referer reddedildi.");
+        // _sd objesini veya doğrudan m3u8 linkini ara
+        const sdMatch = playerHtml.match(/var\s+_sd\s*=\s*({[\s\S]*?});/);
+        const directM3u8 = playerHtml.match(/["'](http[^"']+\.m3u8[^"']*)["']/);
+
+        let finalUrl = null;
+        if (sdMatch) {
+            const data = JSON.parse(sdMatch[1]);
+            finalUrl = data.stream_url;
+        } else if (directM3u8) {
+            finalUrl = directM3u8[1];
+        }
+
+        if (!finalUrl) {
+            console.error("[HATA-04] Oynatıcıdan link sökülemedi.");
             return [];
         }
 
-        const data = JSON.parse(sdMatch[1]);
-
-        if (!data.stream_url) {
-            console.error("[HATA-05] Veri var ama link boş.");
-            return [];
-        }
-
-        console.log("[TAMAMLANDI] Video hazır!");
         return [{
-            name: "Titan-PRO",
-            url: data.stream_url,
+            name: "Titan-Ultra",
+            url: finalUrl,
             type: "hls",
             headers: {
                 'Referer': 'https://videopark.top/',
-                'User-Agent': headers['User-Agent']
+                'User-Agent': 'Mozilla/5.0'
             }
         }];
 
     } catch (e) {
-        console.error(`[KRİTİK] ${e.message}`);
+        console.error(`[KRİTİK] Sistem hatası: ${e.message}`);
         return [];
     }
 }
