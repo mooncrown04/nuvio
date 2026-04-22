@@ -1,6 +1,6 @@
 /**
- * JetFilmizle - Nuvio Ultra (v31 Worker Bridge)
- * Videopark ID'lerini ExoPlayer'ın anlayacağı HLS (.m3u8) formatına çevirir.
+ * JetFilmizle - Nuvio Ultra (v32 Precise Striker)
+ * Sayfadaki çöpleri (CSS, JS fonksiyonları) eler, sadece gerçek Titan ID'lerini hedefler.
  */
 
 var BASE_URL = 'https://jetfilmizle.net';
@@ -19,23 +19,37 @@ async function getStreams(id, mediaType, season, episode) {
             ? `${BASE_URL}/dizi/${slug}/sezon-${season}/bolum-${episode}`
             : `${BASE_URL}/film/${slug}`;
 
-        // 1. Sayfaya git ve asıl "Worker ID"yi (DFADX...) ara
         const pageRes = await fetch(targetUrl, { headers: { 'User-Agent': 'Mozilla/5.0' } });
         const html = await pageRes.text();
 
-        // Regex'i senin verdiğin Cobra Kai örneğine (DFADX) göre özelleştirdim
-        const workerRegex = /(DFADX[a-zA-Z0-9_-]+|[a-zA-Z0-9_-]{11})/g;
-        let workerIds = [...new Set(html.match(workerRegex) || [])];
+        // KRİTİK DEĞİŞİKLİK: Sadece DFADX ile başlayan ve sadece harf/rakam içerenleri al (Alt çizgi veya küçük harf içermezse daha temiz olur)
+        // Jetfilm'in asıl ID formatı genelde: DFADX + 6-10 karakter Büyük Harf/Rakam
+        const workerRegex = /DFADX[A-Z0-9]{5,15}/g; 
+        let rawIds = html.match(workerRegex) || [];
+        
+        // Eğer DFADX bulamazsa, 11 haneli karmaşık ID'leri ara (Ama çok seçici ol)
+        if (rawIds.length === 0) {
+            const backupRegex = /["']([a-zA-Z0-9]{11})["']/g;
+            let m;
+            while ((m = backupRegex.exec(html)) !== null) {
+                // Küçük harf içeren fonksiyon isimlerini elemek için:
+                if (!/^[a-z]+$/.test(m[1]) && !m[1].includes('search')) {
+                    rawIds.push(m[1]);
+                }
+            }
+        }
+
+        let workerIds = [...new Set(rawIds)];
+        console.error(`[STRIKER] Temizlenmiş Aday Sayısı: ${workerIds.length}`);
 
         let streams = [];
 
-        // 2. Bulunan her bir Worker ID için ExoPlayer köprüsü kur
         for (let wId of workerIds) {
-            // Analiz kodlarını ve gereksizleri ele
-            if (wId.length < 11 || wId.startsWith('G-')) continue;
+            // "getCSRF", "querySelect" gibi kelimeleri burada eliyoruz
+            if (wId.length < 10 || /^[a-z_]+$/.test(wId)) continue;
 
             const workerUrl = `https://videopark.top/titan/w/${wId}`;
-            console.error(`[WORKER] Exo Bridge Kuruluyor: ${workerUrl}`);
+            console.error(`[STRIKER] Hedef: ${workerUrl}`);
 
             try {
                 const wRes = await fetch(workerUrl, { 
@@ -43,33 +57,20 @@ async function getStreams(id, mediaType, season, episode) {
                 });
                 const wHtml = await wRes.text();
 
-                // ASIL MESELE: videopark sayfasındaki _sd değişkenini yakalamak
                 const sdMatch = wHtml.match(/var\s+_sd\s*=\s*({[\s\S]*?});/);
                 if (sdMatch) {
                     const data = JSON.parse(sdMatch[1]);
                     if (data.stream_url) {
                         streams.push({
-                            name: "Jet-Worker (Exo)",
-                            title: `⌜ Kaynak: ${wId.substring(0,5)} ⌟`,
-                            url: data.stream_url, // Bu artık .m3u8 veya Exo'nun açacağı direkt linktir
+                            name: "Jet-Exo",
+                            url: data.stream_url,
                             type: "hls",
-                            headers: { 
-                                'Referer': 'https://videopark.top/',
-                                'User-Agent': 'Mozilla/5.0'
-                            }
+                            headers: { 'Referer': 'https://videopark.top/' }
                         });
+                        if (streams.length >= 2) break;
                     }
                 }
-            } catch (e) { console.error(`[WORKER-ERR] ${e.message}`); }
-        }
-
-        // Eğer Worker bulunamazsa direkt link ara (Bazı filmlerde direkt gelir)
-        if (streams.length === 0) {
-            const sdDirect = html.match(/var\s+_sd\s*=\s*({[\s\S]*?});/);
-            if (sdDirect) {
-                const d = JSON.parse(sdDirect[1]);
-                streams.push({ name: "Jet-Direct", url: d.stream_url, type: "hls" });
-            }
+            } catch (e) {}
         }
 
         return streams;
