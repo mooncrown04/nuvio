@@ -1,6 +1,7 @@
 /**
- * JetFilmizle - Nuvio Ultra (v50 Decoded Truth)
- * Yakalanan Base64 (MTc3Njg1MzE2 vb.) veriyi işler.
+ * JetFilmizle - Nuvio Ultra (v51 Clean Evidence)
+ * Reklam servislerini (google, yandex vb.) eler.
+ * Sadece 11-12 haneli gerçek Titan kodlarına odaklanır.
  */
 
 var BASE_URL = 'https://jetfilmizle.net';
@@ -19,44 +20,41 @@ async function getStreams(id, mediaType, season, episode) {
         const pageRes = await fetch(targetUrl, { headers: { 'User-Agent': 'Mozilla/5.0' } });
         const html = await pageRes.text();
 
-        // 1. ADIM: Loglarda yakaladığımız o meşhur Base64 formatını avla
-        // MTc3... gibi 12+ karakterli Base64 yapıları
-        const b64Pattern = /[A-Za-z0-9+/]{12,}={0,2}/g;
-        let matches = html.match(b64Pattern) || [];
+        // 1. ADIM: "GÜÇLÜ FİLTRELEME" (googletagmanager gibi hataları eliyoruz)
+        // Gerçek Titan kodları genelde büyük harf, küçük harf ve rakam karışımıdır.
+        const potentialKeys = html.match(/[a-zA-Z0-9]{11,12}/g) || [];
         
-        // Logda çıkan 'MTc3Njg1MzE2' benzeri olanı bul
-        let rawB64 = matches.find(m => m.startsWith('MTc3') || m.length > 10);
-        
-        if (!rawB64) return [];
-        console.error(`[DECODED] Ham Veri Yakalandı: ${rawB64}`);
+        let validKeys = [...new Set(potentialKeys)].filter(k => 
+            /[0-9]/.test(k) &&          // En az bir rakam içermeli
+            /[A-Z]/.test(k) &&          // En az bir BÜYÜK harf içermeli
+            !/google|tag|manager|GTM|script|window|document|active/i.test(k) // Reklam/JS kelimelerini ele
+        );
 
-        // 2. ADIM: İkili Strateji (Hem Ham hem Decode)
-        let candidates = [rawB64];
-        try {
-            let decoded = Buffer.from(rawB64, 'base64').toString('utf-8');
-            if (decoded && decoded.length > 3) candidates.push(decoded);
-        } catch(e) {}
+        console.error(`[CLEAN] Temizlenmiş Aday Sayısı: ${validKeys.length}`);
 
-        for (let wId of candidates) {
+        // 2. ADIM: Sayfanın sonundaki adaylara öncelik ver (Asıl player genelde sondadır)
+        let targets = validKeys.reverse().slice(0, 3); 
+
+        for (let wId of targets) {
             try {
-                // Videopark'ın hem titan/w hem de doğrudan embed yollarını dene
-                const testUrls = [
-                    `https://videopark.top/titan/w/${wId}`,
-                    `https://videopark.top/get_player?id=${wId}`
-                ];
+                console.error(`[CLEAN] Deneniyor: ${wId}`);
+                const response = await fetch(`https://videopark.top/titan/w/${wId}`, {
+                    headers: {
+                        'Referer': BASE_URL + '/',
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
+                    },
+                    timeout: 3000
+                });
+                
+                const playerHtml = await response.text();
 
-                for (let pUrl of testUrls) {
-                    const response = await fetch(pUrl, {
-                        headers: { 'Referer': BASE_URL + '/', 'User-Agent': 'Mozilla/5.0' },
-                        timeout: 3000
-                    });
-                    const pContent = await response.text();
-
-                    if (pContent.includes('_sd')) {
-                        const data = JSON.parse(pContent.match(/var\s+_sd\s*=\s*({[\s\S]*?});/)[1]);
-                        console.error(`[SUCCESS] Akış Çözüldü: ${wId}`);
+                if (playerHtml.includes('_sd')) {
+                    const sdMatch = playerHtml.match(/var\s+_sd\s*=\s*({[\s\S]*?});/);
+                    if (sdMatch) {
+                        const data = JSON.parse(sdMatch[1]);
+                        console.error(`[SUCCESS] Dizi Başlatıldı: ${wId}`);
                         return [{
-                            name: "Jet-Ultra (Decoded)",
+                            name: "Jet-Titan (Dizi-Clean)",
                             url: data.stream_url,
                             type: "hls",
                             subtitles: data.subtitles ? data.subtitles.map(s => ({
