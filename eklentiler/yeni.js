@@ -1,76 +1,58 @@
 /**
- * JetFilmizle - Titan Resolver
- * Odak Noktası: HATA-01 (Yanlış URL) ve HATA-02 (Yanlış Regex) düzeltmeleri.
+ * JetFilmizle - Saf Çözücü
+ * Odak: Uygulamanın bizi getirdiği sayfadan direkt anahtarı çekmek.
  */
 
 async function getStreams(id, mediaType, season, episode) {
-    // id: Artık '77169' değil, 'cobra-kai' (slug) olarak gelmeli.
-    if (mediaType !== 'tv') return [];
-
     try {
-        // --- ADIM 1: DOĞRU URL YAPISI ---
-        // URL'yi senin verdiğin örneğe göre (https://jetfilmizle.net/dizi/cobra-kai) güncelledim.
-        // Eğer her bölüm için ayrı URL gerekiyorsa 'sezon-x/bolum-x' eklenir.
-        const url = `https://jetfilmizle.net/dizi/${id}/sezon-${season}/bolum-${episode}`;
+        // --- KRİTİK: URL OLUŞTURMAYI BIRAKIYORUZ ---
+        // Uygulama seni zaten anahtarın olduğu sayfaya (Slug: cobra-kai vb.) getirdi.
+        // Bu yüzden id parametresini direkt URL'nin kendisi olarak kabul ediyoruz.
         
-        const res = await fetch(url, {
+        const targetUrl = `https://jetfilmizle.net/dizi/${id}`;
+        
+        console.log(`[İŞLEM] Uygulamanın getirdiği adresteyim: ${targetUrl}`);
+
+        const res = await fetch(targetUrl, {
             headers: { 'User-Agent': 'Mozilla/5.0' }
         });
         
         if (!res.ok) {
-            // Eğer hala bu hatayı alıyorsan id (slug) kısmında bir uyumsuzluk vardır.
-            console.error(`[HATA-01] Sayfa bulunamadı (404). Gidilen URL: ${url}`);
+            console.error(`[HATA-01] Bu sayfa açılmıyor: ${targetUrl}`);
             return [];
         }
 
         const html = await res.text();
 
-        // --- ADIM 2: ANAHTAR YAKALAMA (TITAN W) ---
-        // Cobra-kai sayfa kaynağında "titan/w/XXXXXXXXXXX" yapısını cımbızla çekiyoruz.
-        // Regex'i daha kapsayıcı hale getirdim.
+        // --- ADIM 2: ANAHTARI ÇEK ---
+        // Sayfada titan/w/ kodunu arıyoruz
         const match = html.match(/titan\/w\/([a-zA-Z0-9]{11})/);
         
         if (!match) {
-            console.error("[HATA-02] Sayfaya girildi ama 'titan/w/' kodu bulunamadı.");
+            console.error("[HATA-02] Sayfa açıldı ama içinde titan kodu yok. Kaynağı kontrol et.");
             return [];
         }
 
         const key = match[1];
-        console.log(`[BİLGİ] Anahtar Yakalandı: ${key}`);
+        console.log(`[BİLGİ] Anahtar yakalandı: ${key}`);
 
-        // --- ADIM 3: VIDEOPARK SORGUSU ---
+        // --- ADIM 3: VİDEOPARK SORGUSU ---
         const playerRes = await fetch(`https://videopark.top/titan/w/${key}`, {
-            headers: { 
-                'Referer': 'https://jetfilmizle.net/',
-                'User-Agent': 'Mozilla/5.0'
-            }
+            headers: { 'Referer': 'https://jetfilmizle.net/' }
         });
 
-        if (!playerRes.ok) {
-            console.error(`[HATA-03] Titan sunucusu yanıt vermedi. Kod: ${playerRes.status}`);
-            return [];
-        }
-
         const playerHtml = await playerRes.text();
-
-        // --- ADIM 4: _SD OBJESİNİ AYIKLAMA ---
-        // Video linkinin olduğu JSON paketini çekiyoruz.
         const sdMatch = playerHtml.match(/var\s+_sd\s*=\s*({[\s\S]*?});/);
         
         if (!sdMatch) {
-            console.error("[HATA-04] Oynatıcı açıldı ama _sd verisi bulunamadı.");
+            console.error("[HATA-04] Oynatıcı sayfasında veri yok.");
             return [];
         }
 
         const data = JSON.parse(sdMatch[1]);
-        
-        if (!data.stream_url) {
-            console.error("[HATA-05] Video linki boş döndü.");
-            return [];
-        }
 
         return [{
-            name: "Jet-Titan",
+            name: "Titan-Direkt",
             url: data.stream_url,
             type: "hls",
             headers: {
@@ -80,7 +62,7 @@ async function getStreams(id, mediaType, season, episode) {
         }];
 
     } catch (e) {
-        console.error(`[HATA-SİSTEM] Kodda teknik arıza: ${e.message}`);
+        console.error(`[HATA-SİSTEM] Teknik hata: ${e.message}`);
         return [];
     }
 }
