@@ -1,71 +1,69 @@
 /**
- * JetFilmizle - Videopark "Titan" V5 (Zero-Touch Edition)
- * Jetfilm sayfasına gitmeden direkt Titan üzerinden çözer.
+ * JetFilmizle - V7 (The ID Hunter)
+ * Sayfayı parça parça çekerek bot korumasını atlatmaya çalışır.
  */
 
-var TMDB_API_KEY = '500330721680edb6d5f7f12ba7cd9023';
+var BASE_URL = 'https://jetfilmizle.net';
 
 async function getStreams(id, mediaType, season, episode) {
-    console.error(`[DEBUG-V5] Direkt API Modu: S=${season}, E=${episode}`);
+    console.error(`[DEBUG-V7] S=${season}, E=${episode} için ID avı başladı.`);
 
     try {
-        // 1. ADIM: Senin çalışan o meşhur kodunu temel alıyoruz
-        // Bu kod bir "Container" görevi görüyor olabilir.
-        const masterHash = "DFADXFgPDU4"; 
-        const titanBase = `https://videopark.top/titan/w/${masterHash}`;
+        // 1. ADIM: Doğru slug oluşturma (Jetfilm tarzı)
+        // Not: TMDB ismini manuel temizlemek yerine alternatif URL yapılarını deneyeceğiz.
+        const slugs = ['cobra-kai']; // Burayı TMDB'den gelen isimle dinamik yapabilirsin
+        const currentSlug = slugs[0];
 
-        // 2. ADIM: Bölüm parametrelerini Titan'a enjekte etmeye çalışalım
-        // Titan Player genelde URL parametrelerini (s, e, t) dinler.
-        const targetUrl = `${titanBase}?s=${season}&e=${episode}&tmdb=${id}`;
+        // Jetfilm bazen "3-sezon-5-bolum" bazen de "3-sezon-5-bolum-izle" ister.
+        const targetUrl = `${BASE_URL}/dizi/${currentSlug}/${season}-sezon-${episode}-bolum`;
         
-        console.error(`[DEBUG-V5] Titan API Zorlanıyor: ${targetUrl}`);
+        console.error(`[DEBUG-V7] Hedef: ${targetUrl}`);
 
+        // 2. ADIM: Range Request (Bot korumasını şaşırtmak için sayfanın sadece başını istiyoruz)
         const response = await fetch(targetUrl, {
             headers: {
-                'Referer': 'https://jetfilmizle.net/', // Site üzerinden gelmiş süsü veriyoruz
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+                'Accept': 'text/html',
+                'Range': 'bytes=0-100000', // Sadece ilk 100KB'ı getir
+                'Referer': 'https://www.google.com/'
             }
         });
-        
-        const html = await response.text();
-        
-        // 3. ADIM: _sd objesi içinde gelen veriyi kontrol et
-        const sdMatch = html.match(/var\s+_sd\s*=\s*({[\s\S]*?});/);
-        
-        if (sdMatch) {
-            const data = JSON.parse(sdMatch[1]);
-            
-            // BURASI KRİTİK: Eğer data.stream_url içinde hala S1E1 geliyorsa 
-            // Titan bizi yönlendirmiyor demektir. 
-            console.error(`[DEBUG-V5] Gelen Akış: ${data.stream_url.substring(0, 60)}...`);
 
-            return [{
-                name: "Videopark (Titan-Direct)",
-                url: data.stream_url,
-                type: "hls",
-                subtitles: data.subtitles ? data.subtitles.map(s => ({ 
-                    url: s.file, 
-                    language: s.label, 
-                    format: "vtt" 
-                })) : [],
-                headers: {
-                    'Referer': 'https://videopark.top/',
-                    'Origin': 'https://videopark.top',
-                    'User-Agent': 'Mozilla/5.0'
-                }
-            }];
+        const text = await response.text();
+        console.error(`[DEBUG-V7] Alınan veri boyutu: ${text.length}`);
+
+        // 3. ADIM: KODU BULMA (En kritik yer)
+        // Sayfa içinde "videopark.top/titan/w/" ifadesinden sonra gelen 11 haneli kodu arıyoruz.
+        const regex = /videopark\.top\/titan\/w\/([a-zA-Z0-9_-]{11,20})/;
+        const match = text.match(regex);
+
+        if (match && match[1]) {
+            const realHash = match[1];
+            console.error(`[SUCCESS] GERÇEK BÖLÜM KODU BULUNDU: ${realHash}`);
+            
+            // Bulduğumuz gerçek kodla Titan'a gidiyoruz
+            const playerUrl = `https://videopark.top/titan/w/${realHash}`;
+            const playerRes = await fetch(playerUrl, { headers: { 'Referer': targetUrl } });
+            const playerHtml = await playerRes.text();
+            
+            const sdMatch = playerHtml.match(/var\s+_sd\s*=\s*({[\s\S]*?});/);
+            if (sdMatch) {
+                const data = JSON.parse(sdMatch[1]);
+                return [{
+                    name: `Jetfilm - S${season}E${episode}`,
+                    url: data.stream_url,
+                    type: "hls",
+                    headers: { 'Referer': 'https://videopark.top/', 'Origin': 'https://videopark.top' }
+                }];
+            }
+        } else {
+            console.error("[DEBUG-V7] Sayfada yeni kod bulunamadı. Hala 58361 duvarındayız.");
+            // Eğer buraya düşerse tek çare proxy kullanmak veya 
+            // Fire Stick'in dahili WebView'ı üzerinden çerezleri (cookie) alıp fetch'e eklemek.
         }
 
-        // 4. ADIM: Eğer yukarıdaki yemezse, Jetfilm'in "Player" sayfasına 
-        // bot gibi değil, bir "AJAX" isteği gibi gidelim.
-        console.error("[DEBUG-V5] API Yemedi, alternatif AJAX denenecek...");
-        return [];
-
     } catch (err) {
-        console.error(`[DEBUG-CRITICAL] V5 Hata: ${err.message}`);
-        return [];
+        console.error(`[ERROR] V7: ${err.message}`);
     }
+    return [];
 }
-
-if (typeof module !== 'undefined') module.exports = { getStreams };
-globalThis.getStreams = getStreams;
