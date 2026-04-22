@@ -1,74 +1,72 @@
 /**
- * JetFilmizle - Universal Titan Resolver (Auto-Key)
+ * JetFilmizle - Videopark "Worker Generator" Bypass
+ * Buton tetiklemesini ve Worker yönlendirmesini simüle eder.
  */
 
 async function getStreams(id, mediaType, season, episode) {
     try {
-        // 1. ADIM: Dizinin JetFilmizle sayfasına gidip anahtarı (Master Key) çekelim
+        // 1. ADIM: Dizinin ana sayfasından "Master Key"i bul
         const targetUrl = `https://jetfilmizle.net/dizi/${id}`;
-        const res = await fetch(targetUrl, {
-            headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                'Referer': 'https://jetfilmizle.net/'
-            }
+        const mainRes = await fetch(targetUrl, {
+            headers: { 'User-Agent': 'Mozilla/5.0', 'Referer': 'https://jetfilmizle.net/' }
         });
-        const html = await res.text();
+        const mainHtml = await mainRes.text();
 
-        // 2. ADIM: Sayfadaki Titan anahtarını bul (DFADXFgPDU4 gibi)
-        const iframeMatch = html.match(/videopark\.top\/titan\/w\/([a-zA-Z0-9_-]{10,15})/);
-        const masterKey = iframeMatch ? iframeMatch[1] : null;
+        const masterKeyMatch = mainHtml.match(/videopark\.top\/(?:titan|ttn)\/w\/([a-zA-Z0-9_-]{10,15})/);
+        const masterKey = masterKeyMatch ? masterKeyMatch[1] : null;
 
-        if (!masterKey) {
-            console.error("[TITAN] Anahtar bulunamadı.");
-            return [];
-        }
+        if (!masterKey) return [];
 
-        // 3. ADIM: Bulunan anahtarla Videopark'a bağlan
+        // 2. ADIM: Player sayfasına git (Butonların olduğu yer)
         const playerUrl = `https://videopark.top/titan/w/${masterKey}`;
-        const response = await fetch(playerUrl, {
-            headers: {
-                'Referer': 'https://jetfilmizle.net/',
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-            }
+        const playerRes = await fetch(playerUrl, {
+            headers: { 'Referer': targetUrl, 'User-Agent': 'Mozilla/5.0' }
         });
-        
-        const playerHtml = await response.text();
+        const playerHtml = await playerRes.text();
 
-        // 4. ADIM: Veriyi (Bölüm listesi veya tekil sd) ayıkla
-        const dataMatch = playerHtml.match(/var\s+_(?:data|sd)\s*=\s*({[\s\S]*?});/);
+        // 3. ADIM: Buton verisini (Worker linklerini) çek
+        // Videopark'ta butonlar 'var _data' veya 'var _sources' içinde worker linklerini tutar.
+        const dataMatch = playerHtml.match(/var\s+_(?:data|sd|sources)\s*=\s*({[\s\S]*?});/);
         
         if (dataMatch) {
-            const parsed = JSON.parse(dataMatch[1]);
+            const allData = JSON.parse(dataMatch[1]);
+            const episodeKey = `${season}-${episode}`;
             
-            // Bölüm seçimi (Örn: 1-1)
-            const target = parsed[`${season}-${episode}`] || parsed;
-            const streamUrl = target.stream_url || target.file;
+            // Eğer bastığımız bölüm listede varsa, onun Worker verisini alalım
+            const target = allData[episodeKey] || allData;
+            
+            // 4. ADIM: Worker'dan stream_url al (Tetikleme sonrası gelen link)
+            let finalUrl = target.stream_url || target.file;
 
-            if (streamUrl) {
+            if (finalUrl) {
+                // Eğer link bir "Worker Proxy" ise (genelde /worker/ veya /v/ ile başlar)
+                // Cloudstream'in bunu oynatabilmesi için gerekli header'ları ekliyoruz.
                 return [{
-                    name: "Videopark (Auto-Titan)",
-                    url: streamUrl,
+                    name: `Videopark Worker (S${season}E${episode})`,
+                    url: finalUrl,
                     type: "hls",
                     subtitles: target.subtitles ? target.subtitles.map(s => ({
                         url: s.file, language: s.label, format: "vtt"
                     })) : [],
                     headers: {
                         'Referer': 'https://videopark.top/',
+                        'Origin': 'https://videopark.top',
                         'User-Agent': 'Mozilla/5.0'
                     }
                 }];
             }
         }
 
+        console.error("[HATA] Worker linki oluşturulamadı.");
         return [];
 
     } catch (err) {
-        console.error(`[TITAN-HATA] ${err.message}`);
+        console.error(`[TITAN-KRITIK] ${err.message}`);
         return [];
     }
 }
 
-// --- KRİTİK NOKTA: EXPORTS HATASINI ÇÖZEN KISIM ---
+// Global Export (Kritik: Hata almamak için)
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = { getStreams };
 } else {
