@@ -1,50 +1,77 @@
 /**
- * JetFilmizle - Videopark Titan "Dynamic Season/Episode" Resolver
+ * JetFilmizle - Universal Titan Resolver
+ * Her dizi için anahtarı otomatik bulur ve bölümlere ulaşmanı sağlar.
  */
 
 async function getStreams(id, mediaType, season, episode) {
-    // Videopark'ın ana giriş kapısı (Master Key)
-    const masterKey = "DFADXFgPDU4"; 
-    const playerUrl = `https://videopark.top/titan/w/${masterKey}`;
-
     try {
-        console.log(`[TITAN] Sezon ${season} Bölüm ${episode} aranıyor...`);
+        // 1. ADIM: Dizinin JetFilmizle sayfasına git (Anahtarı oradan çalacağız)
+        let slug = id; 
+        const targetUrl = `https://jetfilmizle.net/dizi/${slug}`;
+        
+        const res = await fetch(targetUrl, {
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'Referer': 'https://jetfilmizle.net/'
+            }
+        });
+        const html = await res.text();
+
+        // 2. ADIM: Sayfadaki Titan Master Key'i bul
+        // Genellikle 11-12 haneli karışık harf/rakamdır (Örn: DFADXFgPDU4 veya 05b44f317d2a)
+        let masterKey = null;
+
+        // Önce iframe veya data-id içindeki temiz anahtarı ara
+        const iframeMatch = html.match(/videopark\.top\/titan\/w\/([a-zA-Z0-9_-]{10,15})/);
+        if (iframeMatch) {
+            masterKey = iframeMatch[1];
+        } else {
+            // Alternatif: Sayfadaki 11-12 haneli hex/string kodlarını tara, Analytics (G-) kodlarını ele
+            const potentialKeys = html.match(/[a-zA-Z0-9_-]{11,12}/g) || [];
+            masterKey = potentialKeys.find(k => !k.startsWith('G-') && /[a-zA-Z]/.test(k) && /[0-9]/.test(k));
+        }
+
+        if (!masterKey) {
+            console.error("[HATA] Bu dizi için Titan anahtarı bulunamadı.");
+            return [];
+        }
+
+        // 3. ADIM: Bulduğumuz anahtarı senin o "çalışan" sistemine sokalım
+        const playerUrl = `https://videopark.top/titan/w/${masterKey}`;
+        console.error(`[TITAN] Otomatik Anahtar Bulundu (${masterKey}). Bağlanılıyor...`);
 
         const response = await fetch(playerUrl, {
             headers: {
                 'Referer': 'https://jetfilmizle.net/',
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
             }
         });
         
-        const html = await response.text();
+        const playerHtml = await response.text();
 
-        // 1. ADIM: Sayfadaki tüm sezon/bölüm verilerini içeren devasa JSON bloğunu bul
-        // Videopark'ta bu genellikle 'var _data = ...' veya 'var _seasons = ...' içindedir.
-        const dataMatch = html.match(/var\s+_data\s*=\s*({[\s\S]*?});/);
+        // 4. ADIM: Senin yöntemle _sd veya _data objesini çek (Bölüm eşleme dahil)
+        // Eğer çoklu bölüm varsa _data, tek bölümlük bir yapıysa _sd kullanılır
+        const dataMatch = playerHtml.match(/var\s+_(?:data|sd)\s*=\s*({[\s\S]*?});/);
         
         if (dataMatch) {
-            const allData = JSON.parse(dataMatch[1]);
+            const parsedData = JSON.parse(dataMatch[1]);
             
-            // 2. ADIM: İstediğin bölümün anahtarını oluştur (Örn: "1-1", "2-5" gibi)
+            // Eğer _data (bölüm listesi) geldiyse, istediğimiz bölüme zıplayalım
             const episodeKey = `${season}-${episode}`;
-            const targetEpisode = allData[episodeKey];
+            const targetData = parsedData[episodeKey] || parsedData; // Eğer liste değilse direkt objeyi al
 
-            if (targetEpisode) {
-                console.log(`[TITAN] Bölüm bulundu: ${episodeKey}`);
+            const streamUrl = targetData.stream_url || targetData.file;
+
+            if (streamUrl) {
+                console.error(`[TITAN-BAŞARILI] Akış Yakalandı: ${streamUrl}`);
                 
-                // Altyazıları formatla
-                const subtitles = targetEpisode.subtitles ? targetEpisode.subtitles.map(s => ({
-                    url: s.file,
-                    language: s.label,
-                    format: "vtt"
-                })) : [];
-
                 return [{
-                    name: `Videopark S${season}E${episode}`,
-                    url: targetEpisode.file || targetEpisode.stream_url,
+                    name: `Videopark (S${season}E${episode})`,
+                    url: streamUrl,
                     type: "hls",
-                    subtitles: subtitles,
+                    subtitles: targetData.subtitles ? targetData.subtitles.map(s => ({
+                        url: s.file, language: s.label, format: "vtt"
+                    })) : [],
                     headers: {
                         'Referer': 'https://videopark.top/',
                         'User-Agent': 'Mozilla/5.0'
@@ -53,25 +80,11 @@ async function getStreams(id, mediaType, season, episode) {
             }
         }
 
-        // 3. ADIM: Eğer JSON yoksa (Tek bölümlük veya farklı yapı), mevcut _sd objesine bak
-        const sdMatch = html.match(/var\s+_sd\s*=\s*({[\s\S]*?});/);
-        if (sdMatch) {
-            const sdData = JSON.parse(sdMatch[1]);
-            return [{
-                name: "Videopark (Varsayılan)",
-                url: sdData.stream_url,
-                type: "hls",
-                headers: { 'Referer': 'https://videopark.top/' }
-            }];
-        }
-
-        console.error("[TITAN] Aranan bölüm verisi sayfada bulunamadı.");
+        console.error("[TITAN-HATA] Video verisi ayıklanamadı.");
         return [];
 
     } catch (err) {
-        console.error(`[TITAN-KRİTİK] Hata: ${err.message}`);
+        console.error(`[TITAN-KRITIK] Hata: ${err.message}`);
         return [];
     }
 }
-
-module.exports = { getStreams };
