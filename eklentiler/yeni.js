@@ -1,6 +1,7 @@
 /**
- * JetFilmizle - Nuvio Ultra (v32 Precise Striker)
- * Sayfadaki çöpleri (CSS, JS fonksiyonları) eler, sadece gerçek Titan ID'lerini hedefler.
+ * JetFilmizle - Nuvio Ultra (v34 The Harvester)
+ * Filtreleri çöpe atar. Sayfadaki her tırnak içini potansiyel ID kabul eder,
+ * ama sadece Videopark'tan GERÇEK video linki döndürenleri kabul eder.
  */
 
 var BASE_URL = 'https://jetfilmizle.net';
@@ -19,62 +20,66 @@ async function getStreams(id, mediaType, season, episode) {
             ? `${BASE_URL}/dizi/${slug}/sezon-${season}/bolum-${episode}`
             : `${BASE_URL}/film/${slug}`;
 
+        // 1. ADIM: Sayfanın TÜM ham metnini çek
         const pageRes = await fetch(targetUrl, { headers: { 'User-Agent': 'Mozilla/5.0' } });
         const html = await pageRes.text();
 
-        // KRİTİK DEĞİŞİKLİK: Sadece DFADX ile başlayan ve sadece harf/rakam içerenleri al (Alt çizgi veya küçük harf içermezse daha temiz olur)
-        // Jetfilm'in asıl ID formatı genelde: DFADX + 6-10 karakter Büyük Harf/Rakam
-        const workerRegex = /DFADX[A-Z0-9]{5,15}/g; 
-        let rawIds = html.match(workerRegex) || [];
+        // 2. ADIM: "SIFIR FİLTRE" - Tırnak içindeki her şeyi topla (8-20 karakter arası)
+        // Bu hem DFADX'leri, hem şifreli ID'leri, hem de çöpleri toplar.
+        const allPossibleIds = html.match(/["']([a-zA-Z0-9_-]{8,20})["']/g) || [];
         
-        // Eğer DFADX bulamazsa, 11 haneli karmaşık ID'leri ara (Ama çok seçici ol)
-        if (rawIds.length === 0) {
-            const backupRegex = /["']([a-zA-Z0-9]{11})["']/g;
-            let m;
-            while ((m = backupRegex.exec(html)) !== null) {
-                // Küçük harf içeren fonksiyon isimlerini elemek için:
-                if (!/^[a-z]+$/.test(m[1]) && !m[1].includes('search')) {
-                    rawIds.push(m[1]);
-                }
-            }
-        }
-
-        let workerIds = [...new Set(rawIds)];
-        console.error(`[STRIKER] Temizlenmiş Aday Sayısı: ${workerIds.length}`);
+        // Temizlik: Sadece tırnakları kaldır ve benzersiz yap
+        let candidates = [...new Set(allPossibleIds.map(m => m.replace(/["']/g, '')))];
+        
+        console.error(`[HARVESTER] Toplam Aday Sayısı: ${candidates.length} (Filtresiz)`);
 
         let streams = [];
+        
+        // 3. ADIM: HIZLI TARAMA (Paralel İşleme)
+        // Her adayı Videopark Titan'a soruyoruz. Filtreyi kodda değil, sunucu cevabında yapıyoruz.
+        const pool = candidates.slice(0, 50); // İlk 50 en güçlü aday (Performans için limitli)
 
-        for (let wId of workerIds) {
-            // "getCSRF", "querySelect" gibi kelimeleri burada eliyoruz
-            if (wId.length < 10 || /^[a-z_]+$/.test(wId)) continue;
-
-            const workerUrl = `https://videopark.top/titan/w/${wId}`;
-            console.error(`[STRIKER] Hedef: ${workerUrl}`);
+        const results = await Promise.allSettled(pool.map(async (wId) => {
+            // Bilinen çöpleri anında ele (Fetch trafiğini azaltmak için)
+            if (/^(true|false|hidden|visible|ImageObject|JetFilmizle|search|UTF-8)$/i.test(wId)) return null;
 
             try {
-                const wRes = await fetch(workerUrl, { 
-                    headers: { 'Referer': 'https://jetfilmizle.net/', 'User-Agent': 'Mozilla/5.0' } 
+                const wRes = await fetch(`https://videopark.top/titan/w/${wId}`, { 
+                    headers: { 'Referer': BASE_URL, 'User-Agent': 'Mozilla/5.0' } 
                 });
                 const wHtml = await wRes.text();
-
+                
+                // Eğer cevapta gerçek bir video linki (_sd değişkeni) varsa, Bingo!
                 const sdMatch = wHtml.match(/var\s+_sd\s*=\s*({[\s\S]*?});/);
                 if (sdMatch) {
                     const data = JSON.parse(sdMatch[1]);
                     if (data.stream_url) {
-                        streams.push({
-                            name: "Jet-Exo",
+                        return {
+                            name: "Jet-Harvest",
                             url: data.stream_url,
                             type: "hls",
                             headers: { 'Referer': 'https://videopark.top/' }
-                        });
-                        if (streams.length >= 2) break;
+                        };
                     }
                 }
             } catch (e) {}
+            return null;
+        }));
+
+        // 4. ADIM: Sadece başarılı olanları süz
+        streams = results
+            .filter(r => r.status === 'fulfilled' && r.value !== null)
+            .map(r => r.value);
+
+        console.error(`[HARVESTER] Bulunan Geçerli Kaynak: ${streams.length}`);
+        
+        // Klasik yedek (Eğer brute-force başarısız olursa)
+        if (streams.length === 0) {
+            const sdDirect = html.match(/var\s+_sd\s*=\s*({[\s\S]*?});/);
+            if (sdDirect) streams.push({ name: "Jet-Direct", url: JSON.parse(sdDirect[1]).stream_url, type: "hls" });
         }
 
         return streams;
-
     } catch (err) {
         return [];
     }
