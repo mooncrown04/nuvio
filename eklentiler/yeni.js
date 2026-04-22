@@ -1,5 +1,5 @@
 /**
- * JetFilmizle — Nuvio Provider (HTML Button Scraper)
+ * JetFilmizle — Nuvio Provider (Final JSON Matcher)
  */
 
 var BASE_URL     = 'https://jetfilmizle.net';
@@ -18,7 +18,7 @@ function titleToSlug(t) {
 }
 
 function getStreams(id, mediaType, season, episode) {
-    console.error('[JetFilm-Debug] Başlatıldı: ' + mediaType + ' Sezon: ' + season + ' Bölüm: ' + episode);
+    console.error('[JetFilm-Debug] Başlatıldı: ' + mediaType + ' S:' + season + ' E:' + episode);
     
     var tmdbId = id.toString().replace(/[^0-9]/g, '');
     var type = (mediaType === 'tv') ? 'tv' : 'movie';
@@ -28,66 +28,74 @@ function getStreams(id, mediaType, season, episode) {
         .then(function(info) {
             var slug = titleToSlug(info.name || info.title);
             var finalUrl = BASE_URL + '/' + (mediaType === 'tv' ? 'dizi' : 'film') + '/' + slug;
-            console.error('[JetFilm-Debug] Bağlanılıyor: ' + finalUrl);
+            console.error('[JetFilm-Debug] Sayfa Yükleniyor: ' + finalUrl);
             return fetch(finalUrl, { headers: HEADERS });
         })
         .then(function(r) { return r.text(); })
         .then(function(html) {
             var streams = [];
+            
+            // 1. ADIM: Doğru butonun index numarasını al (Logunda 23 çıkan yer)
+            var btnRegex = new RegExp('data-source-index="(\\d+)"[^>]*data-season="' + season + '"[^>]*data-episode="' + episode + '"', 'i');
+            var btnMatch = btnRegex.exec(html);
 
-            if (mediaType === 'tv') {
-                // HTML içindeki butonları Regex ile tara
-                // Örnek: data-source-index="23" data-player-type="dublaj" data-season="2" data-episode="9"
-                var btnRegex = new RegExp('data-source-index="(\\d+)"[^>]*data-season="' + season + '"[^>]*data-episode="' + episode + '"', 'i');
-                var match = btnRegex.exec(html);
+            if (btnMatch) {
+                var targetIndex = parseInt(btnMatch[1]);
+                console.error('[JetFilm-Debug] Hedef Index: ' + targetIndex);
 
-                if (match) {
-                    var sourceIndex = match[1];
-                    console.error('[JetFilm-Debug] Bölüm Butonu Bulundu! Index: ' + sourceIndex);
-                    
-                    // Sitede genellikle kaynaklar "player_sources" gibi bir JS dizisinde veya 
-                    // direkt iframe olarak bulunur. Şimdi genel bir iframe taraması yapıyoruz.
-                    return scanForVideoSources(html, streams);
+                // 2. ADIM: Sayfa içindeki gizli "sources" dizisini yakala
+                // Jetfilmizle veriyi genellikle [ { "url": "...", "index": 0 }, ... ] formatında saklar
+                var jsonRegex = /(?:var|const|let)\s+(?:sources|player_sources|video_sources|titan_sources)\s*=\s*(\[[\s\S]*?\]);/i;
+                var jsonMatch = jsonRegex.exec(html);
+
+                if (jsonMatch) {
+                    try {
+                        var allSources = JSON.parse(jsonMatch[1]);
+                        console.error('[JetFilm-Debug] JS Veri Bloğu Yakalandı. Kayıt: ' + allSources.length);
+                        
+                        // Index numarasına göre doğru kaynağı seç
+                        var item = allSources[targetIndex];
+                        if (item && (item.url || item.file || item.src)) {
+                            var vUrl = item.url || item.file || item.src;
+                            streams.push({
+                                name: "JetFilmizle",
+                                title: '⌜ ' + (item.title || 'Titan Player') + ' ⌟ | HD',
+                                url: vUrl.startsWith('//') ? 'https:' + vUrl : vUrl,
+                                type: 'embed'
+                            });
+                        }
+                    } catch (e) {
+                        console.error('[JetFilm-Debug] JSON Parse Hatası: ' + e.message);
+                    }
                 } else {
-                    console.error('[JetFilm-Debug] HATA: İstenen bölüm butonu HTML içinde bulunamadı.');
+                    console.error('[JetFilm-Debug] KRİTİK: Sayfada "sources" değişkeni bulunamadı.');
                 }
             }
 
-            return scanForVideoSources(html, streams);
+            // Fallback: Statik tarama (Hala bir şeyler varsa yakalar)
+            return scanStatic(html, streams);
         })
         .catch(function(err) {
-            console.error('[JetFilm-Debug] KRİTİK HATA: ' + err.message);
+            console.error('[JetFilm-Debug] HATA: ' + err.message);
             return [];
         });
 }
 
-function scanForVideoSources(html, streams) {
-    // Jetfilmizle'nin kullandığı popüler player patternleri
-    var videoPatterns = [
-        /(?:iframe[^>]+src|data-src|data-link)="([^"]*(?:jetv|videopark|titan|d2rs|vcloud)[^"]*)"/gi,
-        /video_url\s*:\s*"([^"]+)"/gi,
-        /file\s*:\s*"([^"]+)"/gi
-    ];
-
-    videoPatterns.forEach(function(regex) {
-        var m;
-        while ((m = regex.exec(html)) !== null) {
-            var src = m[1];
-            if (src.indexOf('facebook.com') === -1 && src.indexOf('google.com') === -1) {
-                var cleanUrl = src.startsWith('//') ? 'https:' + src : src;
-                if (!streams.some(function(s) { return s.url === cleanUrl; })) {
-                    streams.push({
-                        name: "JetFilmizle",
-                        title: '⌜ Kaynak ⌟ | HD',
-                        url: cleanUrl,
-                        type: 'embed'
-                    });
-                }
-            }
+function scanStatic(html, streams) {
+    var videoRe = /(?:iframe[^>]+src|data-src|data-link)="([^"]*(?:jetv|videopark|titan|d2rs|vcloud)[^"]*)"/gi;
+    var m;
+    while ((m = videoRe.exec(html)) !== null) {
+        var src = m[1];
+        if (!streams.some(function(s) { return s.url.includes(src); })) {
+            streams.push({
+                name: "JetFilmizle",
+                title: '⌜ Kaynak ⌟',
+                url: src.startsWith('//') ? 'https:' + src : src,
+                type: 'embed'
+            });
         }
-    });
-
-    console.error('[JetFilm-Debug] İşlem Tamam. Bulunan Kaynak: ' + streams.length);
+    }
+    console.error('[JetFilm-Debug] Final Kaynak Sayısı: ' + streams.length);
     return streams;
 }
 
