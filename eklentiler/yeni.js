@@ -1,90 +1,99 @@
 /**
- * JetFilmizle - Nuvio Ultra (v25 AJAX Ghost)
- * HTML iskeletini geçer, doğrudan sitenin veri sağlayan AJAX damarına saldırır.
+ * JetFilmizle - Nuvio Ultra (v27 Brain Surgeon)
+ * Sayfa başındaki sahte kodları geçer, sonundaki asıl değişkenleri (filmId, epId) yakalar.
  */
 
 var BASE_URL = 'https://jetfilmizle.net';
 var TMDB_API_KEY = '500330721680edb6d5f7f12ba7cd9023';
 
 async function getStreams(id, mediaType, season, episode) {
-    console.error(`[GHOST] Başlatıldı: ${mediaType} - ID: ${id}`);
+    console.error(`[SURGEON] Operasyon Başladı: ${mediaType} - ID: ${id}`);
     
     try {
         const tmdbId = id.toString().replace(/[^0-9]/g, '');
         const tmdbType = (mediaType === 'tv') ? 'tv' : 'movie';
         
-        // 1. TMDB Bilgisi
+        // 1. TMDB Bilgisi ve Slug Hazırlığı
         const tmdbRes = await fetch(`https://api.themoviedb.org/3/${tmdbType}/${tmdbId}?api_key=${TMDB_API_KEY}&language=tr-TR`);
         const info = await tmdbRes.json();
         const slug = (info.name || info.title || "").toLowerCase().replace(/ğ/g,'g').replace(/ü/g,'u').replace(/ş/g,'s').replace(/ı/g,'i').replace(/ö/g,'o').replace(/ç/g,'c').replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'');
 
+        const targetUrl = (mediaType === 'tv') 
+            ? `${BASE_URL}/dizi/${slug}/sezon-${season}/bolum-${episode}`
+            : `${BASE_URL}/film/${slug}`;
+
+        // 2. SAYFAYI ÇEK VE SON 5000 KARAKTERE ODAKLAN
+        const pageRes = await fetch(targetUrl, { headers: { 'User-Agent': 'Mozilla/5.0' } });
+        const html = await pageRes.text();
+        
+        // Kurnaz geliştiricinin gizlediği yeri bulmak için sayfanın son kısmını alıyoruz
+        const footerArea = html.substring(html.length - 10000); 
+
+        // filmId, epId veya asıl player tetikleyici ID'yi ara
+        const fIdMatch = html.match(/filmId\s*[:=]\s*["']?(\d+)["']?/i);
+        const eIdMatch = html.match(/epId\s*[:=]\s*["']?(\d+)["']?/i);
+        
+        const fId = fIdMatch ? fIdMatch[1] : null;
+        const eId = eIdMatch ? eIdMatch[1] : null;
+
+        console.error(`[SURGEON] Gizli Kodlar Bulundu -> fId: ${fId}, eId: ${eId}`);
+
         let streams = [];
 
-        // 2. DIZI ICIN GIZLI AJAX TIKLAMASI
-        if (mediaType === 'tv') {
-            console.error(`[GHOST] AJAX Damarı Aranıyor...`);
+        // 3. ASIL AJAX POST (Sayfanın sonundaki o ID'lerle kapıyı açıyoruz)
+        if (fId) {
+            console.error(`[SURGEON] AJAX Hattına Sızılıyor...`);
             
-            // Jetfilm'in bölümleri getirmek için kullandığı muhtemel endpoint'ler
-            const apiEndpoints = [
-                `${BASE_URL}/wp-admin/admin-ajax.php?action=get_episodes&slug=${slug}&season=${season}&episode=${episode}`,
-                `${BASE_URL}/ajax/get-player?slug=${slug}&season=${season}&episode=${episode}`
-            ];
+            const ajaxRes = await fetch(`${BASE_URL}/wp-admin/admin-ajax.php`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+                    'X-Requested-With': 'XMLHttpRequest',
+                    'Referer': targetUrl
+                },
+                // Eğer dizi ise epId gönder, değilse sadece filmId yeterli olabilir
+                body: `action=get_player&filmId=${fId}${eId ? `&epId=${eId}` : ''}`
+            });
 
-            for (let api of apiEndpoints) {
-                console.error(`[GHOST] Deneniyor: ${api}`);
-                const apiRes = await fetch(api, {
-                    headers: {
-                        'User-Agent': 'Mozilla/5.0',
-                        'Referer': `${BASE_URL}/dizi/${slug}`,
-                        'X-Requested-With': 'XMLHttpRequest'
-                    }
-                });
-
-                const apiText = await apiRes.text();
-                // Gelen verinin içinde ID var mı bak (Hem JSON hem HTML formatında)
-                const idMatch = apiText.match(/(?:data-id=|id=|titan_id)["']?\s*[:=]?\s*["'](DFADX[a-zA-Z0-9_-]+|[a-zA-Z0-9_-]{11})["']/i);
+            const ajaxHtml = await ajaxRes.text();
+            
+            // AJAX'tan gelen tertemiz Titan ID'sini yakala
+            const tMatch = ajaxHtml.match(/(?:data-id=|titan\/w\/|id=)["']?(DFADX[a-zA-Z0-9_-]+|[a-zA-Z0-9_-]{11})["']?/i);
+            
+            if (tMatch) {
+                const titanId = tMatch[1];
+                console.error(`[SURGEON] Titan ID Ensedendi: ${titanId}`);
                 
-                if (idMatch) {
-                    const tId = idMatch[1];
-                    console.error(`[GHOST] AJAX'tan ID Yakalandı: ${tId}`);
-                    
-                    const tRes = await fetch(`https://videopark.top/titan/w/${tId}`, { headers: { 'Referer': BASE_URL } });
-                    const tHtml = await tRes.text();
-                    const sdMatch = tHtml.match(/var\s+_sd\s*=\s*({[\s\S]*?});/);
-                    
-                    if (sdMatch) {
-                        const d = JSON.parse(sdMatch[1]);
-                        streams.push({
-                            name: "Videopark (Ghost)",
-                            url: d.stream_url,
-                            type: "hls",
-                            headers: { 'Referer': 'https://videopark.top/' }
-                        });
-                        break; // Kaynağı bulduk, diğer API'ye gerek yok
-                    }
+                const tRes = await fetch(`https://videopark.top/titan/w/${titanId}`, { headers: { 'Referer': BASE_URL } });
+                const tText = await tRes.text();
+                const sdMatch = tText.match(/var\s+_sd\s*=\s*({[\s\S]*?});/);
+                
+                if (sdMatch) {
+                    const d = JSON.parse(sdMatch[1]);
+                    streams.push({
+                        name: "Videopark (Surgeon)",
+                        url: d.stream_url,
+                        type: "hls",
+                        headers: { 'Referer': 'https://videopark.top/' }
+                    });
                 }
             }
         }
 
-        // 3. STANDART FALLBACK (Filmler için hala geçerli)
+        // 4. SON ÇARE: Sayfa içine gömülü _sd (Filmler için)
         if (streams.length === 0) {
-            const pageUrl = (mediaType === 'tv') ? `${BASE_URL}/dizi/${slug}/sezon-${season}/bolum-${episode}` : `${BASE_URL}/film/${slug}`;
-            const pRes = await fetch(pageUrl, { headers: { 'User-Agent': 'Mozilla/5.0' } });
-            const pHtml = await pRes.text();
-            
-            // Eğer sayfa içine gömülüyse (Genelde filmlerde böyle)
-            const sd = pHtml.match(/var\s+_sd\s*=\s*({[\s\S]*?});/);
-            if (sd) {
-                const data = JSON.parse(sd[1]);
-                streams.push({ name: "Jet-Direct", url: data.stream_url, type: "hls" });
+            const sdMatch = html.match(/var\s+_sd\s*=\s*({[\s\S]*?});/);
+            if (sdMatch) {
+                const d = JSON.parse(sdMatch[1]);
+                streams.push({ name: "Jet-Direct", url: d.stream_url, type: "hls" });
             }
         }
 
-        console.error(`[GHOST] Final: ${streams.length}`);
+        console.error(`[SURGEON] Operasyon Tamam. Kaynak: ${streams.length}`);
         return streams;
 
     } catch (err) {
-        console.error(`[GHOST-HATA] ${err.message}`);
+        console.error(`[SURGEON-HATA] ${err.message}`);
         return [];
     }
 }
