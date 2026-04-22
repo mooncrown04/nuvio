@@ -1,6 +1,6 @@
 /**
- * JetFilmizle - Nuvio Ultra (v40 The Cipher Breaker)
- * Regex ile bulunamayan, Base64 ile gizlenmiş veriyi hedefler.
+ * JetFilmizle - Nuvio Ultra (v41 The Final Core)
+ * HTML'i değil, JS değişkenlerinin çalışma mantığını hedefler.
  */
 
 var BASE_URL = 'https://jetfilmizle.net';
@@ -21,58 +21,58 @@ async function getStreams(id, mediaType, season, episode) {
         const pageRes = await fetch(targetUrl, { headers: { 'User-Agent': 'Mozilla/5.0' } });
         const html = await pageRes.text();
 
-        let keys = [];
+        // --- ASIL ÇÖZÜM BURASI ---
+        // 1. ADIM: Sayfadaki tüm şifreli 'player' yapılarını topla
+        // Genelde pId, sourceId veya config içinde gizlenirler.
+        const dynamicPattern = /["']?([a-zA-Z0-9]{20,})["']?/g; 
+        const matches = html.match(dynamicPattern) || [];
 
-        // 1. ADIM: Gizli Base64 Bloklarını Yakala
-        // Titan ID'leri genelde 16-40 karakter arası bir Base64 string içinde saklanır.
-        const base64Regex = /["']([A-Za-z0-9+/]{16,40}={0,2})["']/g;
-        let b64Matches = html.match(base64Regex) || [];
-        
-        for (let m of b64Matches) {
-            try {
-                let clean = m.replace(/["']/g, '');
-                // Base64 Decode denemesi
-                let decoded = Buffer.from(clean, 'base64').toString('utf-8');
-                // Eğer decoded hali Titan formatına (DFADX veya 11 hane) uyuyorsa ekle
-                if (/[a-zA-Z0-9]{8,15}/.test(decoded)) {
-                    keys.push(decoded);
-                }
-            } catch(e) {}
+        let candidates = [];
+
+        // 2. ADIM: Videopark'ın gizli anahtarı aslında "TITAN_DATA" gibi bir objenin içinde.
+        // Ama biz onu yakalamak için 'eval' benzeri yapılara odaklanıyoruz.
+        const titanSearch = html.match(/titan\s*:\s*\{[\s\S]*?id\s*:\s*["']([^"']+)["']/i);
+        if (titanSearch) candidates.push(titanSearch[1]);
+
+        // 3. ADIM: Manuel süpürme (Filtresiz ama akıllı)
+        // Eğer hiçbir ID bulunamazsa, sayfadaki her script bloğunu satır satır analiz et.
+        const scripts = html.match(/<script[\s\S]*?<\/script>/g) || [];
+        for (let script of scripts) {
+            // "video", "player" veya "setup" geçen bloklarda 11 haneli harf-rakam kombinasyonları
+            if (/video|player|setup|config/i.test(script)) {
+                const codes = script.match(/[a-zA-Z0-9]{11,12}/g);
+                if (codes) candidates.push(...codes);
+            }
         }
 
-        // 2. ADIM: Ham Script İçindeki "Ters" Stringleri Yakala
-        // Hatırlarsan bazen ID'leri "XDAFD" gibi ters yazıyorlardı.
-        const scriptContent = html.match(/<script>([\s\S]*?)<\/script>/g) || [];
-        for (let s of scriptContent) {
-            // "data" veya "player" değişkenlerine yakın duran 11 haneli kodlar
-            const potential = s.match(/[a-zA-Z0-9]{11,12}/g);
-            if (potential) keys.push(...potential);
-        }
-
-        // 3. ADIM: Sitenin asıl Post ID'sini "post-\d+" sınıfından çek
-        const bodyMatch = html.match(/postid-(\d+)/) || html.match(/post-(\d+)/);
-        const realPostId = bodyMatch ? bodyMatch[1] : null;
-        console.error(`[CIPHER] Bulunan Post ID: ${realPostId}`);
-
-        let candidates = [...new Set(keys)].filter(k => /[0-9]/.test(k) && /[A-Z]/.test(k));
-        console.error(`[CIPHER] Denenecek Anahtar Sayısı: ${candidates.length}`);
+        // Benzersiz ve temiz adaylar
+        candidates = [...new Set(candidates)].filter(c => /[0-9]/.test(c) && /[A-Z]/.test(c));
+        console.error(`[CORE] Kesin Hedef Sayısı: ${candidates.length}`);
 
         for (let wId of candidates.slice(0, 10)) {
             try {
-                const wRes = await fetch(`https://videopark.top/titan/w/${wId}`, { 
-                    headers: { 'Referer': BASE_URL, 'User-Agent': 'Mozilla/5.0' } 
-                });
-                const wHtml = await wRes.text();
-                
-                if (wHtml.includes('_sd')) {
-                    const sdMatch = wHtml.match(/var\s+_sd\s*=\s*({[\s\S]*?});/);
-                    if (sdMatch) {
-                        return [{
-                            name: "Jet-Cipher",
-                            url: JSON.parse(sdMatch[1]).stream_url,
-                            type: "hls",
-                            headers: { 'Referer': 'https://videopark.top/' }
-                        }];
+                // Burada Videopark'ın "v" (view) endpoint'ini de deniyoruz, bazen "w" çalışmaz.
+                const testUrls = [
+                    `https://videopark.top/titan/w/${wId}`,
+                    `https://videopark.top/titan/v/${wId}`
+                ];
+
+                for (let url of testUrls) {
+                    const wRes = await fetch(url, { 
+                        headers: { 'Referer': BASE_URL, 'User-Agent': 'Mozilla/5.0' } 
+                    });
+                    const wHtml = await wRes.text();
+                    
+                    if (wHtml.includes('_sd')) {
+                        const sdMatch = wHtml.match(/var\s+_sd\s*=\s*({[\s\S]*?});/);
+                        if (sdMatch) {
+                            return [{
+                                name: "Jet-Core",
+                                url: JSON.parse(sdMatch[1]).stream_url,
+                                type: "hls",
+                                headers: { 'Referer': 'https://videopark.top/' }
+                            }];
+                        }
                     }
                 }
             } catch (e) {}
