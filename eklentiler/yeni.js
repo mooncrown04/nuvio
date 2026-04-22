@@ -9,7 +9,7 @@ async function getStreams(id, mediaType, season, episode) {
         // Uygulama seni zaten anahtarın olduğu sayfaya (Slug: cobra-kai vb.) getirdi.
         // Bu yüzden id parametresini direkt URL'nin kendisi olarak kabul ediyoruz.
         
-        const targetUrl = `https://jetfilmizle.net/dizi/${id}`;
+        const targetUrl = `https://jetfilmizle.net/dizi/cobra-kai`;
         
         console.log(`[İŞLEM] Uygulamanın getirdiği adresteyim: ${targetUrl}`);
 
