@@ -1,22 +1,22 @@
 /**
- * JetFilmizle - Otomatik Titan Çözücü
- * Amacımız: Sayfa kaynağındaki 11 haneli gizli anahtarı bulup videoyu oynatmak.
+ * JetFilmizle - Universal Titan Resolver (Tam Otomatik)
+ * Bu kod, sayfa kaynağından 11 haneli anahtarı otomatik olarak çeker.
  */
 
 var BASE_URL = 'https://jetfilmizle.net';
 
 async function getStreams(id, mediaType, season, episode) {
-    // Sadece TV dizileri için çalışır
+    // Sadece TV dizileri için çalışır, film ise boş döner
     if (mediaType !== 'tv') return [];
 
     try {
-        // --- ADIM 1: Dizi Sayfasına Bağlanma ---
-        // Örn: https://jetfilmizle.net/dizi/cobra-kai/sezon-1/bolum-1
-        // Not: 'slug' kısmını eklentinin kendi sisteminden aldığını varsayıyoruz.
+        // --- 1. ADIM: Dizi Sayfasına Gidiş ---
+        // 'id' burada dizinin slug adıdır (örneğin: cobra-kai)
         const targetUrl = `${BASE_URL}/dizi/${id}/sezon-${season}/bolum-${episode}`;
-        
-        const pageRes = await fetch(targetUrl, { 
-            headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' } 
+        console.log(`[İŞLEM] Sayfaya gidiliyor: ${targetUrl}`);
+
+        const pageRes = await fetch(targetUrl, {
+            headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' }
         });
 
         if (!pageRes.ok) {
@@ -26,20 +26,20 @@ async function getStreams(id, mediaType, season, episode) {
 
         const html = await pageRes.text();
 
-        // --- ADIM 2: GİZLİ ANAHTARI BULMA (EN ÖNEMLİ YER) ---
-        // Sayfa kaynağında (senin attığın cobra-kai.js gibi) titan/w/ kalıbını arar.
-        // Bu "Aha burada!" dediğimiz 11 haneli kodu yakalayan kısımdır.
+        // --- 2. ADIM: ANAHTARIN BULUNDUĞU YER (REGEX) ---
+        // Senin attığın cobra-kai.js dosyasındaki "titan/w/XXXXXXXXXXX" yapısını arar.
+        // Buradaki parantez içindeki kısım bizim 11 haneli anahtarımızdır.
         const keyMatch = html.match(/titan\/w\/([a-zA-Z0-9_-]{11})/);
-        
+
         if (!keyMatch || !keyMatch[1]) {
-            console.error("[HATA-02] Sayfa kaynağında 11 haneli Titan anahtarı bulunamadı!");
+            console.error("[HATA-02] 'Aha burada' dediğimiz 11 haneli anahtar sayfada bulunamadı!");
             return [];
         }
 
         const finalKey = keyMatch[1];
         console.log(`[BAŞARILI] Giriş Anahtarı Yakalandı: ${finalKey}`);
 
-        // --- ADIM 3: VİDEOPARK SİSTEMİNE GİRİŞ ---
+        // --- 3. ADIM: VİDEOPARK/TITAN ÜZERİNDEN VERİ ÇEKME ---
         const playerUrl = `https://videopark.top/titan/w/${finalKey}`;
         
         const response = await fetch(playerUrl, {
@@ -48,20 +48,20 @@ async function getStreams(id, mediaType, season, episode) {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
             }
         });
-        
+
         if (!response.ok) {
-            console.error("[HATA-03] Videopark oynatıcı sayfasına girilemedi.");
+            console.error("[HATA-03] Titan oynatıcı sayfası yanıt vermedi.");
             return [];
         }
 
         const playerHtml = await response.text();
 
-        // --- ADIM 4: _SD OBJESİNİ ÇÖZME ---
-        // Senin dün üzerinde çalıştığın, video linklerini içeren JSON objesi.
+        // --- 4. ADIM: _SD OBJESİNİ AYIKLAMA ---
+        // Senin dün üzerinde çalıştığın, içinde stream_url olan JSON verisi.
         const sdMatch = playerHtml.match(/var\s+_sd\s*=\s*({[\s\S]*?});/);
         
         if (!sdMatch) {
-            console.error("[HATA-04] Oynatıcı sayfasında '_sd' veri objesi bulunamadı.");
+            console.error("[HATA-04] _sd objesi (video verileri) bulunamadı.");
             return [];
         }
 
@@ -69,17 +69,17 @@ async function getStreams(id, mediaType, season, episode) {
         const streamUrl = data.stream_url;
 
         if (!streamUrl) {
-            console.error("[HATA-05] _sd objesi var ama içinde video linki (stream_url) yok.");
+            console.error("[HATA-05] _sd bulundu ama içinde stream_url yok.");
             return [];
         }
 
-        // --- SONUÇ: VERİYİ NUVIO/PLAYER FORMATINA GÖNDERME ---
-        console.log("[TAMAMLANDI] Video linki başarıyla hazırlandı.");
-        
+        // --- SONUÇ: OYNATICIYA GÖNDERME ---
+        console.log("[TAMAMLANDI] Video linki başarıyla oluşturuldu.");
+
         return [{
-            name: "Jet-Titan (Auto)",
+            name: "Jet-Titan (Otomatik)",
             url: streamUrl,
-            type: "hls",
+            type: "hls", // Genelde m3u8 formatında döner
             subtitles: data.subtitles ? data.subtitles.map(s => ({
                 url: s.file,
                 language: s.label,
@@ -92,9 +92,10 @@ async function getStreams(id, mediaType, season, episode) {
         }];
 
     } catch (err) {
-        console.error(`[KRİTİK HATA] Beklenmedik bir sorun oluştu: ${err.message}`);
+        console.error(`[KRİTİK HATA] Sistem durdu: ${err.message}`);
         return [];
     }
 }
 
+// Modül olarak dışa aktar (Cloudstream/Nuvio uyumu için)
 module.exports = { getStreams };
