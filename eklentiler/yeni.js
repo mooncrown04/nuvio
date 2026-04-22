@@ -1,7 +1,7 @@
 /**
- * JetFilmizle - Nuvio Ultra (v43 Source Master)
- * JSON bekleyip hata almak yerine, ham metin (raw text) üzerinden 
- * Videopark'ın 'var _sd' değişkenini avlar.
+ * JetFilmizle - Nuvio Ultra (v44 The Titan Reborn)
+ * Sadece ham veriye ve _sd objesine odaklanır.
+ * Altyazı desteği ve doğrudan stream_url yakalayıcı.
  */
 
 var BASE_URL = 'https://jetfilmizle.net';
@@ -19,57 +19,73 @@ async function getStreams(id, mediaType, season, episode) {
             ? `${BASE_URL}/dizi/${slug}/sezon-${season}/bolum-${episode}`
             : `${BASE_URL}/film/${slug}`;
 
+        // 1. ADIM: Sayfanın ham halini çek
         const pageRes = await fetch(targetUrl, { headers: { 'User-Agent': 'Mozilla/5.0' } });
         const html = await pageRes.text();
 
-        // 1. ADIM: Sayfa içindeki tüm "iframe" ve "player" URL'lerini süpür
-        // JetFilmizle veriyi genelde bir "embed" linki arkasına saklar.
-        const embedMatches = html.match(/src=["'](https:\/\/videopark\.top\/[^"']+)["']/g) || [];
-        let candidates = embedMatches.map(m => m.replace(/src=["']|["']/g, ''));
+        // 2. ADIM: Ham kaynak içinden Videopark ID'sini cımbızla çek (DFADX formatı)
+        const titanIdMatch = html.match(/titan\/w\/([a-zA-Z0-9_-]+)/i) || html.match(/["'](DFADX[a-zA-Z0-9]+)["']/i);
+        
+        if (!titanIdMatch) {
+            console.error("[TITAN] Sayfada ID bulunamadı, ham metin taraması yapılıyor...");
+            // Eğer doğrudan ID yoksa, sayfadaki her türlü 'w/...' yapısını yakala
+            const fallbackMatch = html.match(/\/w\/([a-zA-Z0-9]{10,15})/);
+            if (fallbackMatch) titanIdMatch = [null, fallbackMatch[1]];
+        }
 
-        // 2. ADIM: "BİLİNENİN DIŞI" - Script içindeki gizli "file" anahtarı
-        // Bazen 'file: "..."' şeklinde doğrudan m3u8 linki veya şifreli bir yol bulunur.
-        const fileMatch = html.match(/file\s*:\s*["']([^"']+)["']/);
-        if (fileMatch) candidates.unshift(fileMatch[1]);
+        if (titanIdMatch) {
+            const wId = titanIdMatch[1];
+            const playerUrl = `https://videopark.top/titan/w/${wId}`;
+            console.error(`[TITAN] Hedef: ${playerUrl}`);
 
-        console.error(`[MASTER] Potansiyel Kaynak Sayısı: ${candidates.length}`);
+            const response = await fetch(playerUrl, {
+                headers: {
+                    'Referer': BASE_URL,
+                    'User-Agent': 'Mozilla/5.0'
+                }
+            });
+            
+            const playerHtml = await response.text();
 
-        let streams = [];
-        for (let sourceUrl of candidates) {
-            try {
-                // Hata aldığımız JSON parse yerine her şeyi "text" olarak alıyoruz
-                const res = await fetch(sourceUrl, { 
-                    headers: { 'Referer': targetUrl, 'User-Agent': 'Mozilla/5.0' } 
-                });
-                const content = await res.text();
+            // 3. ADIM: _sd objesini parçala (Senin paylaştığın o meşhur yöntem)
+            const sdMatch = playerHtml.match(/var\s+_sd\s*=\s*({[\s\S]*?});/);
+            
+            if (sdMatch) {
+                const data = JSON.parse(sdMatch[1]);
+                const streamUrl = data.stream_url;
 
-                // Eğer gelen içerik bir HTML/JS ise içinde '_sd' ara
-                if (content.includes('_sd')) {
-                    const sdMatch = content.match(/var\s+_sd\s*=\s*({[\s\S]*?});/);
-                    if (sdMatch) {
-                        const data = JSON.parse(sdMatch[1]);
-                        if (data.stream_url) {
-                            return [{
-                                name: "Jet-Source",
-                                url: data.stream_url,
-                                type: "hls",
-                                headers: { 'Referer': 'https://videopark.top/' }
-                            }];
-                        }
+                console.error(`[TITAN-SUCCESS] Kaynak Yakalandı!`);
+
+                const subtitles = data.subtitles ? data.subtitles.map(s => ({
+                    url: s.file,
+                    language: s.label,
+                    format: "vtt"
+                })) : [];
+
+                return [{
+                    name: "Videopark (Jet-Titan)",
+                    url: streamUrl,
+                    type: "hls",
+                    subtitles: subtitles,
+                    headers: {
+                        'Referer': 'https://videopark.top/',
+                        'User-Agent': 'Mozilla/5.0'
                     }
-                }
-                
-                // Eğer doğrudan bir m3u8 linkiyse
-                if (content.includes('#EXTM3U') || sourceUrl.includes('.m3u8')) {
-                    return [{ name: "Jet-Direct-M3U8", url: sourceUrl, type: "hls" }];
-                }
-            } catch (e) {
-                console.error(`[MASTER] Kaynak hatası: ${e.message}`);
+                }];
             }
         }
 
-        return streams;
-    } catch (err) { return []; }
+        // Eğer hala bir şey bulamadıysak, son çare ham HTML içindeki _sd'ye bak
+        const directSd = html.match(/var\s+_sd\s*=\s*({[\s\S]*?});/);
+        if (directSd) {
+            const data = JSON.parse(directSd[1]);
+            return [{ name: "Jet-Direct", url: data.stream_url, type: "hls" }];
+        }
+
+        return [];
+    } catch (err) {
+        return [];
+    }
 }
 
 module.exports = { getStreams };
