@@ -1,6 +1,6 @@
 /**
- * JetFilmizle - Kesin Sonuç Çözücü
- * Odak: Doğru anahtarı (05b44f317d2a vb.) Videopark'ın kabul edeceği tüm varyasyonlarla denemek.
+ * JetFilmizle - Deep Scan & Iframe Resolver
+ * Odak: Sayfa içindeki tüm gizli iframe ve data-src linklerini taramak.
  */
 
 async function getStreams(id, mediaType, season, episode) {
@@ -16,75 +16,80 @@ async function getStreams(id, mediaType, season, episode) {
         });
         const html = await res.text();
 
-        // --- GELİŞMİŞ ANAHTAR YAKALAMA ---
-        let key = null;
-        // 12 haneli hex-benzeri yapıları yakala (Örn: 05b44f317d2a)
-        const hexMatch = html.match(/[a-f0-9]{12}/); 
-        if (hexMatch) {
-            key = hexMatch[0];
-        } else {
-            // Alternatif: Tırnak içindeki 11-12 haneli yapıları ara
-            const altMatch = html.match(/["']([a-zA-Z0-9_-]{11,12})["']/);
-            key = altMatch ? altMatch[1] : null;
-        }
-
-        if (!key || key.startsWith('G-')) {
-            console.error("[HATA-02] Geçerli anahtar bulunamadı.");
-            return [];
-        }
-
-        console.log(`[BİLGİ] Anahtar Deneniyor: ${key}`);
-
-        // --- VARYASYONLU SORGULAMA ---
-        // Bazı içerikler 'w' (watch), bazıları 'p' (player) ile çalışır.
-        const paths = ['titan/w', 'titan/p', 'ttn/w', 'ttn/p'];
+        // --- 1. ADIM: SAYFADAKİ TÜM VİDEOPARK LİNKLERİNİ AYIKLA ---
+        // Sadece anahtarı değil, linkin tamamını yakalamaya çalışıyoruz.
+        const linkRegex = /(?:https?:)?\/\/videopark\.top\/(?:titan|ttn)\/(?:w|p)\/[a-zA-Z0-9_-]{8,20}/g;
+        const foundLinks = html.match(linkRegex) || [];
         
-        for (let path of paths) {
-            const playerUrl = `https://videopark.top/${path}/${key}`;
-            console.log(`[DENEME] Sorgulanıyor: ${playerUrl}`);
+        let finalPlayerUrl = "";
 
-            const playerRes = await fetch(playerUrl, {
-                headers: {
-                    'Referer': 'https://jetfilmizle.net/',
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
-                    'X-Requested-With': 'XMLHttpRequest'
-                }
-            });
-
-            const playerHtml = await playerRes.text();
-            
-            // Videopark içindeki kaynak değişkenlerini tara
-            const sourceMatch = playerHtml.match(/var\s+_(?:sd|file|v)\s*=\s*({[\s\S]*?}|"https:[^"]+");/);
-            
-            if (sourceMatch) {
-                let streamUrl = "";
-                if (sourceMatch[1].startsWith('{')) {
-                    const data = JSON.parse(sourceMatch[1]);
-                    streamUrl = data.stream_url || data.file || data.url;
-                } else {
-                    streamUrl = sourceMatch[1].replace(/"/g, '');
-                }
-
-                if (streamUrl) {
-                    console.log(`[BAŞARI] Link söküldü: ${path}`);
-                    return [{
-                        name: `Titan (${path.toUpperCase()})`,
-                        url: streamUrl,
-                        type: "hls",
-                        headers: {
-                            'Referer': 'https://videopark.top/',
-                            'User-Agent': 'Mozilla/5.0'
-                        }
-                    }];
-                }
+        if (foundLinks.length > 0) {
+            // En uzun olan link genellikle doğru olandır (analytics veya tracker değildir)
+            finalPlayerUrl = foundLinks.sort((a, b) => b.length - a.length)[0];
+            if (!finalPlayerUrl.startsWith('http')) finalPlayerUrl = 'https:' + finalPlayerUrl;
+            console.log(`[BİLGİ] Doğrudan Link Yakalandı: ${finalPlayerUrl}`);
+        } else {
+            // Eğer tam link yoksa, 12 haneli anahtarı (05b44f317d2a) "v" parametresiyle deneyelim
+            // Bazı yeni player'lar titan/v/ kullanıyor.
+            const keyMatch = html.match(/[a-f0-9]{12}/);
+            if (keyMatch) {
+                finalPlayerUrl = `https://videopark.top/titan/v/${keyMatch[0]}`;
+                console.log(`[BİLGİ] Anahtar 'v' parametresiyle deneniyor: ${finalPlayerUrl}`);
             }
         }
 
-        console.error(`[HATA-04] Hiçbir varyasyon sonuç vermedi. Anahtar: ${key}`);
+        if (!finalPlayerUrl) {
+            console.error("[HATA-02] Player URL bulunamadı.");
+            return [];
+        }
+
+        // --- 2. ADIM: VİDEOPARK'TAN KAYNAĞI ÇEK ---
+        const playerRes = await fetch(finalPlayerUrl, {
+            headers: {
+                'Referer': targetUrl,
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+                'X-Requested-With': 'XMLHttpRequest'
+            }
+        });
+
+        const playerHtml = await playerRes.text();
+        
+        // Videopark'ın meşhur değişkenlerini tara (_file, _sd, _v, _m3u8)
+        const sourceMatch = playerHtml.match(/var\s+_(?:file|sd|v|m3u8)\s*=\s*({[\s\S]*?}|"https:[^"]+");/);
+        
+        if (sourceMatch) {
+            let streamUrl = "";
+            let matchContent = sourceMatch[1];
+
+            if (matchContent.startsWith('{')) {
+                const data = JSON.parse(matchContent);
+                streamUrl = data.stream_url || data.file || data.url;
+            } else {
+                streamUrl = matchContent.replace(/"/g, '');
+            }
+
+            if (streamUrl) {
+                return [{
+                    name: "Videopark-V3",
+                    url: streamUrl,
+                    type: "hls",
+                    headers: {
+                        'Referer': 'https://videopark.top/',
+                        'User-Agent': 'Mozilla/5.0'
+                    }
+                }];
+            }
+        }
+
+        // --- 3. ADIM: EĞER HALA BULAMADIYSAK (DEBUG) ---
+        console.error(`[HATA-04] Kaynak sökülemedi. URL: ${finalPlayerUrl}`);
+        // Loglara Videopark'tan ne döndüğünü kısaca bas (Sadece ilk 100 karakter)
+        console.log(`[DEBUG] Videopark Yanıtı: ${playerHtml.substring(0, 100)}`);
+        
         return [];
 
     } catch (e) {
-        console.error(`[HATA] ${e.message}`);
+        console.error(`[SİSTEM] Hata: ${e.message}`);
         return [];
     }
 }
