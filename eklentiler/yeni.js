@@ -1,58 +1,62 @@
 /**
- * JetFilmizle - Saf Çözücü
- * Odak: Uygulamanın bizi getirdiği sayfadan direkt anahtarı çekmek.
+ * JetFilmizle - Titan Gelişmiş Yakalayıcı
+ * Odak: HATA-02 (Regex bulamama sorunu) çözümü.
  */
 
 async function getStreams(id, mediaType, season, episode) {
     try {
-        // --- KRİTİK: URL OLUŞTURMAYI BIRAKIYORUZ ---
-        // Uygulama seni zaten anahtarın olduğu sayfaya (Slug: cobra-kai vb.) getirdi.
-        // Bu yüzden id parametresini direkt URL'nin kendisi olarak kabul ediyoruz.
+        // Cobra Kai için slug düzeltmesi
+        let slug = (id === "77169") ? "cobra-kai" : id;
+        const targetUrl = `https://jetfilmizle.net/dizi/${slug}`;
         
-        const targetUrl = `https://jetfilmizle.net/dizi/cobra-kai`;
-        
-        console.log(`[İŞLEM] Uygulamanın getirdiği adresteyim: ${targetUrl}`);
+        console.log(`[İŞLEM] Sayfa okunuyor: ${targetUrl}`);
 
         const res = await fetch(targetUrl, {
-            headers: { 'User-Agent': 'Mozilla/5.0' }
+            headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' }
         });
         
-        if (!res.ok) {
-            console.error(`[HATA-01] Bu sayfa açılmıyor: ${targetUrl}`);
-            return [];
-        }
-
         const html = await res.text();
 
-        // --- ADIM 2: ANAHTARI ÇEK ---
-        // Sayfada titan/w/ kodunu arıyoruz
-        const match = html.match(/titan\/w\/([a-zA-Z0-9]{11})/);
+        // --- YENİLENMİŞ CIMBIZ (REGEX) ---
+        // Sadece titan/w/ değil, ttn/w/ veya ttn/p/ gibi varyasyonları da arar.
+        // Ayrıca tırnak içinde veya dışında olmasını önemsemez.
+        const titanRegex = /(?:titan|ttn)\/(?:w|p)\/([a-zA-Z0-9]{11})/;
+        const match = html.match(titanRegex);
         
         if (!match) {
-            console.error("[HATA-02] Sayfa açıldı ama içinde titan kodu yok. Kaynağı kontrol et.");
-            return [];
+            // Eğer hala bulamazsa, alternatif bir "data-id" veya "player" araması yapar
+            const altMatch = html.match(/data-id="([a-zA-Z0-9]{11})"/);
+            if (altMatch) {
+                var key = altMatch[1];
+            } else {
+                console.error("[HATA-02] Sayfada video anahtarı (11 hane) hiçbir formatta bulunamadı.");
+                return [];
+            }
+        } else {
+            var key = match[1];
         }
 
-        const key = match[1];
-        console.log(`[BİLGİ] Anahtar yakalandı: ${key}`);
+        console.log(`[BAŞARILI] Anahtar Yakalandı: ${key}`);
 
-        // --- ADIM 3: VİDEOPARK SORGUSU ---
+        // --- VİDEOPARK SORGUSU ---
         const playerRes = await fetch(`https://videopark.top/titan/w/${key}`, {
             headers: { 'Referer': 'https://jetfilmizle.net/' }
         });
 
         const playerHtml = await playerRes.text();
+        
+        // _sd objesini yakala
         const sdMatch = playerHtml.match(/var\s+_sd\s*=\s*({[\s\S]*?});/);
         
         if (!sdMatch) {
-            console.error("[HATA-04] Oynatıcı sayfasında veri yok.");
+            console.error("[HATA-04] Oynatıcı sayfasında veri paketi yok.");
             return [];
         }
 
         const data = JSON.parse(sdMatch[1]);
 
         return [{
-            name: "Titan-Direkt",
+            name: "Titan-Power",
             url: data.stream_url,
             type: "hls",
             headers: {
@@ -62,7 +66,7 @@ async function getStreams(id, mediaType, season, episode) {
         }];
 
     } catch (e) {
-        console.error(`[HATA-SİSTEM] Teknik hata: ${e.message}`);
+        console.error(`[KRİTİK HATA] ${e.message}`);
         return [];
     }
 }
