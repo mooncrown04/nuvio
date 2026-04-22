@@ -1,83 +1,98 @@
 /**
- * JetFilmizle - Tüm Diziler İçin Otomatik Anahtar Bulucu
- * Senin çalışan Videopark/Titan mantığını tüm siteye uygular.
+ * JetFilmizle - Otomatik Titan Çözücü
+ * Amacımız: Sayfa kaynağındaki 11 haneli gizli anahtarı bulup videoyu oynatmak.
  */
 
 var BASE_URL = 'https://jetfilmizle.net';
-var TMDB_API_KEY = '500330721680edb6d5f7f12ba7cd9023';
 
 async function getStreams(id, mediaType, season, episode) {
+    // Sadece TV dizileri için çalışır
     if (mediaType !== 'tv') return [];
 
     try {
-        // 1. TMDB üzerinden dizinin slug (metin) adını al
-        const tmdbId = id.toString().replace(/[^0-9]/g, '');
-        const tmdbRes = await fetch(`https://api.themoviedb.org/3/tv/${tmdbId}?api_key=${TMDB_API_KEY}&language=tr-TR`);
-        const info = await tmdbRes.json();
-        const slug = (info.name || "").toLowerCase()
-            .replace(/ğ/g,'g').replace(/ü/g,'u').replace(/ş/g,'s').replace(/ı/g,'i').replace(/ö/g,'o').replace(/ç/g,'c')
-            .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+        // --- ADIM 1: Dizi Sayfasına Bağlanma ---
+        // Örn: https://jetfilmizle.net/dizi/cobra-kai/sezon-1/bolum-1
+        // Not: 'slug' kısmını eklentinin kendi sisteminden aldığını varsayıyoruz.
+        const targetUrl = `${BASE_URL}/dizi/${id}/sezon-${season}/bolum-${episode}`;
         
-        const targetUrl = `${BASE_URL}/dizi/${slug}/sezon-${season}/bolum-${episode}`;
-        console.error(`[SAYFA-TARANIYOR] ${targetUrl}`);
+        const pageRes = await fetch(targetUrl, { 
+            headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' } 
+        });
 
-        // 2. Dizi sayfasını çek ve içindeki 11 haneli Titan anahtarını bul
-        const pageRes = await fetch(targetUrl, { headers: { 'User-Agent': 'Mozilla/5.0' } });
+        if (!pageRes.ok) {
+            console.error(`[HATA-01] Dizi sayfasına ulaşılamadı. Durum: ${pageRes.status}`);
+            return [];
+        }
+
         const html = await pageRes.text();
 
-        // Sayfadaki tüm 11 haneli karmaşık kodları bulur (DFADXFgPDU4 gibi)
-        const pattern = /[a-zA-Z0-9_-]{11}/g;
-        const matches = html.match(pattern) || [];
+        // --- ADIM 2: GİZLİ ANAHTARI BULMA (EN ÖNEMLİ YER) ---
+        // Sayfa kaynağında (senin attığın cobra-kai.js gibi) titan/w/ kalıbını arar.
+        // Bu "Aha burada!" dediğimiz 11 haneli kodu yakalayan kısımdır.
+        const keyMatch = html.match(/titan\/w\/([a-zA-Z0-9_-]{11})/);
         
-        // Google kodlarını eler, içinde büyük harf ve rakam olan "gerçek" anahtarı seçer
-        const finalKey = matches.find(c => 
-            /[A-Z]/.test(c) && /[0-9]/.test(c) && !/google|GTM|analytics/i.test(c)
-        ) || "DFADXFgPDU4"; // Bulamazsa fallback olarak Cobra Kai kodunu kullanır
+        if (!keyMatch || !keyMatch[1]) {
+            console.error("[HATA-02] Sayfa kaynağında 11 haneli Titan anahtarı bulunamadı!");
+            return [];
+        }
 
-        // 3. SENİN ÇALIŞAN VİDEOPARK SİSTEMİN
+        const finalKey = keyMatch[1];
+        console.log(`[BAŞARILI] Giriş Anahtarı Yakalandı: ${finalKey}`);
+
+        // --- ADIM 3: VİDEOPARK SİSTEMİNE GİRİŞ ---
         const playerUrl = `https://videopark.top/titan/w/${finalKey}`;
-        console.error(`[TITAN-BAĞLANTI] Anahtar: ${finalKey}`);
-
+        
         const response = await fetch(playerUrl, {
             headers: {
                 'Referer': 'https://jetfilmizle.net/',
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
             }
         });
         
+        if (!response.ok) {
+            console.error("[HATA-03] Videopark oynatıcı sayfasına girilemedi.");
+            return [];
+        }
+
         const playerHtml = await response.text();
 
-        // Senin verdiğin o meşhur _sd objesini HTML'den ayıklama
+        // --- ADIM 4: _SD OBJESİNİ ÇÖZME ---
+        // Senin dün üzerinde çalıştığın, video linklerini içeren JSON objesi.
         const sdMatch = playerHtml.match(/var\s+_sd\s*=\s*({[\s\S]*?});/);
         
-        if (sdMatch) {
-            const data = JSON.parse(sdMatch[1]);
-            const streamUrl = data.stream_url;
+        if (!sdMatch) {
+            console.error("[HATA-04] Oynatıcı sayfasında '_sd' veri objesi bulunamadı.");
+            return [];
+        }
 
-            // Altyazıları senin istediğin formatta diziye çevir
-            const subtitles = data.subtitles ? data.subtitles.map(s => ({
+        const data = JSON.parse(sdMatch[1]);
+        const streamUrl = data.stream_url;
+
+        if (!streamUrl) {
+            console.error("[HATA-05] _sd objesi var ama içinde video linki (stream_url) yok.");
+            return [];
+        }
+
+        // --- SONUÇ: VERİYİ NUVIO/PLAYER FORMATINA GÖNDERME ---
+        console.log("[TAMAMLANDI] Video linki başarıyla hazırlandı.");
+        
+        return [{
+            name: "Jet-Titan (Auto)",
+            url: streamUrl,
+            type: "hls",
+            subtitles: data.subtitles ? data.subtitles.map(s => ({
                 url: s.file,
                 language: s.label,
                 format: "vtt"
-            })) : [];
-
-            return [{
-                name: "Jet-Titan (Otomatik)",
-                url: streamUrl,
-                type: "hls",
-                subtitles: subtitles,
-                headers: {
-                    'Referer': 'https://videopark.top/',
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
-                }
-            }];
-        }
-
-        console.error("[HATA] Sayfada anahtar bulundu ama _sd objesi çözülemedi.");
-        return [];
+            })) : [],
+            headers: {
+                'Referer': 'https://videopark.top/',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
+            }
+        }];
 
     } catch (err) {
-        console.error(`[KRİTİK-HATA] ${err.message}`);
+        console.error(`[KRİTİK HATA] Beklenmedik bir sorun oluştu: ${err.message}`);
         return [];
     }
 }
