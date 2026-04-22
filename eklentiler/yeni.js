@@ -1,6 +1,6 @@
 /**
- * JetFilmizle - Filtreli Titan Sökücü
- * Odak: Yanlış anahtar (jetfilmizle) yerine GERÇEK anahtarı yakalamak.
+ * JetFilmizle - Deep Scraper
+ * Odak: Sayfada gizlenen, düz metin olmayan anahtarı yakalamak.
  */
 
 async function getStreams(id, mediaType, season, episode) {
@@ -17,39 +17,44 @@ async function getStreams(id, mediaType, season, episode) {
 
         const html = await res.text();
 
-        // --- GELİŞMİŞ FİLTRELİ CIMBIZ ---
-        // 'jetfilmizle' kelimesini ve 11 hane olmayanları otomatik eler.
-        const allMatches = html.matchAll(/(?:titan|ttn)\/(?:w|p)\/([a-zA-Z0-9_-]{11})|["'](?:id|key|data-id|data-film-id)["']\s*[:=]\s*["']([a-zA-Z0-9_-]{11})["']/g);
+        // --- ULTRA AGRESİF TARAMA ---
+        // Sadece titan/w/ değil, her türlü 11 haneli rastgele dizilimi ara.
+        // Ama site adını (jetfilmizle) ve bilinen sabit kelimeleri ele.
+        const potentialKeys = html.match(/[a-zA-Z0-9_-]{11}/g) || [];
+        const forbidden = ['jetfilmizle', 'googleanal', 'description', 'viewport-fi'];
         
         let key = null;
-        for (const match of allMatches) {
-            let tempKey = match[1] || match[2];
-            // Eğer yakalanan şey 'jetfilmizle' ise veya sayıdan ibaretse pas geç, gerçeğini ara
-            if (tempKey && tempKey.toLowerCase() !== 'jetfilmizle' && tempKey.length === 11) {
-                key = tempKey;
-                break; 
+        for (let k of potentialKeys) {
+            // Basit filtre: İçinde hem büyük hem küçük harf veya rakam karışık olanları seç (Rastgelelik kontrolü)
+            if (!forbidden.some(f => k.toLowerCase().includes(f)) && 
+                /[a-z]/.test(k) && /[A-Z]/.test(k) && /[0-9]/.test(k)) {
+                key = k;
+                break;
             }
         }
 
-        // Eğer hala bulunamadıysa iframe src'lerine daha dikkatli bak
+        // Eğer hala yoksa iframe src'sini manuel parçala
         if (!key) {
-            const iframeMatch = html.match(/iframe[^>]+src="[^"]+(?:titan|ttn)\/(?:w|p)\/([a-zA-Z0-9_-]{11})/);
-            if (iframeMatch) key = iframeMatch[1];
+            const iframeSrc = html.match(/iframe[^>]+src=["']([^"']+)["']/);
+            if (iframeSrc && iframeSrc[1].includes('titan')) {
+                const part = iframeSrc[1].split('/').pop();
+                if (part.length === 11) key = part;
+            }
         }
 
         if (!key) {
-            console.error(`[HATA-02] Gerçek anahtar bulunamadı. Filtreye takılmış olabilir.`);
+            console.error("[HATA-02] Anahtar hala gizli. Kaynak kodunda 11 haneli rastgele dizi yok.");
             return [];
         }
 
-        console.log(`[BİLGİ] Gerçek Anahtar Yakalandı: ${key}`);
+        console.log(`[BİLGİ] Bulunan Muhtemel Anahtar: ${key}`);
 
         // --- VİDEOPARK SORGUSU ---
         const playerUrl = `https://videopark.top/titan/w/${key}`;
         const playerRes = await fetch(playerUrl, {
             headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
                 'Referer': targetUrl,
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
                 'X-Requested-With': 'XMLHttpRequest'
             }
         });
@@ -60,14 +65,9 @@ async function getStreams(id, mediaType, season, episode) {
         if (sdMatch) {
             const data = JSON.parse(sdMatch[1]);
             return [{
-                name: "Titan-Fixed",
+                name: "Titan-Universal",
                 url: data.stream_url,
                 type: "hls",
-                subtitles: data.subtitles ? data.subtitles.map(s => ({
-                    url: s.file,
-                    language: s.label,
-                    format: "vtt"
-                })) : [],
                 headers: {
                     'Referer': 'https://videopark.top/',
                     'User-Agent': 'Mozilla/5.0'
@@ -75,11 +75,11 @@ async function getStreams(id, mediaType, season, episode) {
             }];
         }
 
-        console.error(`[HATA-04] Link sökülemedi! Anahtar: ${key} | Yanıt: ${playerHtml.substring(0, 50)}`);
+        console.error(`[HATA-04] Link sökülemedi. Anahtar: ${key}`);
         return [];
 
     } catch (e) {
-        console.error(`[KRİTİK] ${e.message}`);
+        console.error(`[SİSTEM HATASI] ${e.message}`);
         return [];
     }
 }
