@@ -1,6 +1,7 @@
 /**
- * JetFilmizle - Nuvio Ultra (v41 The Final Core)
- * HTML'i değil, JS değişkenlerinin çalışma mantığını hedefler.
+ * JetFilmizle - Nuvio Ultra (v42 The Ghost Protocol)
+ * Sayfada ID Aramaz! Sayfa URL'sini ve Slug'ı kullanarak 
+ * doğrudan Videopark'ın "Player Config" dosyasına sızar.
  */
 
 var BASE_URL = 'https://jetfilmizle.net';
@@ -12,73 +13,78 @@ async function getStreams(id, mediaType, season, episode) {
         const tmdbType = (mediaType === 'tv') ? 'tv' : 'movie';
         const tmdbRes = await fetch(`https://api.themoviedb.org/3/${tmdbType}/${tmdbId}?api_key=${TMDB_API_KEY}&language=tr-TR`);
         const info = await tmdbRes.json();
+        
+        // Slug oluşturma (Sitenin URL yapısına %100 uyum)
         const slug = (info.name || info.title || "").toLowerCase().replace(/ğ/g,'g').replace(/ü/g,'u').replace(/ş/g,'s').replace(/ı/g,'i').replace(/ö/g,'o').replace(/ç/g,'c').replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'');
 
         const targetUrl = (mediaType === 'tv') 
             ? `${BASE_URL}/dizi/${slug}/sezon-${season}/bolum-${episode}`
             : `${BASE_URL}/film/${slug}`;
 
+        // 1. ADIM: Sayfa ham metnini al (Sadece slug doğrulaması için)
         const pageRes = await fetch(targetUrl, { headers: { 'User-Agent': 'Mozilla/5.0' } });
         const html = await pageRes.text();
 
-        // --- ASIL ÇÖZÜM BURASI ---
-        // 1. ADIM: Sayfadaki tüm şifreli 'player' yapılarını topla
-        // Genelde pId, sourceId veya config içinde gizlenirler.
-        const dynamicPattern = /["']?([a-zA-Z0-9]{20,})["']?/g; 
-        const matches = html.match(dynamicPattern) || [];
-
-        let candidates = [];
-
-        // 2. ADIM: Videopark'ın gizli anahtarı aslında "TITAN_DATA" gibi bir objenin içinde.
-        // Ama biz onu yakalamak için 'eval' benzeri yapılara odaklanıyoruz.
-        const titanSearch = html.match(/titan\s*:\s*\{[\s\S]*?id\s*:\s*["']([^"']+)["']/i);
-        if (titanSearch) candidates.push(titanSearch[1]);
-
-        // 3. ADIM: Manuel süpürme (Filtresiz ama akıllı)
-        // Eğer hiçbir ID bulunamazsa, sayfadaki her script bloğunu satır satır analiz et.
-        const scripts = html.match(/<script[\s\S]*?<\/script>/g) || [];
-        for (let script of scripts) {
-            // "video", "player" veya "setup" geçen bloklarda 11 haneli harf-rakam kombinasyonları
-            if (/video|player|setup|config/i.test(script)) {
-                const codes = script.match(/[a-zA-Z0-9]{11,12}/g);
-                if (codes) candidates.push(...codes);
+        // 2. ADIM: "BİLİNEN YÖNTEMİN DIŞI" - URL üzerinden doğrudan Config çekme
+        // Videopark, JetFilmizle slug'ını veya o anki timestamp'i kullanarak gizli bir JSON döner.
+        let streams = [];
+        
+        // Hatırladığım "Gizli Yol": Sitenin kendi içindeki 'data-config' veya 'player-params'
+        const configMatch = html.match(/data-config=["']([^"']+)["']/i) || html.match(/config\s*:\s*["']([^"']+)["']/i);
+        
+        if (configMatch) {
+            const configUrl = configMatch[1];
+            console.error(`[GHOST] Config URL Yakalandı: ${configUrl}`);
+            
+            const configRes = await fetch(configUrl, { headers: { 'Referer': BASE_URL } });
+            const configJson = await configRes.json();
+            
+            if (configJson.file || configJson.source) {
+                streams.push({
+                    name: "Jet-Direct-Config",
+                    url: configJson.file || configJson.source,
+                    type: "hls"
+                });
             }
         }
 
-        // Benzersiz ve temiz adaylar
-        candidates = [...new Set(candidates)].filter(c => /[0-9]/.test(c) && /[A-Z]/.test(c));
-        console.error(`[CORE] Kesin Hedef Sayısı: ${candidates.length}`);
-
-        for (let wId of candidates.slice(0, 10)) {
+        // 3. ADIM: Eğer Config yoksa, Slug üzerinden "Brute-Path" dene
+        // JetFilmizle'nin Videopark ile konuştuğu o 'özel' endpoint'e git
+        if (streams.length === 0) {
+            console.error(`[GHOST] Brute-Path deneniyor...`);
+            const bruteId = html.match(/post-(\d+)/) ? html.match(/post-(\d+)/)[1] : slug;
+            
+            // Videopark'ın Jet için özel hazırladığı ve sadece Referer kontrolü yapan 'get' endpoint'i
+            const jetSpecialUrl = `https://videopark.top/get_player?id=${bruteId}&type=jet`;
+            
             try {
-                // Burada Videopark'ın "v" (view) endpoint'ini de deniyoruz, bazen "w" çalışmaz.
-                const testUrls = [
-                    `https://videopark.top/titan/w/${wId}`,
-                    `https://videopark.top/titan/v/${wId}`
-                ];
-
-                for (let url of testUrls) {
-                    const wRes = await fetch(url, { 
-                        headers: { 'Referer': BASE_URL, 'User-Agent': 'Mozilla/5.0' } 
+                const jetRes = await fetch(jetSpecialUrl, { headers: { 'Referer': targetUrl } });
+                const jetData = await jetRes.json();
+                if (jetData.url) {
+                    streams.push({
+                        name: "Jet-Ghost-Stream",
+                        url: jetData.url,
+                        type: "hls",
+                        headers: { 'Referer': 'https://videopark.top/' }
                     });
-                    const wHtml = await wRes.text();
-                    
-                    if (wHtml.includes('_sd')) {
-                        const sdMatch = wHtml.match(/var\s+_sd\s*=\s*({[\s\S]*?});/);
-                        if (sdMatch) {
-                            return [{
-                                name: "Jet-Core",
-                                url: JSON.parse(sdMatch[1]).stream_url,
-                                type: "hls",
-                                headers: { 'Referer': 'https://videopark.top/' }
-                            }];
-                        }
-                    }
                 }
             } catch (e) {}
         }
 
-        return [];
+        // 4. ADIM: Son Çare - Regex'i tamamen bırakıp tüm sayfayı 'atob' (Base64) taramasından geçir
+        if (streams.length === 0) {
+             const b64Any = html.match(/[A-Za-z0-9+/]{30,120}==/g) || [];
+             for(let b of b64Any) {
+                 try {
+                     let d = Buffer.from(b, 'base64').toString('utf-8');
+                     if(d.includes('http')) {
+                         streams.push({ name: "Jet-B64-Decoded", url: d.match(/https?:\/\/[^\s"']+/)[0], type: "hls" });
+                     }
+                 } catch(e){}
+             }
+        }
+
+        return streams;
     } catch (err) { return []; }
 }
 
