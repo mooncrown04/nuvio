@@ -1,5 +1,5 @@
 /**
- * JetFilmizle — Nuvio Provider (Universal Decoder)
+ * JetFilmizle — Nuvio Provider (Advanced Deobfuscator)
  */
 
 var BASE_URL     = 'https://jetfilmizle.net';
@@ -18,7 +18,7 @@ function titleToSlug(t) {
 }
 
 function getStreams(id, mediaType, season, episode) {
-    console.error('[JetFilm-Debug] Çözücü Başlatıldı: S' + season + ' E' + episode);
+    console.error('[JetFilm-Debug] Deobfuscator Aktif: S' + season + ' E' + episode);
     
     var tmdbId = id.toString().replace(/[^0-9]/g, '');
     var type = (mediaType === 'tv') ? 'tv' : 'movie';
@@ -34,67 +34,64 @@ function getStreams(id, mediaType, season, episode) {
         .then(function(html) {
             var streams = [];
             
-            // 1. ADIM: Buton Index'ini yakala (Sende 23 çıkmıştı)
+            // 1. ADIM: Buton Index'ini alalım (Doğru bölümü eşlemek için)
             var btnRegex = new RegExp('data-source-index="(\\d+)"[^>]*data-season="' + season + '"[^>]*data-episode="' + episode + '"', 'i');
             var btnMatch = btnRegex.exec(html);
             var targetIdx = btnMatch ? parseInt(btnMatch[1]) : -1;
 
-            // 2. ADIM: Sayfa içindeki Base64 veya gizli JSON bloklarını ara
-            // Jetfilm bazen veriyi 'W3siaW5kZXgiOjAsInVybCI6...' gibi uzun bir string içine gömer.
-            var secretDataRegex = /["']([A-Za-z0-9+/]{100,})["']/g;
-            var m;
-            while ((m = secretDataRegex.exec(html)) !== null) {
-                try {
-                    var decoded = atob(m[1]);
-                    if (decoded.includes('"url"') || decoded.includes('"file"')) {
-                        console.error('[JetFilm-Debug] Gizli Veri Çözüldü!');
-                        var parsed = JSON.parse(decoded);
-                        if (Array.isArray(parsed)) {
-                            // Eğer hedef index bulunduysa sadece onu, yoksa tümünü ekle
-                            var item = (targetIdx !== -1) ? parsed[targetIdx] : null;
-                            if (item) {
-                                streams.push(createStream(item.url || item.file, item.title));
-                            } else {
-                                parsed.forEach(function(i) { streams.push(createStream(i.url || i.file, i.title)); });
-                            }
+            // 2. ADIM: Sayfa içindeki TÜM tırnak içindeki verileri topla
+            // Obfuscated (karmaşıklaştırılmış) kodlarda URL'ler genelde parçalı durur.
+            var stringRegex = /["']((?:https?:)?(?:\/\/)[^"']+)["']/gi;
+            var matches = html.match(stringRegex) || [];
+            
+            // 3. ADIM: Agresif URL Temizleme ve Filtreleme
+            matches.forEach(function(m) {
+                var rawUrl = m.replace(/["']/g, '').replace(/\\/g, '');
+                
+                // JetFilm'in kullandığı tüm bilinen CDN ve Player yapıları
+                if (/jetv|titan|videopark|d2rs|vcloud|moly|vcdn|play|embed|storage/i.test(rawUrl)) {
+                    var cleanUrl = rawUrl.split('?')[0]; // Bazı query'leri temizle
+                    if (!cleanUrl.endsWith('.jpg') && !cleanUrl.endsWith('.png') && !cleanUrl.endsWith('.css')) {
+                        var fullUrl = cleanUrl.startsWith('//') ? 'https:' + cleanUrl : cleanUrl;
+                        
+                        if (!streams.some(function(s) { return s.url === fullUrl; })) {
+                            streams.push({
+                                name: "JetFilmizle",
+                                title: '⌜ Kaynak ⌟ | HD',
+                                url: fullUrl,
+                                type: 'embed'
+                            });
                         }
                     }
-                } catch(e) { /* Base64 değilse atla */ }
-            }
-
-            // 3. ADIM: Klasik Regex Taraması (Fallback)
-            var urlPatterns = [
-                /(?:https?:)?\/\/[^\s"'<>]+(?:titan|jetv|videopark|d2rs|vcloud|moly|vcdn)[^\s"'<>]*/gi,
-                /["'](https?:\/\/[^"']+\.mp4[^"']*)["']/gi
-            ];
-
-            urlPatterns.forEach(function(pattern) {
-                var matches = html.match(pattern) || [];
-                matches.forEach(function(u) {
-                    var clean = u.replace(/\\/g, '').split('"')[0];
-                    if (!streams.some(function(s) { return s.url === clean; })) {
-                        streams.push(createStream(clean, "Kaynak"));
-                    }
-                });
+                }
             });
 
-            console.error('[JetFilm-Debug] Sonuç: ' + streams.length + ' kaynak.');
+            // 4. ADIM: Eğer hala 0 ise, sayfa içinde gizli 'eval' paketleri varsa onları brute-force tara
+            if (streams.length === 0) {
+                console.error('[JetFilm-Debug] Kaynak bulunamadı, script blokları derinlemesine taranıyor...');
+                // Sayfadaki tüm script içeriklerini birleştirip içinde link ara
+                var scripts = html.match(/<script\b[^>]*>([\s\S]*?)<\/script>/gim) || [];
+                scripts.forEach(function(s) {
+                    if (s.includes('titan') || s.includes('player')) {
+                        var innerMatch = s.match(/(?:https?:)?\/\/[^\s"'<>]+/gi);
+                        if (innerMatch) {
+                            innerMatch.forEach(function(url) {
+                                if (url.includes('titan') || url.includes('jetv')) {
+                                    streams.push({ name: "JetFilmizle", title: "⌜ Yedek ⌟", url: url, type: "embed" });
+                                }
+                            });
+                        }
+                    }
+                });
+            }
+
+            console.error('[JetFilm-Debug] İşlem Tamam. Kaynak: ' + streams.length);
             return streams;
         })
         .catch(function(err) {
-            console.error('[JetFilm-Debug] HATA: ' + err.message);
+            console.error('[JetFilm-Debug] KRİTİK HATA: ' + err.message);
             return [];
         });
-}
-
-function createStream(url, title) {
-    var fUrl = url.startsWith('//') ? 'https:' + url : url;
-    return {
-        name: "JetFilmizle",
-        title: '⌜ ' + (title || 'HD Kaynak') + ' ⌟',
-        url: fUrl,
-        type: 'embed'
-    };
 }
 
 if (typeof module !== 'undefined' && module.exports) { module.exports = { getStreams: getStreams }; }
