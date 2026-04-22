@@ -1,5 +1,5 @@
 /**
- * JetFilmizle — Nuvio Provider (Titan API Edition)
+ * JetFilmizle — Nuvio Provider (Session-Hardened)
  */
 
 var BASE_URL     = 'https://jetfilmizle.net';
@@ -18,79 +18,91 @@ function titleToSlug(t) {
         .replace(/ç/g,'c').replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'');
 }
 
-function getStreams(id, mediaType, season, episode) {
-    console.error('[JetFilm-Debug] Titan API Taraması: S' + season + ' E' + episode);
+async function getStreams(id, mediaType, season, episode) {
+    console.error('[JetFilm-Debug] Derin Tarama Başlatıldı: S' + season + ' E' + episode);
     
-    var tmdbId = id.toString().replace(/[^0-9]/g, '');
-    var type = (mediaType === 'tv') ? 'tv' : 'movie';
+    try {
+        var tmdbId = id.toString().replace(/[^0-9]/g, '');
+        var type = (mediaType === 'tv') ? 'tv' : 'movie';
 
-    return fetch('https://api.themoviedb.org/3/' + type + '/' + tmdbId + '?api_key=' + TMDB_API_KEY + '&language=tr-TR')
-        .then(function(r) { return r.json(); })
-        .then(function(info) {
-            var slug = titleToSlug(info.name || info.title);
-            var finalUrl = BASE_URL + '/' + (mediaType === 'tv' ? 'dizi' : 'film') + '/' + slug;
-            return fetch(finalUrl, { headers: HEADERS });
-        })
-        .then(function(r) { return r.text(); })
-        .then(function(html) {
-            var streams = [];
-            
-            // 1. ADIM: Film ID'sini al (Sayfa içindeki global değişken veya inputtan)
-            var filmIdM = html.match(/name="film_id" value="(\d+)"/) || html.match(/post_id\s*:\s*(\d+)/);
-            if (!filmIdM) return [];
+        // 1. TMDB Bilgisi
+        const tmdbRes = await fetch('https://api.themoviedb.org/3/' + type + '/' + tmdbId + '?api_key=' + TMDB_API_KEY + '&language=tr-TR');
+        const info = await tmdbRes.json();
+        const slug = titleToSlug(info.name || info.title);
+        const finalUrl = BASE_URL + '/' + (mediaType === 'tv' ? 'dizi' : 'film') + '/' + slug;
 
-            var filmId = filmIdM[1];
-            console.error('[JetFilm-Debug] Film ID bulundu: ' + filmId);
+        // 2. Sayfayı Çek ve Oturum Parametrelerini Yakala
+        const pageRes = await fetch(finalUrl, { headers: HEADERS });
+        const html = await pageRes.text();
+        
+        var filmIdM = html.match(/name="film_id" value="(\d+)"/) || html.match(/post_id\s*:\s*(\d+)/);
+        if (!filmIdM) return [];
+        var filmId = filmIdM[1];
 
-            // 2. ADIM: AJAX isteğiyle asıl kaynakları "zorla" çek
-            // YouTube (trailer) linklerini buraya hiç dahil etmiyoruz
-            var formData = 'action=get_player_source&film_id=' + filmId + 
-                           '&season=' + season + '&episode=' + episode + 
-                           '&type=dublaj'; // Veya altyazi
+        // GÜVENLİK ANAHTARI (NONCE) AVLAMA: Bazı siteler 'jet_nonce' veya 'security' kullanır
+        var nonceMatch = html.match(/"nonce"\s*:\s*"([^"]+)"/) || html.match(/data-nonce="([^"]+)"/);
+        var nonce = nonceMatch ? nonceMatch[1] : '';
 
-            return fetch(BASE_URL + '/wp-admin/admin-ajax.php', {
+        console.error('[JetFilm-Debug] ID: ' + filmId + ' | Nonce: ' + nonce);
+
+        // 3. AJAX İsteği (Daha detaylı parametreler ile)
+        // Jetfilm bazen 'source_index' veya 'type' bekler
+        var streams = [];
+        var types = ['dublaj', 'altyazi']; // İkisini de dene
+        
+        for (let t of types) {
+            var body = new URLSearchParams({
+                'action': 'get_player_source',
+                'film_id': filmId,
+                'season': season,
+                'episode': episode,
+                'type': t,
+                'security': nonce // Nonce varsa ekle
+            });
+
+            const ajaxRes = await fetch(BASE_URL + '/wp-admin/admin-ajax.php', {
                 method: 'POST',
-                headers: Object.assign({}, HEADERS, { 'Content-Type': 'application/x-www-form-urlencoded' }),
-                body: formData
-            })
-            .then(function(res) { return res.json(); })
-            .then(function(json) {
-                if (json.success && json.data) {
-                    // Tek bir link veya link listesi gelebilir
-                    var videoUrl = json.data.video_url || json.data.url;
-                    if (videoUrl && !videoUrl.includes('youtube.com')) {
-                        streams.push({
-                            name: "JetFilmizle",
-                            title: "⌜ Asıl Kaynak ⌟",
-                            url: videoUrl.startsWith('//') ? 'https:' + videoUrl : videoUrl,
-                            type: 'embed'
-                        });
-                    }
-                }
-                
-                // 3. ADIM: Eğer AJAX boş dönerse, HTML içinde YouTube OLMAYAN tek linki ara
-                if (streams.length === 0) {
-                    var matches = html.match(/(?:https?:)?\/\/[^\s"'<>]+(?:titan|jetv|videopark|d2rs|vcloud)[^\s"'<>]*/gi) || [];
-                    matches.forEach(function(u) {
-                        if (!u.includes('youtube') && !u.includes('google')) {
-                            streams.push({
-                                name: "JetFilmizle",
-                                title: "⌜ Yedek Kaynak ⌟",
-                                url: u.startsWith('//') ? 'https:' + u : u,
-                                type: 'embed'
-                            });
-                        }
+                headers: Object.assign({}, HEADERS, { 
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                    'Referer': finalUrl // Referer mutlaka sayfanın kendisi olmalı
+                }),
+                body: body.toString()
+            });
+
+            const json = await ajaxRes.json();
+            if (json.success && json.data && json.data.video_url) {
+                let vUrl = json.data.video_url;
+                if (!vUrl.includes('youtube.com')) {
+                    streams.push({
+                        name: "JetFilmizle",
+                        title: "⌜ " + t.toUpperCase() + " ⌟",
+                        url: vUrl.startsWith('//') ? 'https:' + vUrl : vUrl,
+                        type: 'embed'
                     });
                 }
+            }
+        }
 
-                console.error('[JetFilm-Debug] Sonuç (YouTube Hariç): ' + streams.length);
-                return streams;
+        // 4. SON ÇARE: Titan Player'ın statik bir parçasını yakalamaya çalış
+        if (streams.length === 0) {
+            // Sayfa içinde gizlenmiş olabilecek her türlü player URL'sini ara (Youtube hariç)
+            var regex = /(?:https?:)?\/\/[^\s"'<>]+(?:titan|jetv|videopark|d2rs|vcloud|moly|vcdn|play|embed|storage)[^\s"'<>]*/gi;
+            var matches = html.match(regex) || [];
+            matches.forEach(u => {
+                if (!u.includes('youtube') && !u.includes('google')) {
+                    var clean = u.replace(/\\/g, '').split(/[\\"']/)[0];
+                    streams.push({ name: "JetFilmizle", title: "⌜ Yedek ⌟", url: clean, type: "embed" });
+                }
             });
-        })
-        .catch(function(err) {
-            console.error('[JetFilm-Debug] HATA: ' + err.message);
-            return [];
-        });
+        }
+
+        console.error('[JetFilm-Debug] Final: ' + streams.length + ' kaynak bulundu.');
+        return streams;
+
+    } catch (err) {
+        console.error('[JetFilm-Debug] HATA: ' + err.message);
+        return [];
+    }
 }
 
 if (typeof module !== 'undefined' && module.exports) { module.exports = { getStreams: getStreams }; }
