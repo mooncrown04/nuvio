@@ -1,14 +1,12 @@
 /**
- * JetFilmizle - Nuvio Ultra (v29 Gatling Gun)
- * Sayfadaki tüm potansiyel ID'leri (36 aday) doğrudan Videopark Titan'da test eder.
+ * JetFilmizle - Nuvio Ultra (v31 Worker Bridge)
+ * Videopark ID'lerini ExoPlayer'ın anlayacağı HLS (.m3u8) formatına çevirir.
  */
 
 var BASE_URL = 'https://jetfilmizle.net';
 var TMDB_API_KEY = '500330721680edb6d5f7f12ba7cd9023';
 
 async function getStreams(id, mediaType, season, episode) {
-    console.error(`[HUNTER] Başlatıldı: ${mediaType} - ID: ${id}`);
-    
     try {
         const tmdbId = id.toString().replace(/[^0-9]/g, '');
         const tmdbType = (mediaType === 'tv') ? 'tv' : 'movie';
@@ -21,68 +19,62 @@ async function getStreams(id, mediaType, season, episode) {
             ? `${BASE_URL}/dizi/${slug}/sezon-${season}/bolum-${episode}`
             : `${BASE_URL}/film/${slug}`;
 
+        // 1. Sayfaya git ve asıl "Worker ID"yi (DFADX...) ara
         const pageRes = await fetch(targetUrl, { headers: { 'User-Agent': 'Mozilla/5.0' } });
         const html = await pageRes.text();
 
+        // Regex'i senin verdiğin Cobra Kai örneğine (DFADX) göre özelleştirdim
+        const workerRegex = /(DFADX[a-zA-Z0-9_-]+|[a-zA-Z0-9_-]{11})/g;
+        let workerIds = [...new Set(html.match(workerRegex) || [])];
+
         let streams = [];
-        
-        // 1. ADIM: TÜM POTANSİYEL ID'LERİ TOPLA (O 36 ADAY)
-        // Hem DFADX formatını hem de 11 haneli karmaşık ID'leri yakalar
-        const idRegex = /(?:["']|data-id=|titan\/w\/|id=)(DFADX[a-zA-Z0-9_-]+|[a-zA-Z0-9_-]{11})(?:["']| )/gi;
-        let candidates = [];
-        let m;
-        while ((m = idRegex.exec(html)) !== null) {
-            let cId = m[1];
-            if (!cId.startsWith('G-') && !cId.includes('search') && candidates.indexOf(cId) === -1) {
-                candidates.push(cId);
-            }
-        }
 
-        console.error(`[HUNTER] Test Edilecek ID Sayısı: ${candidates.length}`);
+        // 2. Bulunan her bir Worker ID için ExoPlayer köprüsü kur
+        for (let wId of workerIds) {
+            // Analiz kodlarını ve gereksizleri ele
+            if (wId.length < 11 || wId.startsWith('G-')) continue;
 
-        // 2. ADIM: HER BİRİNİ TİTAN'A SOR (Hızlı Paralel İstek Değil, Sıralı ve Güvenli)
-        for (let tId of candidates) {
-            console.error(`[HUNTER] Sorgulanıyor: ${tId}`);
+            const workerUrl = `https://videopark.top/titan/w/${wId}`;
+            console.error(`[WORKER] Exo Bridge Kuruluyor: ${workerUrl}`);
+
             try {
-                const tRes = await fetch(`https://videopark.top/titan/w/${tId}`, { 
-                    headers: { 'Referer': BASE_URL, 'User-Agent': 'Mozilla/5.0' } 
+                const wRes = await fetch(workerUrl, { 
+                    headers: { 'Referer': 'https://jetfilmizle.net/', 'User-Agent': 'Mozilla/5.0' } 
                 });
-                const tText = await tRes.text();
-                
-                // Titan'ın meşhur _sd verisini ara
-                const sdMatch = tText.match(/var\s+_sd\s*=\s*({[\s\S]*?});/);
+                const wHtml = await wRes.text();
+
+                // ASIL MESELE: videopark sayfasındaki _sd değişkenini yakalamak
+                const sdMatch = wHtml.match(/var\s+_sd\s*=\s*({[\s\S]*?});/);
                 if (sdMatch) {
                     const data = JSON.parse(sdMatch[1]);
                     if (data.stream_url) {
-                        console.error(`[HUNTER-SUCCESS] Kaynak Patlatıldı: ${tId}`);
                         streams.push({
-                            name: "Videopark (Titan)",
-                            title: `⌜ Kaynak: ${tId.substring(0,4)} ⌟`,
-                            url: data.stream_url,
+                            name: "Jet-Worker (Exo)",
+                            title: `⌜ Kaynak: ${wId.substring(0,5)} ⌟`,
+                            url: data.stream_url, // Bu artık .m3u8 veya Exo'nun açacağı direkt linktir
                             type: "hls",
-                            headers: { 'Referer': 'https://videopark.top/' }
+                            headers: { 
+                                'Referer': 'https://videopark.top/',
+                                'User-Agent': 'Mozilla/5.0'
+                            }
                         });
-                        // Birkaç kaynak bulunca dur (Performans için)
-                        if (streams.length >= 3) break;
                     }
                 }
-            } catch (e) { continue; }
+            } catch (e) { console.error(`[WORKER-ERR] ${e.message}`); }
         }
 
-        // 3. ADIM: SON ÇARE (Klasik yöntem)
+        // Eğer Worker bulunamazsa direkt link ara (Bazı filmlerde direkt gelir)
         if (streams.length === 0) {
-            const sd = html.match(/var\s+_sd\s*=\s*({[\s\S]*?});/);
-            if (sd) {
-                const d = JSON.parse(sd[1]);
+            const sdDirect = html.match(/var\s+_sd\s*=\s*({[\s\S]*?});/);
+            if (sdDirect) {
+                const d = JSON.parse(sdDirect[1]);
                 streams.push({ name: "Jet-Direct", url: d.stream_url, type: "hls" });
             }
         }
 
-        console.error(`[HUNTER] Bitti. Toplam Kaynak: ${streams.length}`);
         return streams;
 
     } catch (err) {
-        console.error(`[HUNTER-HATA] ${err.message}`);
         return [];
     }
 }
