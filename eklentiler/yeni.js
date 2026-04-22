@@ -1,5 +1,5 @@
 /**
- * JetFilmizle — Nuvio Provider (Aggressive Scraper)
+ * JetFilmizle — Nuvio Provider (Universal Decoder)
  */
 
 var BASE_URL     = 'https://jetfilmizle.net';
@@ -7,8 +7,7 @@ var TMDB_API_KEY = '500330721680edb6d5f7f12ba7cd9023';
 
 var HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36',
-    'Referer': BASE_URL + '/',
-    'X-Requested-With': 'XMLHttpRequest'
+    'Referer': BASE_URL + '/'
 };
 
 function titleToSlug(t) {
@@ -19,7 +18,7 @@ function titleToSlug(t) {
 }
 
 function getStreams(id, mediaType, season, episode) {
-    console.error('[JetFilm-Debug] İşlem Başladı. S:' + season + ' E:' + episode);
+    console.error('[JetFilm-Debug] Çözücü Başlatıldı: S' + season + ' E' + episode);
     
     var tmdbId = id.toString().replace(/[^0-9]/g, '');
     var type = (mediaType === 'tv') ? 'tv' : 'movie';
@@ -29,50 +28,58 @@ function getStreams(id, mediaType, season, episode) {
         .then(function(info) {
             var slug = titleToSlug(info.name || info.title);
             var finalUrl = BASE_URL + '/' + (mediaType === 'tv' ? 'dizi' : 'film') + '/' + slug;
-            console.error('[JetFilm-Debug] Sayfa: ' + finalUrl);
             return fetch(finalUrl, { headers: HEADERS });
         })
         .then(function(r) { return r.text(); })
         .then(function(html) {
             var streams = [];
             
-            // 1. ADIM: Sayfa içindeki 'security' veya 'nonce' anahtarını ara
-            var nonceMatch = html.match(/"(?:nonce|security|token)"\s*:\s*"([^"]+)"/) || 
-                             html.match(/data-nonce="([^"]+)"/);
-            var nonce = nonceMatch ? nonceMatch[1] : '';
-            
-            var filmIdM = html.match(/name="film_id" value="(\d+)"/);
-            
-            if (mediaType === 'tv' && filmIdM) {
-                var filmId = filmIdM[1];
-                console.error('[JetFilm-Debug] FilmID: ' + filmId + ' | Nonce: ' + nonce);
-                
-                // AJAX isteğini tam yetkiyle tekrar dene
-                return fetch(BASE_URL + '/wp-admin/admin-ajax.php', {
-                    method: 'POST',
-                    headers: Object.assign({}, HEADERS, { 'Content-Type': 'application/x-www-form-urlencoded' }),
-                    body: 'action=get_player_source&film_id=' + filmId + '&season=' + season + '&episode=' + episode + '&type=dublaj&security=' + nonce
-                })
-                .then(function(res) { return res.text(); })
-                .then(function(text) {
-                    console.error('[JetFilm-Debug] AJAX Ham Yanıt: ' + text.substring(0, 100));
-                    try {
-                        var json = JSON.parse(text);
-                        if (json && json.data && json.data.video_url) {
-                            streams.push({
-                                name: "JetFilmizle",
-                                title: '⌜ Kaynak 1 ⌟',
-                                url: json.data.video_url.startsWith('//') ? 'https:' + json.data.video_url : json.data.video_url,
-                                type: 'embed'
-                            });
+            // 1. ADIM: Buton Index'ini yakala (Sende 23 çıkmıştı)
+            var btnRegex = new RegExp('data-source-index="(\\d+)"[^>]*data-season="' + season + '"[^>]*data-episode="' + episode + '"', 'i');
+            var btnMatch = btnRegex.exec(html);
+            var targetIdx = btnMatch ? parseInt(btnMatch[1]) : -1;
+
+            // 2. ADIM: Sayfa içindeki Base64 veya gizli JSON bloklarını ara
+            // Jetfilm bazen veriyi 'W3siaW5kZXgiOjAsInVybCI6...' gibi uzun bir string içine gömer.
+            var secretDataRegex = /["']([A-Za-z0-9+/]{100,})["']/g;
+            var m;
+            while ((m = secretDataRegex.exec(html)) !== null) {
+                try {
+                    var decoded = atob(m[1]);
+                    if (decoded.includes('"url"') || decoded.includes('"file"')) {
+                        console.error('[JetFilm-Debug] Gizli Veri Çözüldü!');
+                        var parsed = JSON.parse(decoded);
+                        if (Array.isArray(parsed)) {
+                            // Eğer hedef index bulunduysa sadece onu, yoksa tümünü ekle
+                            var item = (targetIdx !== -1) ? parsed[targetIdx] : null;
+                            if (item) {
+                                streams.push(createStream(item.url || item.file, item.title));
+                            } else {
+                                parsed.forEach(function(i) { streams.push(createStream(i.url || i.file, i.title)); });
+                            }
                         }
-                    } catch(e) { 
-                        console.error('[JetFilm-Debug] AJAX Parse Başarısız, manuel taramaya geçiliyor.');
                     }
-                    return finalScan(html, streams);
-                });
+                } catch(e) { /* Base64 değilse atla */ }
             }
-            return finalScan(html, streams);
+
+            // 3. ADIM: Klasik Regex Taraması (Fallback)
+            var urlPatterns = [
+                /(?:https?:)?\/\/[^\s"'<>]+(?:titan|jetv|videopark|d2rs|vcloud|moly|vcdn)[^\s"'<>]*/gi,
+                /["'](https?:\/\/[^"']+\.mp4[^"']*)["']/gi
+            ];
+
+            urlPatterns.forEach(function(pattern) {
+                var matches = html.match(pattern) || [];
+                matches.forEach(function(u) {
+                    var clean = u.replace(/\\/g, '').split('"')[0];
+                    if (!streams.some(function(s) { return s.url === clean; })) {
+                        streams.push(createStream(clean, "Kaynak"));
+                    }
+                });
+            });
+
+            console.error('[JetFilm-Debug] Sonuç: ' + streams.length + ' kaynak.');
+            return streams;
         })
         .catch(function(err) {
             console.error('[JetFilm-Debug] HATA: ' + err.message);
@@ -80,31 +87,15 @@ function getStreams(id, mediaType, season, episode) {
         });
 }
 
-function finalScan(html, streams) {
-    // Sayfa içinde gizlenmiş olabilecek tüm JSON yapılarını ve URL'leri yakala
-    var patterns = [
-        /https?:\/\/[^\s"'<>]+(?:titan|jetv|videopark|d2rs|vcloud)[^\s"'<>]*/gi,
-        /["']video_url["']\s*:\s*["']([^"']+)["']/gi
-    ];
-
-    patterns.forEach(function(p) {
-        var m;
-        while ((m = p.exec(html)) !== null) {
-            var url = m[1] || m[0];
-            if (!streams.some(function(s) { return s.url === url; })) {
-                streams.push({
-                    name: "JetFilmizle",
-                    title: '⌜ Kaynak ⌟',
-                    url: url.startsWith('//') ? 'https:' + url : url,
-                    type: 'embed'
-                });
-            }
-        }
-    });
-
-    console.error('[JetFilm-Debug] Final Sonuç: ' + streams.length);
-    return streams;
+function createStream(url, title) {
+    var fUrl = url.startsWith('//') ? 'https:' + url : url;
+    return {
+        name: "JetFilmizle",
+        title: '⌜ ' + (title || 'HD Kaynak') + ' ⌟',
+        url: fUrl,
+        type: 'embed'
+    };
 }
 
 if (typeof module !== 'undefined' && module.exports) { module.exports = { getStreams: getStreams }; }
-if (typeof globalThis !== 'undefined') { globalThis.getStreams = globalThis.getStreams || getStreams; }
+if (typeof globalThis !== 'undefined') { globalThis.getStreams = getStreams; }
