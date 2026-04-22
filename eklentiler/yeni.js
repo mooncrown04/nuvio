@@ -1,101 +1,78 @@
 /**
- * JetFilmizle - Universal Titan Resolver (Tam Otomatik)
- * Bu kod, sayfa kaynağından 11 haneli anahtarı otomatik olarak çeker.
+ * JetFilmizle - Titan Otomatik Çözücü
+ * Odak: Sayfa kaynağındaki 11 haneli anahtarı bulmak ve videoyu getirmek.
  */
 
-var BASE_URL = 'https://jetfilmizle.net';
-
 async function getStreams(id, mediaType, season, episode) {
-    // Sadece TV dizileri için çalışır, film ise boş döner
     if (mediaType !== 'tv') return [];
 
     try {
-        // --- 1. ADIM: Dizi Sayfasına Gidiş ---
-        // 'id' burada dizinin slug adıdır (örneğin: cobra-kai)
-        const targetUrl = `${BASE_URL}/dizi/${id}/sezon-${season}/bolum-${episode}`;
-        console.log(`[İŞLEM] Sayfaya gidiliyor: ${targetUrl}`);
-
-        const pageRes = await fetch(targetUrl, {
-            headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' }
-        });
-
-        if (!pageRes.ok) {
-            console.error(`[HATA-01] Dizi sayfasına ulaşılamadı. Durum: ${pageRes.status}`);
-            return [];
-        }
-
-        const html = await pageRes.text();
-
-        // --- 2. ADIM: ANAHTARIN BULUNDUĞU YER (REGEX) ---
-        // Senin attığın cobra-kai.js dosyasındaki "titan/w/XXXXXXXXXXX" yapısını arar.
-        // Buradaki parantez içindeki kısım bizim 11 haneli anahtarımızdır.
-        const keyMatch = html.match(/titan\/w\/([a-zA-Z0-9_-]{11})/);
-
-        if (!keyMatch || !keyMatch[1]) {
-            console.error("[HATA-02] 'Aha burada' dediğimiz 11 haneli anahtar sayfada bulunamadı!");
-            return [];
-        }
-
-        const finalKey = keyMatch[1];
-        console.log(`[BAŞARILI] Giriş Anahtarı Yakalandı: ${finalKey}`);
-
-        // --- 3. ADIM: VİDEOPARK/TITAN ÜZERİNDEN VERİ ÇEKME ---
-        const playerUrl = `https://videopark.top/titan/w/${finalKey}`;
+        // --- ADIM 1: SAYFAYA ERİŞİM ---
+        const url = `https://jetfilmizle.net/dizi/${id}/sezon-${season}/bolum-${episode}`;
+        const res = await fetch(url);
         
-        const response = await fetch(playerUrl, {
-            headers: {
-                'Referer': 'https://jetfilmizle.net/',
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
-            }
-        });
-
-        if (!response.ok) {
-            console.error("[HATA-03] Titan oynatıcı sayfası yanıt vermedi.");
+        if (!res.ok) {
+            console.error(`[HATA-01] Siteye girilemedi. URL: ${url}`);
             return [];
         }
 
-        const playerHtml = await response.text();
+        const html = await res.text();
 
-        // --- 4. ADIM: _SD OBJESİNİ AYIKLAMA ---
-        // Senin dün üzerinde çalıştığın, içinde stream_url olan JSON verisi.
+        // --- ADIM 2: ANAHTAR YAKALAMA (KRİTİK) ---
+        // Sayfa içinde "titan/w/kod" yapısını arar.
+        const match = html.match(/titan\/w\/([a-zA-Z0-9_-]{11})/);
+        
+        if (!match) {
+            console.error("[HATA-02] Kod bulunamadı! Sayfa yapısı değişmiş olabilir.");
+            return [];
+        }
+
+        const key = match[1];
+        console.log(`[BİLGİ] Anahtar bulundu: ${key}`);
+
+        // --- ADIM 3: VİDEOPARK SORGUSU ---
+        const playerRes = await fetch(`https://videopark.top/titan/w/${key}`, {
+            headers: { 'Referer': 'https://jetfilmizle.net/' }
+        });
+
+        if (!playerRes.ok) {
+            console.error("[HATA-03] Videopark sayfası açılmıyor.");
+            return [];
+        }
+
+        const playerHtml = await playerRes.text();
+
+        // --- ADIM 4: VERİ AYIKLAMA ---
         const sdMatch = playerHtml.match(/var\s+_sd\s*=\s*({[\s\S]*?});/);
         
         if (!sdMatch) {
-            console.error("[HATA-04] _sd objesi (video verileri) bulunamadı.");
+            console.error("[HATA-04] Video verisi (_sd) sayfa içinde yok.");
             return [];
         }
 
         const data = JSON.parse(sdMatch[1]);
-        const streamUrl = data.stream_url;
-
-        if (!streamUrl) {
-            console.error("[HATA-05] _sd bulundu ama içinde stream_url yok.");
+        
+        if (!data.stream_url) {
+            console.error("[HATA-05] _sd objesi geldi ama içinde video linki yok.");
             return [];
         }
 
-        // --- SONUÇ: OYNATICIYA GÖNDERME ---
-        console.log("[TAMAMLANDI] Video linki başarıyla oluşturuldu.");
-
+        // --- BAŞARILI SONUÇ ---
+        console.log("[BAŞARILI] Video linki alındı.");
         return [{
-            name: "Jet-Titan (Otomatik)",
-            url: streamUrl,
-            type: "hls", // Genelde m3u8 formatında döner
-            subtitles: data.subtitles ? data.subtitles.map(s => ({
-                url: s.file,
-                language: s.label,
-                format: "vtt"
-            })) : [],
+            name: "Titan-Auto",
+            url: data.stream_url,
+            type: "hls",
             headers: {
                 'Referer': 'https://videopark.top/',
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
+                'User-Agent': 'Mozilla/5.0'
             }
         }];
 
-    } catch (err) {
-        console.error(`[KRİTİK HATA] Sistem durdu: ${err.message}`);
+    } catch (e) {
+        console.error(`[HATA-SİSTEM] Beklenmedik hata: ${e.message}`);
         return [];
     }
 }
 
-// Modül olarak dışa aktar (Cloudstream/Nuvio uyumu için)
 module.exports = { getStreams };
