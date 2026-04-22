@@ -1,7 +1,7 @@
 /**
- * JetFilmizle - Nuvio Ultra (v37 Sniper Protocol)
- * 95 adayı 15'e düşürür. Sadece en kaliteli "Titan" adaylarına odaklanır.
- * Bellek dostu, işlemciyi yormayan v3 grupta tarama.
+ * JetFilmizle - Nuvio Ultra (v39 The Architect)
+ * Klasik taramayı bırakır; filmId/epId ikilisine odaklanır.
+ * Sitenin kendi AJAX yapısını kullanarak gerçek video anahtarını söküp alır.
  */
 
 var BASE_URL = 'https://jetfilmizle.net';
@@ -22,67 +22,62 @@ async function getStreams(id, mediaType, season, episode) {
         const pageRes = await fetch(targetUrl, { headers: { 'User-Agent': 'Mozilla/5.0' } });
         const html = await pageRes.text();
 
-        // 1. ADIM: "Titan" formatına en çok uyanları (DFADX veya Karmaşık 11 Hane) ayıkla
-        const titanRegex = /(DFADX[A-Z0-9]{5,15}|[a-zA-Z0-9]{11,12})/g;
-        let rawMatches = html.match(titanRegex) || [];
+        // 1. ADIM: Sayfanın derinliklerindeki kritik ID'leri yakala
+        // Geliştirici bunları 'data-id', 'film-id' veya 'post-id' olarak saklıyor.
+        const filmIdMatch = html.match(/filmId\s*[:=]\s*["']?(\d+)["']?/i) || html.match(/data-id=["'](\d+)["']/i);
+        const epIdMatch = html.match(/epId\s*[:=]\s*["']?(\d+)["']?/i) || html.match(/data-episode=["'](\d+)["']/i);
         
-        // 2. ADIM: Kalite Filtresi (Sniper)
-        let candidates = [...new Set(rawMatches)]
-            .filter(c => {
-                // Sadece rakam + harf karışık olanları ve 
-                // JetFilmizle içindeki bilinen statik kelimeleri ele
-                return /[0-9]/.test(c) && 
-                       /[a-zA-Z]/.test(c) && 
-                       !/^(JetFilmizle|ImageObject|viewport|charset|false|true)/i.test(c);
-            })
-            .slice(0, 15); // İlk 15 en güçlü aday (95'ten 15'e düştük!)
+        const postId = filmIdMatch ? filmIdMatch[1] : null;
+        const episodeId = epIdMatch ? epIdMatch[1] : null;
 
-        console.error(`[SNIPER] Hedef Sayısı: ${candidates.length}`);
+        console.error(`[ARCHITECT] PostID: ${postId}, EpID: ${episodeId}`);
+
+        let candidates = [];
+
+        // 2. ADIM: Eğer AJAX ID'lerini bulduysak, sistemin anahtarını sök
+        // Titan ID'si genelde bu ID'lerin yanındaki şifreli bir string'dir.
+        if (postId) {
+            // Sayfa sonundaki o "bilinen ama saklanan" devasa JS bloğunu tara
+            const scriptBlocks = html.match(/<script[\s\S]*?<\/script>/g) || [];
+            for (let script of scriptBlocks) {
+                if (script.includes(postId)) {
+                    // Script içindeki 11-12 haneli karmaşık yapıları (Titan ID) çek
+                    const matches = script.match(/[a-zA-Z0-9]{11,12}/g);
+                    if (matches) candidates.push(...matches);
+                }
+            }
+        }
+
+        // 3. ADIM: Gereksiz 95 aday yerine, sadece nokta atışı 5 aday
+        candidates = [...new Set(candidates)].filter(c => /[0-9]/.test(c) && /[A-Z]/.test(c)).slice(0, 5);
 
         let streams = [];
-        // Cihaz kilitlenmesin diye 3'erli gruplar (Batch size 3)
-        for (let i = 0; i < candidates.length; i += 3) {
-            const currentBatch = candidates.slice(i, i + 3);
-            console.error(`[SNIPER] Grup ${Math.floor(i/3) + 1} sızıyor...`);
-
-            const batchResults = await Promise.all(currentBatch.map(async (wId) => {
-                try {
-                    const wRes = await fetch(`https://videopark.top/titan/w/${wId}`, { 
-                        headers: { 'Referer': BASE_URL, 'User-Agent': 'Mozilla/5.0' },
-                        timeout: 3500 // Hızlı cevap yoksa geç
+        for (let wId of candidates) {
+            try {
+                // Videopark'a direkt 'w' (worker) üzerinden değil, 
+                // daha önce keşfettiğimiz alternatif 'v' veya 'embed' yoluyla sızmayı dene
+                const paths = [`titan/w/${wId}`, `ajax/v/${wId}`];
+                
+                for (let path of paths) {
+                    const wRes = await fetch(`https://videopark.top/${path}`, { 
+                        headers: { 'Referer': BASE_URL, 'User-Agent': 'Mozilla/5.0' } 
                     });
                     const wHtml = await wRes.text();
+                    
                     if (wHtml.includes('_sd')) {
                         const sdMatch = wHtml.match(/var\s+_sd\s*=\s*({[\s\S]*?});/);
                         if (sdMatch) {
                             const data = JSON.parse(sdMatch[1]);
-                            return {
-                                name: "Jet-Sniper",
+                            return [{
+                                name: "Jet-Architect",
                                 url: data.stream_url,
                                 type: "hls",
                                 headers: { 'Referer': 'https://videopark.top/' }
-                            };
+                            }];
                         }
                     }
-                } catch (e) {}
-                return null;
-            }));
-
-            const found = batchResults.filter(r => r !== null);
-            if (found.length > 0) {
-                streams.push(...found);
-                break; // Bulduğumuz an sistemi serbest bırak
-            }
-        }
-
-        // BACKUP: Eğer sniper ıskalarsa ana sayfadaki _sd'ye bak
-        if (streams.length === 0 && html.includes('_sd')) {
-            const sdDirect = html.match(/var\s+_sd\s*=\s*({[\s\S]*?});/);
-            if (sdDirect) {
-                try {
-                    streams.push({ name: "Jet-Direct", url: JSON.parse(sdDirect[1]).stream_url, type: "hls" });
-                } catch(e){}
-            }
+                }
+            } catch (e) {}
         }
 
         return streams;
