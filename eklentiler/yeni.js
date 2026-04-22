@@ -1,11 +1,10 @@
 /**
- * JetFilmizle - JSON & Titan Resolver
- * Odak: HTML içindeki Ld+Json verilerini ayıklayıp gerçek video ID'sine ulaşmak.
+ * JetFilmizle - Analytics & Trap Bypass
+ * Odak: G- ile başlayan Analytics kodlarını ve YouTube fragmanlarını elemek.
  */
 
 async function getStreams(id, mediaType, season, episode) {
     try {
-        // Cobra Kai örneği için slug düzeltmesi
         let slug = (id === "77169") ? "cobra-kai" : id;
         const targetUrl = `https://jetfilmizle.net/dizi/${slug}`;
         
@@ -17,46 +16,48 @@ async function getStreams(id, mediaType, season, episode) {
         });
         const html = await res.text();
 
-        // --- 1. ADIM: FRAGMANI LİSTEDEN SİL ---
-        // Senin logunda çıkan fragman ID'si: xCwwxNbtK6Y
-        const trailerId = "xCwwxNbtK6Y";
+        // --- TUZAKLARI ELE ---
+        const forbiddenKeys = [
+            'G-P2W3FQ2F7', // Senin logdaki Analytics kodu
+            'xCwwxNbtK6Y', // Fragman kodu
+            'jetfilmizle'
+        ];
 
-        // --- 2. ADIM: GERÇEK ANAHTARI BUL ---
         let key = null;
 
-        // HTML içinde titan/w/ veya ttn/w/ şeklinde geçen 11 haneli kodu ara
-        const titanRegex = /(?:titan|ttn)\/(?:w|p)\/([a-zA-Z0-9_-]{11})/;
-        const titanMatch = html.match(titanRegex);
+        // 1. ÖNCELİK: Sayfa içinde videopark/titan linkini doğrudan ara (En güvenli yol)
+        const directLinkMatch = html.match(/videopark\.top\/titan\/(?:w|p)\/([a-zA-Z0-9_-]{11,12})/);
+        if (directLinkMatch) {
+            key = directLinkMatch[1];
+        } 
 
-        if (titanMatch) {
-            key = titanMatch[1];
-        } else {
-            // Eğer doğrudan link yoksa, sayfadaki tüm 11 hanelileri tara
-            const allMatches = html.match(/[a-zA-Z0-9_-]{11}/g) || [];
-            for (let candidate of allMatches) {
-                // Eğer aday: Fragman değilse, site adı değilse ve en az bir büyük harf içeriyorsa
-                if (candidate !== trailerId && 
-                    candidate !== 'jetfilmizle' && 
-                    /[A-Z]/.test(candidate) && 
-                    /[0-9]/.test(candidate)) {
-                    key = candidate;
-                    break;
+        // 2. ÖNCELİK: Eğer link yoksa, 11-12 haneli karışık kodları tara ama tuzakları filtrele
+        if (!key) {
+            const potentialKeys = html.match(/[a-zA-Z0-9_-]{11,12}/g) || [];
+            for (let k of potentialKeys) {
+                // Filtre: Yasaklı listede olmasın VE "G-" ile başlamasın (Analytics engeli)
+                if (!forbiddenKeys.includes(k) && !k.startsWith('G-')) {
+                    // Ve gerçek bir anahtar gibi hem harf hem rakam içersin
+                    if (/[a-zA-Z]/.test(k) && /[0-9]/.test(k)) {
+                        key = k;
+                        break;
+                    }
                 }
             }
         }
 
         if (!key) {
-            console.error("[HATA-02] Oynatıcı anahtarı bulunamadı. Sayfa yapısı değişmiş olabilir.");
+            console.error("[HATA-02] Gerçek video anahtarı bulunamadı.");
             return [];
         }
 
-        console.log(`[BİLGİ] Hedef Anahtar Belirlendi: ${key}`);
+        console.log(`[BİLGİ] Doğru Anahtar Filtrelendi: ${key}`);
 
-        // --- 3. ADIM: VİDEOPARK'TAN SOURCE ÇEK ---
+        // --- VİDEOPARK SORGUSU ---
         const playerUrl = `https://videopark.top/titan/w/${key}`;
         const playerRes = await fetch(playerUrl, {
             headers: {
-                'Referer': targetUrl, // Önemli: Referer ana site olmalı
+                'Referer': 'https://jetfilmizle.net/',
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
                 'X-Requested-With': 'XMLHttpRequest'
             }
@@ -64,7 +65,7 @@ async function getStreams(id, mediaType, season, episode) {
 
         const playerHtml = await playerRes.text();
         
-        // Videopark içindeki _sd veya _file değişkenini yakala
+        // Videopark'tan gelen stream verisini ayıkla
         const sourceMatch = playerHtml.match(/var\s+_(?:sd|file)\s*=\s*({[\s\S]*?}|"https:[^"]+");/);
         
         if (sourceMatch) {
@@ -77,7 +78,7 @@ async function getStreams(id, mediaType, season, episode) {
             }
 
             return [{
-                name: "Titan-High-Quality",
+                name: "Titan-Secure-Server",
                 url: streamUrl,
                 type: "hls",
                 headers: {
@@ -87,11 +88,11 @@ async function getStreams(id, mediaType, season, episode) {
             }];
         }
 
-        console.error(`[HATA-04] Kaynak sökülemedi. Videopark yanıtı eksik. Anahtar: ${key}`);
+        console.error(`[HATA-04] Link sökülemedi. Anahtar: ${key}`);
         return [];
 
     } catch (e) {
-        console.error(`[SİSTEM] Kritik Hata: ${e.message}`);
+        console.error(`[SİSTEM] Hata: ${e.message}`);
         return [];
     }
 }
