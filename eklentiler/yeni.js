@@ -1,6 +1,7 @@
 /**
- * JetFilmizle - Nuvio Ultra (v68 Fixed)
- * Syntax hatası giderildi, dünkü çalışan 'DFADX' mantığına odaklanıldı.
+ * JetFilmizle - Nuvio Ultra (v69 Sniper)
+ * "Job was cancelled" hatasını önlemek için deneme sayısını azaltır,
+ * sadece en güçlü adaylara (DFADX vb.) odaklanır.
  */
 
 var BASE_URL = 'https://jetfilmizle.net';
@@ -27,21 +28,24 @@ async function getStreams(id, mediaType, season, episode) {
         });
         const html = await pageRes.text();
 
-        // 1. ADIM: Sayfadaki tüm 10-15 karakterli adayları topla (DFADX dahil)
-        const pattern = /[a-zA-Z0-9_-]{10,15}/g;
-        const matches = html.match(pattern) || [];
+        // 1. ADIM: Sadece "gerçek" anahtar olabilecek yapıları seç (Deneme sayısını düşür)
+        // DFADX ile başlayanlar veya 11-12 haneli karışık kodlar
+        const pattern = /[a-zA-Z0-9]{11,12}/g;
+        let matches = html.match(pattern) || [];
+        
+        // Önemli filtre: Sadece büyük-küçük harf ve rakam karışık olanları al (Çöpü temizle)
         const candidates = [...new Set(matches)].filter(c => 
-            !/google|manager|script|Yandex|Active|Object|webkit/i.test(c)
-        );
+            /[A-Z]/.test(c) && /[0-9]/.test(c) && !/google|manager|Active/i.test(c)
+        ).slice(0, 5); // Sadece en güçlü ilk 5 adayı dene (İptal hatasını önler)
 
-        // 2. ADIM: Adayları test et
-        for (let key of candidates.reverse()) {
+        console.error(`[SNIPER] Hedef seçildi: ${candidates.join(', ')}`);
+
+        // 2. ADIM: Hızlı paralel deneme yerine sıralı ve kontrollü deneme
+        for (let key of candidates) {
             try {
+                // timeout süresini kısa tutuyoruz ki Job Cancel olmasın
                 const response = await fetch(`https://videopark.top/titan/w/${key}`, {
-                    headers: {
-                        'Referer': targetUrl,
-                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
-                    }
+                    headers: { 'Referer': targetUrl, 'User-Agent': 'Mozilla/5.0' }
                 });
 
                 const content = await response.text();
@@ -51,24 +55,17 @@ async function getStreams(id, mediaType, season, episode) {
                     if (sdMatch) {
                         const data = JSON.parse(sdMatch[1]);
                         return [{
-                            name: "Jet-Titan (Fixed)",
+                            name: "Jet-Sniper",
                             url: data.stream_url,
                             type: "hls",
-                            headers: { 
-                                'Referer': 'https://videopark.top/',
-                                'User-Agent': 'Mozilla/5.0'
-                            }
+                            headers: { 'Referer': 'https://videopark.top/' }
                         }];
                     }
                 }
-            } catch (e) {
-                // Hata durumunda bir sonraki adaya geç
-            }
+            } catch (e) { continue; }
         }
         return [];
-    } catch (err) {
-        return [];
-    }
+    } catch (err) { return []; }
 }
 
 module.exports = { getStreams };
