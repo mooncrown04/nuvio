@@ -1,6 +1,7 @@
 /**
- * JetFilmizle - Nuvio Ultra (v53 Final Strike)
- * Belleği ve sertifika kontrolünü yormadan tekil vuruş yapar.
+ * JetFilmizle - Nuvio Ultra (v59 Worker Infiltrator)
+ * Player sayfasına gitmek yerine, player'ın linkleri aldığı 
+ * Worker (v4/g/...) yapısını simüle eder.
  */
 
 var BASE_URL = 'https://jetfilmizle.net';
@@ -19,39 +20,66 @@ async function getStreams(id, mediaType, season, episode) {
         const pageRes = await fetch(targetUrl, { headers: { 'User-Agent': 'Mozilla/5.0' } });
         const html = await pageRes.text();
 
-        // 1. ADIM: Doğrulanmış 12 haneli TITAN kodu
-        const pattern = /[a-zA-Z0-9]{12}/g;
+        // 1. ADIM: Player'ın kullandığı asıl anahtarı (vId) bul
+        // DFADX veya XLD fark etmeksizin en son eklenen kodu alıyoruz
+        const pattern = /[a-zA-Z0-9]{11,12}/g;
         let matches = html.match(pattern) || [];
-        let finalId = matches.reverse().find(k => /[0-9]/.test(k) && /[A-Z]/.test(k) && !/google|manager|Active|Object/i.test(k));
+        let vId = matches.reverse().find(k => /[0-9]/.test(k) && /[A-Z]/.test(k) && !/google|manager|Active/i.test(k));
 
-        if (!finalId) return [];
+        if (!vId) return [];
+        console.error(`[WORKER] Anahtar Yakalandı: ${vId}`);
 
-        // 2. ADIM: Tek ve Yalın İstek (Kanıt kodundaki gibi)
-        const response = await fetch(`https://videopark.top/titan/w/${finalId}`, {
-            headers: {
-                'Referer': BASE_URL + '/',
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
+        // 2. ADIM: Player'ı atla, doğrudan Worker'a (v4/g/...) sor!
+        // Videopark'ın asıl "mutfağı" burasıdır.
+        const workerUrls = [
+            `https://videopark.top/v4/g/${vId}`,
+            `https://videopark.top/titan/g/${vId}`
+        ];
+
+        for (let wUrl of workerUrls) {
+            try {
+                const response = await fetch(wUrl, {
+                    headers: {
+                        'Referer': 'https://videopark.top/', // Worker genelde kendi domainini referer ister
+                        'Origin': 'https://videopark.top',
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+                        'X-Requested-With': 'XMLHttpRequest' // Worker'a "ben bir scriptim" diyoruz
+                    }
+                });
+
+                const data = await response.json();
+
+                // Eğer Worker bize doğrudan m3u8 linkini verirse (data.url veya data.stream_url)
+                if (data && (data.url || data.stream_url || data.file)) {
+                    console.error(`[SUCCESS] Worker Linki Verdi: ${vId}`);
+                    return [{
+                        name: "Jet-Worker (Direct)",
+                        url: data.url || data.stream_url || data.file,
+                        type: "hls",
+                        headers: {
+                            'Referer': 'https://videopark.top/',
+                            'User-Agent': 'Mozilla/5.0'
+                        }
+                    }];
+                }
+            } catch (e) {
+                // Eğer Worker JSON dönmüyorsa HTML parse etmeyi dene
+                console.error(`[WORKER] ${wUrl} için JSON gelmedi, devam ediliyor...`);
             }
+        }
+
+        // 3. ADIM: Worker yemezse, dünkü klasik titan/w/ yöntemine düş (Fallback)
+        const fallbackRes = await fetch(`https://videopark.top/titan/w/${vId}`, {
+            headers: { 'Referer': 'https://jetfilmizle.net/', 'User-Agent': 'Mozilla/5.0' }
         });
-        
-        const content = await response.text();
-
-        // 3. ADIM: _sd Ayıklama (Regex ile doğrudan)
-        if (content.includes('_sd')) {
-            const sdPart = content.split('var _sd = ')[1].split('};')[0] + '}';
-            const data = JSON.parse(sdPart);
-
+        const fallbackHtml = await fallbackRes.text();
+        if (fallbackHtml.includes('_sd')) {
+            const data = JSON.parse(fallbackHtml.match(/var\s+_sd\s*=\s*({[\s\S]*?});/)[1]);
             return [{
-                name: "Jet-Titan (Series)",
+                name: "Jet-Titan (Fallback)",
                 url: data.stream_url,
                 type: "hls",
-                subtitles: data.subtitles ? data.subtitles.map(s => ({
-                    url: s.file, language: s.label, format: "vtt"
-                })) : [],
-                headers: { 
-                    'Referer': 'https://videopark.top/',
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
-                }
+                headers: { 'Referer': 'https://videopark.top/', 'User-Agent': 'Mozilla/5.0' }
             }];
         }
 
