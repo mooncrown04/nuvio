@@ -4,7 +4,7 @@
   "scrapers": [  
       {
       "id": "dizix",
-      "name": "Dizix",
+      "name": "Dizipal",
       "description": "Statik Katalog Uyumlu M3U Scraper",
       "logo": "https://picon.pics/TR/Ulusal/Atv.png",
       "version": "1.0.1",
