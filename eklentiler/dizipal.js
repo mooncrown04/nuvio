@@ -1,7 +1,7 @@
 var cheerio = require("cheerio-without-node-native");
 
 async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
-    const baseUrl = "https://dizipal1543.com"; 
+    const baseUrl = "https://dizipal2045.com"; 
     let cookie = "";
 
     const headers = {
