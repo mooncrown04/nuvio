@@ -1,5 +1,5 @@
 /**
- * JetFilmizle — Nuvio Provider (DEBUG MODE)
+ * JetFilmizle — Nuvio Provider (LOW-LEVEL TRAFFIC DEBUGGER)
  */
 
 var BASE_URL     = 'https://jetfilmizle.net';
@@ -10,44 +10,41 @@ var HEADERS = {
     'Referer': BASE_URL + '/'
 };
 
-function titleToSlug(t) {
-    return (t || '').toLowerCase()
-        .replace(/ğ/g,'g').replace(/ü/g,'u').replace(/ş/g,'s')
-        .replace(/ı/g,'i').replace(/İ/g,'i').replace(/ö/g,'o')
-        .replace(/ç/g,'c').replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'');
-}
-
 function getStreams(id, mediaType, season, episode) {
-    // --- VERİ KONTROLÜ VE LOGLAMA ---
-    var rawId = id;
-    var safeId = (id !== undefined && id !== null) ? id.toString().replace(/[^0-9]/g, '') : null;
-    
-    // Her şeyi kapsayan devasa bir log basıyoruz
+    // 1. HAM VERİ GİRİŞİ (Hiçbir temizleme yapmadan olduğu gibi basıyoruz)
     console.error(
-        "\n========================================\n" +
-        "[JETFILM DEBUG] Gelen Ham ID: " + rawId + "\n" +
-        "[JETFILM DEBUG] Medya Tipi: " + mediaType + "\n" +
-        "[JETFILM DEBUG] Sezon/Bölüm: " + season + "/" + episode + "\n" +
-        "========================================\n"
+        "\n[RAW_DATA_INCOME]\n" +
+        "----------------------------------------\n" +
+        "ID (Ham): " + id + " (Type: " + (typeof id) + ")\n" +
+        "MediaType: " + mediaType + "\n" +
+        "S/E: " + season + " / " + episode + "\n" +
+        "----------------------------------------"
     );
 
-    if (!safeId) {
-        console.error("[JETFILM ERROR] ID bulunamadığı için işlem iptal edildi!");
+    // Çökme yapmaması için sadece null kontrolü
+    if (id === undefined || id === null) {
+        console.error("[JETFILM ERROR] ID Tanımsız!");
         return [];
     }
 
+    var cleanId = id.toString().replace(/[^0-9]/g, '');
     var type = (mediaType === 'tv') ? 'tv' : 'movie';
 
-    return fetch('https://api.themoviedb.org/3/' + type + '/' + safeId + '?api_key=' + TMDB_API_KEY + '&language=tr-TR')
+    // 2. DIŞ SERVİS TRAFİĞİ (TMDB İstek Analizi)
+    var tmdbUrl = 'https://api.themoviedb.org/3/' + type + '/' + cleanId + '?api_key=' + TMDB_API_KEY + '&language=tr-TR';
+    console.error("[OUTBOUND_REQUEST] TMDB URL: " + tmdbUrl);
+
+    return fetch(tmdbUrl)
         .then(function(r) { return r.json(); })
         .then(function(info) {
-            // TMDB'den gelen tüm datayı gör
-            console.error("[JETFILM TMDB DATA]: " + JSON.stringify(info));
+            // TMDB'den dönen ham yanıtı olduğu gibi logla
+            console.error("[RAW_TMDB_RESPONSE]: " + JSON.stringify(info));
 
             var originalTitle = info.name || info.title;
             if (!originalTitle) return [];
 
-            console.error("[JETFILM] Aranıyor: " + originalTitle);
+            // 3. SITE ARAMA TRAFİĞİ
+            console.error("[OUTBOUND_REQUEST] POST -> /filmara.php | Data: s=" + originalTitle);
 
             return fetch(BASE_URL + '/filmara.php', {
                 method: 'POST',
@@ -56,6 +53,7 @@ function getStreams(id, mediaType, season, episode) {
             })
             .then(function(res) { return res.text(); })
             .then(function(searchHtml) {
+                // Arama sonucundaki URL yakalama
                 var regex = new RegExp('href="(https?://jetfilmizle\\.net/(film|dizi)/([^"/]+))"', 'i');
                 var m = regex.exec(searchHtml);
                 
@@ -66,59 +64,61 @@ function getStreams(id, mediaType, season, episode) {
                         finalUrl += '/sezon-' + (season || 1) + '/bolum-' + (episode || 1);
                     }
                 } else {
-                    var fallbackSlug = titleToSlug(originalTitle);
-                    finalUrl = (mediaType === 'tv') 
-                        ? BASE_URL + '/dizi/' + fallbackSlug + '/sezon-' + (season || 1) + '/bolum-' + (episode || 1)
-                        : BASE_URL + '/film/' + fallbackSlug;
+                    finalUrl = BASE_URL + '/?s=' + encodeURIComponent(originalTitle);
                 }
 
-                console.error("[JETFILM] Gidilen URL: " + finalUrl);
+                console.error("[TARGET_PAGE_URL] " + finalUrl);
                 return fetch(finalUrl, { headers: HEADERS });
             });
         })
         .then(function(r) { return r.text(); })
         .then(function(html) {
             var streams = [];
-            if (html.indexOf('Sayfa Bulunamadı') !== -1) {
-                console.error("[JETFILM] SONUÇ: Sayfa Bulunamadı (404)");
-                return [];
-            }
+            
+            // 4. HAM HTML ANALİZİ (Önemli script taglerini ve iframe'leri yakala)
+            // Cihazdan çıkan linklerin kaynağını bulmak için
+            console.error("[PAGE_HTML_SAMPLE] İlk 500 karakter: " + html.substring(0, 500));
 
-            var dil = (html.indexOf('dublaj') !== -1) ? "Dublaj" : "Altyazı";
-
-            // Pixeldrain
-            var pdRe = /href="(https?:\/\/pixeldrain\.com\/u\/([^"]+))"/g;
-            var m;
-            while ((m = pdRe.exec(html)) !== null) {
-                streams.push({
-                    name: "JetFilmizle",
-                    title: '⌜ Pixeldrain ⌟ | ' + dil,
-                    url: 'https://pixeldrain.com/api/file/' + m[2] + '?download',
-                    type: 'video',
-                    quality: '1080p',
-                    headers: { 'Referer': 'https://pixeldrain.com/' }
+            // Pixeldrain yakalayıcı (Cihazın dışarıya verdiği asıl stream linki budur)
+            var pdRe = /https?:\/\/pixeldrain\.com\/u\/[a-zA-Z0-9]+/g;
+            var pdMatches = html.match(pdRe);
+            if (pdMatches) {
+                pdMatches.forEach(function(link) {
+                    var fileId = link.split('/').pop();
+                    var directLink = 'https://pixeldrain.com/api/file/' + fileId + '?download';
+                    
+                    console.error("[STREAM_OUT] Verilen Link (Direct): " + directLink);
+                    
+                    streams.push({
+                        name: "JetFilmizle",
+                        title: '⌜ Pixeldrain ⌟ | RAW STREAM',
+                        url: directLink,
+                        quality: '1080p',
+                        headers: { 
+                            'User-Agent': 'Mozilla/5.0',
+                            'Referer': 'https://pixeldrain.com/'
+                        }
+                    });
                 });
             }
 
-            // Iframe/Embed
+            // Iframe/Embed yakalayıcı (Proxy üzerinden mi gidiyor?)
             var iframeRe = /<iframe[^>]+src="([^"]+)"/gi;
+            var m;
             while ((m = iframeRe.exec(html)) !== null) {
-                var src = m[1];
-                if (src.indexOf('jetv') !== -1 || src.indexOf('d2rs') !== -1) {
-                    streams.push({
-                        name: "JetFilmizle",
-                        title: '⌜ Hızlı Kaynak ⌟ | ' + dil,
-                        url: src.startsWith('//') ? 'https:' + src : src,
-                        type: 'embed'
-                    });
-                }
+                console.error("[STREAM_OUT] Verilen Link (Embed): " + m[1]);
+                streams.push({
+                    name: "JetFilmizle",
+                    title: '⌜ Embed ⌟ | RAW IFRAME',
+                    url: m[1].startsWith('//') ? 'https:' + m[1] : m[1],
+                    type: 'embed'
+                });
             }
             
-            console.error("[JETFILM] Bulunan Kaynak Sayısı: " + streams.length);
             return streams;
         })
         .catch(function(e) {
-            console.error("[JETFILM ERROR]: " + e.message);
+            console.error("[FATAL_DEBUG_ERROR]: " + e.stack);
             return [];
         });
 }
