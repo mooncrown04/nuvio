@@ -1,114 +1,106 @@
 /**
- * JetFilmizle — Nuvio Provider (PURE RAW DEBUG MODE)
+ * Nuvio Dizi Motoru - V5.6.0
+ * STRATEJİ: Kesin/Yakın Eşleşme Skoru + Çift İsim Kontrolü + Tam Dışa Aktarma
  */
 
-var BASE_URL     = 'https://jetfilmizle.net';
-var TMDB_API_KEY = '500330721680edb6d5f7f12ba7cd9023';
+const DIZI_BASE_URL = 'https://raw.githubusercontent.com/mooncrown04/m3ubirlestir/main/nuvio_dizi_parcalari/';
+const TMDB_API_KEY = '500330721680edb6d5f7f12ba7cd9023';
 
-var HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36',
-    'Referer': BASE_URL + '/'
-};
-
-function titleToSlug(t) {
-    return (t || '').toLowerCase()
-        .replace(/ğ/g,'g').replace(/ü/g,'u').replace(/ş/g,'s')
-        .replace(/ı/g,'i').replace(/İ/g,'i').replace(/ö/g,'o')
-        .replace(/ç/g,'c').replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'');
+function ultraClean(s) {
+    if (!s) return '';
+    return s.toString().toLowerCase()
+        .replace(/[ıİ]/g, 'i').replace(/[üÜ]/g, 'u').replace(/[öÖ]/g, 'o')
+        .replace(/[şŞ]/g, 's').replace(/[ğĞ]/g, 'g').replace(/[çÇ]/g, 'c')
+        .replace(/[^a-z0-9]/g, '') 
+        .trim();
 }
 
-function getStreams(id, mediaType, season, episode) {
-    // --- TAM HAM VERİ LOGLAMASI (CİHAZDAN GELEN SAF PAKET) ---
-    console.error("########################################################");
-    console.error("[NUVIO_RAW_IN] ID: " + id + " (Type: " + (typeof id) + ")");
-    console.error("[NUVIO_RAW_IN] MEDIATYPE: " + mediaType + " (Type: " + (typeof mediaType) + ")");
-    console.error("[NUVIO_RAW_IN] SEASON: " + season + " (Type: " + (typeof season) + ")");
-    console.error("[NUVIO_RAW_IN] EPISODE: " + episode + " (Type: " + (typeof episode) + ")");
-    
-    // Eğer gelen ID bir nesneyse (Object), içindeki tüm gizli özellikler:
+async function getStreams(tmdbId, type, season, episode) {
+    // Nuvio ve Stremio için sadece TV tipini destekliyoruz
+    if (type !== 'tv') return [];
+
     try {
-        if (id && typeof id === 'object') {
-            console.error("[NUVIO_RAW_ID_OBJECT]: " + JSON.stringify(id));
-        }
-    } catch(e) { 
-        console.error("[NUVIO_RAW_ID_OBJECT_ERROR]: Obje stringify edilemedi.");
-    }
-    console.error("########################################################");
+        // 1. TMDB Verisini Al (Hem Türkçe hem Orijinal İsim)
+        const tmdbRes = await fetch(`https://api.themoviedb.org/3/tv/${tmdbId}?api_key=${TMDB_API_KEY}&language=tr-TR`);
+        const d = await tmdbRes.json();
+        
+        const targetTr = ultraClean(d.name);           
+        const targetEn = ultraClean(d.original_name);  
+        const targetSxxExx = `s${season.toString().padStart(2, '0')}e${episode.toString().padStart(2, '0')}`;
+        
+        // 2. Klasörleme mantığına göre doğru M3U dosyasını belirle
+        const firstChar = targetTr.charAt(0);
+        let harfGrubu = (/[a-z]/.test(firstChar)) ? firstChar : (/[0-9]/.test(firstChar) ? '0_9_rakam' : 'diger');
+        const fileName = `dizi_${harfGrubu}_s${season}.m3u`;
 
-    // Çökme koruması
-    if (!id) return Promise.resolve([]);
+        // 3. M3U dosyasını indir
+        const m3uRes = await fetch(`${DIZI_BASE_URL}${fileName}?v=${Date.now()}`);
+        if (!m3uRes.ok) return [];
 
-    // İşlem için zorunlu temizlik (Burayı sadece API isteği atabilmek için yapıyoruz)
-    var safeId = id.toString().replace(/[^0-9]/g, '');
-    var type = (mediaType === 'tv' || mediaType === 'series') ? 'tv' : 'movie';
+        const content = await m3uRes.text();
+        const results = [];
+        const blocks = content.split('#EXTINF');
 
-    return fetch('https://api.themoviedb.org/3/' + type + '/' + safeId + '?api_key=' + TMDB_API_KEY + '&language=tr-TR')
-        .then(function(r) { return r.json(); })
-        .then(function(info) {
-            var originalTitle = info.name || info.title;
-            if (!originalTitle) return [];
+        for (let i = 1; i < blocks.length; i++) {
+            const block = blocks[i];
+            const lines = block.split('\n');
+            const infoLine = lines[0];
 
-            return fetch(BASE_URL + '/filmara.php', {
-                method: 'POST',
-                headers: Object.assign({}, HEADERS, { 'Content-Type': 'application/x-www-form-urlencoded' }),
-                body: 's=' + encodeURIComponent(originalTitle)
-            })
-            .then(function(res) { return res.text(); })
-            .then(function(searchHtml) {
-                var regex = new RegExp('href="(https?://jetfilmizle\\.net/(film|dizi)/([^"/]+))"', 'i');
-                var m = regex.exec(searchHtml);
-                
-                var finalUrl = '';
-                if (m) {
-                    finalUrl = BASE_URL + '/' + m[2] + '/' + m[3];
-                    if (type === 'tv') {
-                        finalUrl += '/sezon-' + (season || 1) + '/bolum-' + (episode || 1);
-                    }
-                } else {
-                    var fallbackSlug = titleToSlug(originalTitle);
-                    finalUrl = (type === 'tv') 
-                        ? BASE_URL + '/dizi/' + fallbackSlug + '/sezon-' + (season || 1) + '/bolum-' + (episode || 1)
-                        : BASE_URL + '/film/' + fallbackSlug;
+            // --- SEZON/BÖLÜM FİLTRESİ ---
+            const displayPart = infoLine.split(',').pop().toLowerCase();
+            if (!displayPart.includes(targetSxxExx)) continue;
+
+            // --- GRUP ADI VE İSİM EŞLEŞTİRME ---
+            const groupMatch = infoLine.match(/group-title="([^"]+)"/);
+            const groupTitle = groupMatch ? groupMatch[1] : "";
+            const cleanGroup = ultraClean(groupTitle);
+
+            /**
+             * AKILLI FİLTRELEME: 
+             * 1. Tam eşitlik var mı?
+             * 2. Veya isim içinde geçiyor mu? 
+             * 3. (ÖNEMLİ) İsim içinde geçiyorsa uzunluk farkı 3 karakterden fazla mı? 
+             * (Bu, "From" ararken "Tales from the Loop" gelmesini engeller)
+             */
+            const checkMatch = (targetName) => {
+                if (!targetName) return false;
+                if (cleanGroup === targetName) return true;
+                if (cleanGroup.includes(targetName)) {
+                    // Eğer aranan kelime içinde geçiyorsa, toplam uzunluk farkına bak
+                    return Math.abs(cleanGroup.length - targetName.length) <= 4;
                 }
+                return false;
+            };
 
-                return fetch(finalUrl, { headers: HEADERS });
-            });
-        })
-        .then(function(r) { return r.text(); })
-        .then(function(html) {
-            var streams = [];
-            
-            // Pixeldrain Yakalayıcı
-            var pdRe = /href="(https?:\/\/pixeldrain\.com\/u\/([^"]+))"/g;
-            var m;
-            while ((m = pdRe.exec(html)) !== null) {
-                streams.push({
-                    name: "JetFilmizle",
-                    title: '⌜ Pixeldrain ⌟ | HD',
-                    url: 'https://pixeldrain.com/api/file/' + m[2] + '?download',
-                    headers: { 'Referer': 'https://pixeldrain.com/' }
-                });
-            }
+            if (checkMatch(targetTr) || checkMatch(targetEn)) {
+                const urlLine = lines.find(l => l.trim().startsWith('http'));
 
-            // Iframe/Embed Yakalayıcı
-            var iframeRe = /<iframe[^>]+src="([^"]+)"/gi;
-            while ((m = iframeRe.exec(html)) !== null) {
-                var src = m[1];
-                if (src.indexOf('jetv') !== -1 || src.indexOf('d2rs') !== -1) {
-                    streams.push({
-                        name: "JetFilmizle",
-                        title: '⌜ Hızlı Kaynak ⌟',
-                        url: src.startsWith('//') ? 'https:' + src : src,
-                        type: 'embed'
+                if (urlLine) {
+                    const authorMatch = infoLine.match(/group-author="([^"]+)"/);
+                    // Nuvio'nun beklediği nesne yapısı
+                    results.push({
+                        url: urlLine.trim(),
+                        name: infoLine.split(',').pop().trim(),
+                        title: `[NUVIO] ${authorMatch ? authorMatch[1] : "KAYNAK"}`,
+                        quality: authorMatch ? authorMatch[1] : "HD"
                     });
                 }
             }
-            return streams;
-        })
-        .catch(function(e) {
-            console.error("[FATAL_ERROR]: " + e.message);
-            return [];
-        });
+        }
+
+        console.log(`[NUVIO] Arama tamamlandı. ID: ${tmdbId} | Sonuç: ${results.length}`);
+        return results;
+
+    } catch (err) {
+        console.error(`[NUVIO_CRITICAL] Hata: ${err.message}`);
+        return [];
+    }
 }
 
-module.exports = { getStreams: getStreams };
+// --- DIŞA AKTARMA (EXPORT) BÖLÜMÜ - Nuvio/Stremio bu kısmı bekler ---
+if (typeof module !== 'undefined') {
+    module.exports = { getStreams };
+}
+if (typeof globalThis !== 'undefined') {
+    globalThis.getStreams = getStreams;
+}
