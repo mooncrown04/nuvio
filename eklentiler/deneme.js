@@ -1,158 +1,114 @@
 /**
- * RecTV_v17_Final_Fix
- * Dizi mantığı eski haline döndü, filmlerde kesin eşleşme sağlandı.
+ * JetFilmizle — Nuvio Provider (PURE RAW DEBUG MODE)
  */
 
-var cheerio = require("cheerio-without-node-native");
-
-var BASE_URL = "https://a.prectv67.lol";
-var SW_KEY = "4F5A9C3D9A86FA54EACEDDD635185/c3c5bd17-e37b-4b94-a944-8a3688a30452";
+var BASE_URL     = 'https://jetfilmizle.net';
+var TMDB_API_KEY = '500330721680edb6d5f7f12ba7cd9023';
 
 var HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
-    'Referer': 'https://twitter.com/',
-    'Accept': 'application/json'
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36',
+    'Referer': BASE_URL + '/'
 };
 
-var cachedToken = null;
-
-async function getAuthToken() {
-    if (cachedToken) return cachedToken;
-    try {
-        const res = await fetch(BASE_URL + "/api/attest/nonce", { headers: HEADERS });
-        const text = await res.text();
-        try {
-            const json = JSON.parse(text);
-            cachedToken = json.accessToken || text.trim();
-        } catch (e) { cachedToken = text.trim(); }
-        return cachedToken;
-    } catch (e) { return null; }
+function titleToSlug(t) {
+    return (t || '').toLowerCase()
+        .replace(/ğ/g,'g').replace(/ü/g,'u').replace(/ş/g,'s')
+        .replace(/ı/g,'i').replace(/İ/g,'i').replace(/ö/g,'o')
+        .replace(/ç/g,'c').replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'');
 }
 
-function analyzeStream(url, index, itemLabel) {
-    const lowUrl = url.toLowerCase();
-    const lowLabel = (itemLabel || "").toLowerCase();
-    let info = { icon: "🌐", text: "Orijinal / Altyazı" };
-
-    if (lowLabel.includes("dublaj") || lowUrl.includes("dublaj")) {
-        if (lowLabel.includes("altyazı") && index === 1) {
-            info.icon = "🌐";
-            info.text = "Türkçe Altyazı";
-        } else {
-            info.icon = "🇹🇷";
-            info.text = "Türkçe Dublaj";
+function getStreams(id, mediaType, season, episode) {
+    // --- TAM HAM VERİ LOGLAMASI (CİHAZDAN GELEN SAF PAKET) ---
+    console.error("########################################################");
+    console.error("[NUVIO_RAW_IN] ID: " + id + " (Type: " + (typeof id) + ")");
+    console.error("[NUVIO_RAW_IN] MEDIATYPE: " + mediaType + " (Type: " + (typeof mediaType) + ")");
+    console.error("[NUVIO_RAW_IN] SEASON: " + season + " (Type: " + (typeof season) + ")");
+    console.error("[NUVIO_RAW_IN] EPISODE: " + episode + " (Type: " + (typeof episode) + ")");
+    
+    // Eğer gelen ID bir nesneyse (Object), içindeki tüm gizli özellikler:
+    try {
+        if (id && typeof id === 'object') {
+            console.error("[NUVIO_RAW_ID_OBJECT]: " + JSON.stringify(id));
         }
+    } catch(e) { 
+        console.error("[NUVIO_RAW_ID_OBJECT_ERROR]: Obje stringify edilemedi.");
     }
-    return info;
-}
+    console.error("########################################################");
 
-async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
-    try {
-        const isMovie = (mediaType === 'movie');
-        const tmdbUrl = `https://api.themoviedb.org/3/${isMovie ? 'movie' : 'tv'}/${tmdbId}?language=tr-TR&api_key=4ef0d7355d9ffb5151e987764708ce96`;
-        const tmdbRes = await fetch(tmdbUrl);
-        const tmdbData = await tmdbRes.json();
-        
-        const trTitle = (tmdbData.title || tmdbData.name || "").trim();
-        const orgTitle = (tmdbData.original_title || tmdbData.original_name || "").trim();
-        
-        if (!trTitle) return [];
-        console.error(`[RecTV Search] TR: ${trTitle} | ORG: ${orgTitle}`);
+    // Çökme koruması
+    if (!id) return Promise.resolve([]);
 
-        const token = await getAuthToken();
-        const searchHeaders = Object.assign({}, HEADERS, { 'Authorization': 'Bearer ' + token });
-        
-        // Arama sorgusu: Filmlerde TR ve ORG, Dizilerde sadece TR
-        let searchQueries = [trTitle];
-        if (isMovie && orgTitle && orgTitle !== trTitle) searchQueries.push(orgTitle);
+    // İşlem için zorunlu temizlik (Burayı sadece API isteği atabilmek için yapıyoruz)
+    var safeId = id.toString().replace(/[^0-9]/g, '');
+    var type = (mediaType === 'tv' || mediaType === 'series') ? 'tv' : 'movie';
 
-        let allItems = [];
-        for (let q of searchQueries) {
-            const searchUrl = `${BASE_URL}/api/search/${encodeURIComponent(q)}/${SW_KEY}/`;
-            const sRes = await fetch(searchUrl, { headers: searchHeaders });
-            const sData = await sRes.json();
-            const found = (sData.series || []).concat(sData.posters || []);
-            if (found.length > 0) {
-                allItems = allItems.concat(found);
-                if (isMovie) break; 
-            }
-        }
+    return fetch('https://api.themoviedb.org/3/' + type + '/' + safeId + '?api_key=' + TMDB_API_KEY + '&language=tr-TR')
+        .then(function(r) { return r.json(); })
+        .then(function(info) {
+            var originalTitle = info.name || info.title;
+            if (!originalTitle) return [];
 
-        let finalResults = [];
-        const searchTitleLower = trTitle.toLowerCase().trim();
-        const orgTitleLower = orgTitle.toLowerCase().trim();
-
-        for (let target of allItems) {
-            const targetTitleLower = target.title.toLowerCase().trim();
-            
-            // --- KESİN EŞLEŞME FİLTRESİ ---
-            // From dizisi için "From Dizi" veya sadece "From" eşleşmeli. 28 tane sonuç çıkmasını engeller.
-            let isMatch = false;
-            if (searchTitleLower === "from") {
-                isMatch = (targetTitleLower === "from" || targetTitleLower === "from dizi");
-            } else {
-                isMatch = targetTitleLower.includes(searchTitleLower) || targetTitleLower.includes(orgTitleLower);
-            }
-
-            if (!isMatch) continue;
-
-            const isActuallySerie = target.type === "serie" || (target.label && target.label.toLowerCase().includes("dizi"));
-            if (isMovie && isActuallySerie) continue;
-            if (!isMovie && !isActuallySerie) continue;
-
-            console.error(`[RecTV Match] Eşleşme: ${target.title}`);
-
-            if (isActuallySerie) {
-                const seasonRes = await fetch(`${BASE_URL}/api/season/by/serie/${target.id}/${SW_KEY}/`, { headers: searchHeaders });
-                const seasons = await seasonRes.json();
-                for (let s of seasons) {
-                    let sNumber = parseInt(s.title.match(/\d+/) || 0);
-                    if (sNumber == seasonNum) {
-                        for (let ep of s.episodes) {
-                            let epNumber = parseInt(ep.title.match(/\d+/) || 0);
-                            if (epNumber == episodeNum) {
-                                (ep.sources || []).forEach((src, idx) => {
-                                    const streamInfo = analyzeStream(src.url, idx, ep.label || s.title || target.label);
-                                    finalResults.push({
-                                        name: trTitle, 
-                                        title: `${streamInfo.icon} ${streamInfo.text}`,
-                                        url: src.url,
-                                        quality: "1080p",
-                                        headers: { 'User-Agent': 'googleusercontent', 'Referer': 'https://twitter.com/', 'Accept-Encoding': 'identity' }
-                                    });
-                                });
-                            }
-                        }
-                    }
-                }
-            } else {
-                let movieSources = target.sources || [];
-                if (!movieSources || movieSources.length === 0) {
-                    const detRes = await fetch(`${BASE_URL}/api/movie/${target.id}/${SW_KEY}/`, { headers: searchHeaders });
-                    const detData = await detRes.json();
-                    movieSources = detData.sources || [];
-                }
+            return fetch(BASE_URL + '/filmara.php', {
+                method: 'POST',
+                headers: Object.assign({}, HEADERS, { 'Content-Type': 'application/x-www-form-urlencoded' }),
+                body: 's=' + encodeURIComponent(originalTitle)
+            })
+            .then(function(res) { return res.text(); })
+            .then(function(searchHtml) {
+                var regex = new RegExp('href="(https?://jetfilmizle\\.net/(film|dizi)/([^"/]+))"', 'i');
+                var m = regex.exec(searchHtml);
                 
-                movieSources.forEach((src, idx) => {
-                    const streamInfo = analyzeStream(src.url, idx, target.label);
-                    finalResults.push({
-                        name: trTitle, // Oynatıcının bozmaması için sadece film ismi
-                        title: `${streamInfo.icon} ${streamInfo.text}`,
-                        url: src.url,
-                        quality: "1080p",
-                        headers: { 'User-Agent': 'googleusercontent', 'Referer': 'https://twitter.com/', 'Accept-Encoding': 'identity' }
-                    });
+                var finalUrl = '';
+                if (m) {
+                    finalUrl = BASE_URL + '/' + m[2] + '/' + m[3];
+                    if (type === 'tv') {
+                        finalUrl += '/sezon-' + (season || 1) + '/bolum-' + (episode || 1);
+                    }
+                } else {
+                    var fallbackSlug = titleToSlug(originalTitle);
+                    finalUrl = (type === 'tv') 
+                        ? BASE_URL + '/dizi/' + fallbackSlug + '/sezon-' + (season || 1) + '/bolum-' + (episode || 1)
+                        : BASE_URL + '/film/' + fallbackSlug;
+                }
+
+                return fetch(finalUrl, { headers: HEADERS });
+            });
+        })
+        .then(function(r) { return r.text(); })
+        .then(function(html) {
+            var streams = [];
+            
+            // Pixeldrain Yakalayıcı
+            var pdRe = /href="(https?:\/\/pixeldrain\.com\/u\/([^"]+))"/g;
+            var m;
+            while ((m = pdRe.exec(html)) !== null) {
+                streams.push({
+                    name: "JetFilmizle",
+                    title: '⌜ Pixeldrain ⌟ | HD',
+                    url: 'https://pixeldrain.com/api/file/' + m[2] + '?download',
+                    headers: { 'Referer': 'https://pixeldrain.com/' }
                 });
             }
-        }
 
-        console.error(`[RecTV Sonuç] Biten: ${finalResults.length}`);
-        return finalResults.filter((v, i, a) => a.findIndex(t => (t.url === v.url)) === i);
-
-    } catch (err) { 
-        console.error("[RecTV Hata] " + err.message);
-        return []; 
-    }
+            // Iframe/Embed Yakalayıcı
+            var iframeRe = /<iframe[^>]+src="([^"]+)"/gi;
+            while ((m = iframeRe.exec(html)) !== null) {
+                var src = m[1];
+                if (src.indexOf('jetv') !== -1 || src.indexOf('d2rs') !== -1) {
+                    streams.push({
+                        name: "JetFilmizle",
+                        title: '⌜ Hızlı Kaynak ⌟',
+                        url: src.startsWith('//') ? 'https:' + src : src,
+                        type: 'embed'
+                    });
+                }
+            }
+            return streams;
+        })
+        .catch(function(e) {
+            console.error("[FATAL_ERROR]: " + e.message);
+            return [];
+        });
 }
 
-module.exports = { getStreams };
+module.exports = { getStreams: getStreams };
