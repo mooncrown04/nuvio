@@ -1,6 +1,6 @@
 /**
- * RecTV_v19_Final_Fix
- * Film: Yıl ve Tam Kelime Eşleşmesi (Duvar / Duvarın Ötesi ayrımı için)
+ * RecTV_v18_Final_Fix
+ * Film: İsim, Yıl ve Puan Filtresi (Çılgın Max / Yol ayrımı için)
  * Dizi: Eski esnek yapı korundu.
  */
 
@@ -97,19 +97,27 @@ async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
             let isMatch = false;
 
             if (isMovie) {
-                // --- FİLM İÇİN YIL VE KELİME KONTROLÜ ---
+                // --- FİLM İÇİN KESİN FİLTRELEME ---
+                
+                // 1. Kelime sınırları kontrolü (Regex \b)
+                // "Yol"u bulur, "Yollar" veya "Yolcu"yu eler.
                 const checkExact = (query, target) => {
                     const regex = new RegExp(`(^|\\s)${query}(\\s|$)`, 'i');
                     return regex.test(target);
                 };
 
-                // Önce isim kontrolü
+                // 2. İsim Tam Eşleşme Kontrolü
                 const nameMatch = (tTitleClean === sTitleClean || tTitleClean === oTitleClean || checkExact(sTitleClean, tTitleClean));
                 
-                // Sonra yıl kontrolü (+/- 1 yıl esneklik)
+                // 3. Yıl Kontrolü (+/- 1 yıl esneklik)
                 const yearMatch = (tmdbYear > 0 && targetYear > 0) ? Math.abs(tmdbYear - targetYear) <= 1 : true;
 
-                isMatch = nameMatch && yearMatch;
+                // 4. Katı Filtre: Kısa isimlerde (örn: "Yol") isim tam tutmalı veya yıl kesin tutmalı
+                if (sTitleClean.length <= 4) {
+                    isMatch = (tTitleClean === sTitleClean || tTitleClean === oTitleClean) && yearMatch;
+                } else {
+                    isMatch = nameMatch && yearMatch;
+                }
             } else {
                 // --- DİZİ İÇİN ESKİ/ESNEK MANTIK ---
                 isMatch = tTitleClean.includes(sTitleClean) || tTitleClean.includes(oTitleClean);
