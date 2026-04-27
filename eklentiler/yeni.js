@@ -1,5 +1,5 @@
 /**
- * RecTV_v18_Final_Fix
+ * RecTV_v19_Final_Fix
  * Film: Yıl ve Tam Kelime Eşleşmesi (Duvar / Duvarın Ötesi ayrımı için)
  * Dizi: Eski esnek yapı korundu.
  */
