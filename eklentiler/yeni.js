@@ -1,8 +1,8 @@
 /**
- * SineWix_RecTV_Master_v19
- * - Rec TV stili: İsim üstte (name), Detaylar (Bayrak + Kaynak + Sağlayıcı) altta (title).
- * - console.log tamamen kaldırıldı, tüm çıktılar console.error yapıldı.
- * - Akıllı Eşleşme: "From" ararken "Girl From Nowhere" gibi yanlış sonuçlar puan kırma sistemiyle elenir.
+ * SineWix_AntiTrash_v21
+ * - Alakasız popüler sonuçları (Riverdale vb.) tamamen eler.
+ * - Sadece Aranan İsim + Yıl ikilisine odaklanır.
+ * - console.error ile detaylı puanlama takibi.
  */
 
 var API_BASE = 'https://ydfvfdizipanel.ru/public/api';
@@ -20,63 +20,24 @@ var STREAM_HEADERS = {
     'Referer': 'https://ydfvfdizipanel.ru/'
 };
 
-function resolveMediaFireLink(link) {
-    return fetch(link).then(res => res.text()).then(html => {
-        var match = html.match(/href="(https:\/\/download\d+\.mediafire\.com[^"]+)"/);
-        return match ? match[1] : link;
-    }).catch(() => link);
-}
-
 function buildStreams(videoList, swTitle, swYear) {
     return Promise.all(videoList.map(function(v, idx) {
         var isTr = (v.lang === 'tr' || (v.server && v.server.toLowerCase().includes('dublaj')));
         var flag = isTr ? '🇹🇷' : '🇬🇧';
-        var serverName = v.server || 'Sunucu';
-
         return {
-            // Üstteki ana başlık: Dizi Adı (Yıl)
             name: swTitle + (swYear ? ' (' + swYear + ')' : ''),
-            // Alttaki Rec TV stili detay: ⌜ RECTV ⌟ | Kaynak X | 🇹🇷 Sunucu Adı
-            title: '⌜ RECTV ⌟ | Kaynak ' + (idx + 1) + ' | ' + flag + ' ' + serverName,
+            title: '⌜ RECTV ⌟ | Kaynak ' + (idx + 1) + ' | ' + flag + ' ' + (v.server || 'Sunucu'),
             url: v.link,
             quality: 'HD',
             headers: STREAM_HEADERS,
             provider: 'sinewix'
         };
-    })).then(function(streams) {
-        return Promise.all(streams.map(function(s) {
-            if (s.url && s.url.includes('mediafire.com')) {
-                return resolveMediaFireLink(s.url).then(fUrl => { s.url = fUrl; return s; });
-            }
-            return Promise.resolve(s);
-        }));
-    });
-}
-
-function fetchDetailAndStreams(sinewixId, mediaType, seasonNum, episodeNum) {
-    var path = (mediaType === 'movie') ? 'media/detail' : 'series/show';
-    return fetch(API_BASE + '/' + path + '/' + sinewixId + '/' + API_KEY, { headers: API_HEADERS })
-        .then(res => res.json())
-        .then(function(item) {
-            var swTitle = item.name || item.title || 'SineWix';
-            var swYear = (item.first_air_date || item.release_date || '').substring(0, 4);
-            var videoList = [];
-            if (mediaType === 'movie') {
-                videoList = item.videos || [];
-            } else {
-                var s = (item.seasons || []).find(s => parseInt(s.season_number) === parseInt(seasonNum));
-                if (s) {
-                    var e = (s.episodes || []).find(e => parseInt(e.episode_number) === parseInt(episodeNum));
-                    if (e) videoList = e.videos || [];
-                }
-            }
-            return buildStreams(videoList, swTitle, swYear);
-        });
+    }));
 }
 
 function searchAndFetch(title, year, mediaType, seasonNum, episodeNum) {
     var searchUrl = API_BASE + '/search/' + encodeURIComponent(title) + '/' + API_KEY;
-    var sTitleLower = title.toLowerCase().trim();
+    var sTitleClean = title.toLowerCase().replace(/[^a-z0-9]/g, '').trim();
 
     return fetch(searchUrl, { headers: API_HEADERS })
         .then(res => res.json())
@@ -84,75 +45,81 @@ function searchAndFetch(title, year, mediaType, seasonNum, episodeNum) {
             var results = data.search || [];
             
             var scoredResults = results.map(function(item) {
-                var itemTitle = (item.name || item.title || '').toLowerCase().trim();
+                var itemRawName = (item.name || item.title || '');
+                var itemTitleClean = itemRawName.toLowerCase().replace(/[^a-z0-9]/g, '').trim();
                 var itemYear = (item.release_date || item.first_air_date || '').substring(0, 4);
                 var score = 0;
 
-                // 1. TAM İSİM BONUSU (En kritik aşama)
-                if (itemTitle === sTitleLower) {
-                    score += 1000;
-                } else if (itemTitle.includes(sTitleLower)) {
-                    score += 100;
-                    // Kelime sayısı farkı varsa puan kır (From vs Girl From Nowhere)
-                    var diff = Math.abs(itemTitle.split(' ').length - sTitleLower.split(' ').length);
-                    score -= (diff * 50); 
+                // KURAL 1: İSİM ALAKASIZSA DİREKT ELE (Riverdale gibi)
+                // Aranan isim "theboys" ise ve sonuçta "theboys" geçmiyorsa skoru -5000 yap.
+                if (itemTitleClean.indexOf(sTitleClean) === -1 && sTitleClean.indexOf(itemTitleClean) === -1) {
+                    score = -5000;
+                } else {
+                    // KURAL 2: TAM EŞLEŞME (theboys === theboys)
+                    if (itemTitleClean === sTitleClean) score += 2000;
+                    else score += 500;
+
+                    // KURAL 3: KELİME UZUNLUĞU (The Boys vs The Boys Diabolical)
+                    var lenDiff = Math.abs(itemTitleClean.length - sTitleClean.length);
+                    score -= (lenDiff * 50);
                 }
 
-                // 2. YIL BONUSU
-                if (year && itemYear === year) score += 500; 
+                // KURAL 4: YIL KONTROLÜ (Çok kritik)
+                if (year && itemYear === year) score += 1000;
+                else score -= 500;
 
-                // 3. TÜR FİLTRESİ
+                // KURAL 5: TÜR KONTROLÜ
                 var t = item.type || '';
                 var typeOk = (mediaType === 'movie') ? t.includes('movie') : (t.includes('serie') || t.includes('anime'));
-                if (!typeOk) score = -5000; // Tür farklıysa tamamen devre dışı bırak
+                if (!typeOk) score = -10000;
 
+                console.error("DEBUG_SCORE: " + itemRawName + " -> Puan: " + score);
                 return { item: item, score: score };
             });
 
-            // En yüksek puanlıyı bul
             scoredResults.sort((a, b) => b.score - a.score);
-            var finalTarget = (scoredResults[0] && scoredResults[0].score > 0) ? scoredResults[0].item : null;
+            var best = (scoredResults[0] && scoredResults[0].score > 0) ? scoredResults[0].item : null;
 
-            if (!finalTarget) {
-                console.error("PLUGIN_ERROR: SineWix'te uygun eşleşme bulunamadı.");
+            if (!best) {
+                console.error("PLUGIN_ERROR: Filtreleme sonrası uygun sonuç kalmadı.");
                 return [];
             }
 
-            console.error("PLUGIN_INFO: Eşleşen İçerik -> " + (finalTarget.name || finalTarget.title));
-            return fetchDetailAndStreams(finalTarget.id, mediaType, seasonNum, episodeNum);
+            console.error("PLUGIN_INFO: Seçilen -> " + (best.name || best.title));
+            var path = (mediaType === 'movie') ? 'media/detail' : 'series/show';
+            return fetch(API_BASE + '/' + path + '/' + best.id + '/' + API_KEY, { headers: API_HEADERS })
+                .then(res => res.json())
+                .then(item => {
+                    var vList = [];
+                    if (mediaType === 'movie') vList = item.videos || [];
+                    else {
+                        var s = (item.seasons || []).find(s => parseInt(s.season_number) === parseInt(seasonNum));
+                        if (s) {
+                            var e = (s.episodes || []).find(e => parseInt(e.episode_number) === parseInt(episodeNum));
+                            if (e) vList = e.videos || [];
+                        }
+                    }
+                    return buildStreams(vList, (item.name || item.title), (item.release_date || item.first_air_date || '').substring(0, 4));
+                });
         });
 }
 
 function getStreams(id, mediaType, seasonNum, episodeNum) {
-    console.error("PLUGIN_INFO: Gelen Ham ID -> " + id);
-    
     return new Promise(function(resolve) {
-        var finalId = id;
-        if (typeof id === 'string' && id.startsWith('tt')) {
-            finalId = id.split(/[:\.]/)[0];
-        }
-
+        var finalId = (typeof id === 'string' && id.startsWith('tt')) ? id.split(/[:\.]/)[0] : id;
         var isImdb = (typeof finalId === 'string' && finalId.startsWith('tt'));
         var tmdbUrl = isImdb 
             ? 'https://api.themoviedb.org/3/find/' + finalId + '?api_key=4ef0d7355d9ffb5151e987764708ce96&external_source=imdb_id&language=tr-TR'
             : 'https://api.themoviedb.org/3/' + (mediaType === 'movie' ? 'movie' : 'tv') + '/' + finalId + '?api_key=4ef0d7355d9ffb5151e987764708ce96&language=tr-TR';
 
         fetch(tmdbUrl).then(res => res.json()).then(function(data) {
-            var result = isImdb ? ((mediaType === 'movie' ? data.movie_results : data.tv_results) || [])[0] : data;
-            if (!result) {
-                console.error("PLUGIN_ERROR: TMDB verisi alınamadı.");
-                return resolve([]);
-            }
-
-            var title = result.title || result.name;
-            var year = (result.release_date || result.first_air_date || '').substring(0, 4);
-            
-            console.error("PLUGIN_INFO: Aranan -> " + title + " (" + year + ")");
+            var res = isImdb ? ((mediaType === 'movie' ? data.movie_results : data.tv_results) || [])[0] : data;
+            if (!res) return resolve([]);
+            var title = res.title || res.name;
+            var year = (res.release_date || res.first_air_date || '').substring(0, 4);
+            console.error("PLUGIN_INFO: Hedef -> " + title + " (" + year + ")");
             return searchAndFetch(title, year, mediaType, seasonNum || 1, episodeNum || 1);
-        }).then(streams => resolve(streams || [])).catch(err => {
-            console.error("PLUGIN_CRITICAL_ERROR: " + err.message);
-            resolve([]);
-        });
+        }).then(streams => resolve(streams || [])).catch(() => resolve([]));
     });
 }
 
