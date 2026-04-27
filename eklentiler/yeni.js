@@ -40,6 +40,7 @@ function buildStreams(videos, sinewixName) {
                         name: sinewixName, // SineWix'ten gelen isim
                         title: displayTitle,
                         url: finalUrl,
+                        quality: "Auto",
                         headers: STREAM_HEADERS,
                         provider: 'sinewix'
                     };
