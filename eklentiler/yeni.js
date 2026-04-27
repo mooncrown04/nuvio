@@ -1,8 +1,7 @@
 /**
- * SineWix_Full_Fix_v6
- * - "From" gibi kısa dizi isimleri için Tam Eşleşme önceliği.
- * - "Yol" gibi kısa film isimleri için Karakter Uzunluğu sıralaması.
- * - MediaFire link çözücü ve IPTV/Stremio uyumlu stream yapısı dahil.
+ * SineWix_Fix_v7
+ * - Listede gösterilen isim artık TMDB'den değil, SineWix panelinden gelen isimdir.
+ * - Karakter sayısı ve tam eşleşme kontrolü ile "From" ve "Yol" hataları giderildi.
  */
 
 var API_BASE = 'https://ydfvfdizipanel.ru/public/api';
@@ -36,22 +35,22 @@ function resolveMediaFireLink(link) {
         .catch(function() { return link; });
 }
 
-function buildStreams(videoLinks, title, year) {
+function buildStreams(videoLinks, swTitle, swYear) {
     return Promise.all(
         videoLinks.map(function(link) {
+            // Buradaki 'name' alanı artık SineWix'ten gelen orijinal başlığı (swTitle) kullanır.
             var streamObj = {
-                name: 'SineWix',
-                title: title + (year ? ' (' + year + ')' : ''),
+                name: 'SineWix - ' + swTitle,
+                title: swTitle + (swYear ? ' (' + swYear + ')' : ''),
                 url: link,
                 quality: 'HD',
-                size: 'Unknown',
                 headers: STREAM_HEADERS,
                 provider: 'sinewix'
             };
             if (link.includes('mediafire.com')) {
-                streamObj.name += ' - MediaFire';
-                return resolveMediaFireLink(link).then(function(finalUrl) {
-                    streamObj.url = finalUrl;
+                streamObj.name += ' (MF)';
+                return resolveMediaFireLink(link).then(function(fUrl) {
+                    streamObj.url = fUrl;
                     return streamObj;
                 });
             }
@@ -60,15 +59,16 @@ function buildStreams(videoLinks, title, year) {
     ).then(function(streams) { return streams.filter(function(s) { return s && s.url; }); });
 }
 
-function fetchDetailAndStreams(sinewixId, sinewixItemType, mediaType, seasonNum, episodeNum) {
+function fetchDetailAndStreams(sinewixId, mediaType, seasonNum, episodeNum) {
     var paths = getApiPaths(mediaType);
     var apiUrl = API_BASE + '/' + paths.genre + '/' + paths.endpoint + '/' + sinewixId + '/' + API_KEY;
 
     return fetch(apiUrl, { headers: API_HEADERS })
         .then(function(res) { return res.json(); })
         .then(function(item) {
-            var title = item.name || item.title || 'SineWix';
-            var year = (item.first_air_date || item.release_date || '').substring(0, 4);
+            // SineWix'in kendi ismini alıyoruz
+            var swTitle = item.name || item.title || 'Unknown Content';
+            var swYear = (item.first_air_date || item.release_date || '').substring(0, 4);
             var videoLinks = [];
 
             if (mediaType === 'movie') {
@@ -82,7 +82,7 @@ function fetchDetailAndStreams(sinewixId, sinewixItemType, mediaType, seasonNum,
                     if (targetEp) videoLinks = (targetEp.videos || []).map(function(v) { return v.link; }).filter(Boolean);
                 }
             }
-            return buildStreams(videoLinks, title, year);
+            return buildStreams(videoLinks, swTitle, swYear);
         });
 }
 
@@ -95,7 +95,6 @@ function searchAndFetch(title, mediaType, seasonNum, episodeNum) {
         .then(function(data) {
             var results = data.search || [];
 
-            // 1. TÜR FİLTRESİ (Anime desteği dahil)
             var filtered = results.filter(function(item) {
                 var t = item.type || '';
                 if (mediaType === 'movie') return t.includes('movie');
@@ -104,38 +103,29 @@ function searchAndFetch(title, mediaType, seasonNum, episodeNum) {
 
             if (filtered.length === 0) return [];
 
-            // 2. AKILLI SIRALAMA (Yanlış eşleşmeyi önleyen en kritik yer)
+            // AKILLI SIRALAMA
             filtered.sort(function(a, b) {
-                var aTitle = (a.name || a.title || '').toLowerCase().trim();
-                var bTitle = (b.name || b.title || '').toLowerCase().trim();
-
-                // TAM EŞLEŞME ÖNCELİĞİ: "From" arıyorsak tam "from" olanı en başa al
-                if (aTitle === sTitleLower) return -1;
-                if (bTitle === sTitleLower) return 1;
-
-                // UZUNLUK ÖNCELİĞİ: Aranan isme uzunluk olarak en yakın olan (en kısa olan) en üstte kalır
-                // Bu sayede "Yol" ararken "Mad Max: Öfkeli Yollar" listenin sonuna düşer.
-                return aTitle.length - bTitle.length;
+                var aT = (a.name || a.title || '').toLowerCase().trim();
+                var bT = (b.name || b.title || '').toLowerCase().trim();
+                if (aT === sTitleLower) return -1;
+                if (bT === sTitleLower) return 1;
+                return aT.length - bT.length;
             });
 
-            // 3. DOĞRULAMA (Kısa isimler için koruma)
             var best = filtered[0];
             var bestTitle = (best.name || best.title || '').toLowerCase().trim();
 
-            // Aranan başlık çok kısaysa (<=4) ama gelen sonuç çok uzunsa (arananın 2 katından fazlası) durdur.
-            if (sTitleLower.length <= 4 && bestTitle.length > sTitleLower.length + 6) {
-                return [];
-            }
+            // Güvenlik Bariyeri
+            if (sTitleLower.length <= 4 && bestTitle.length > sTitleLower.length + 6) return [];
 
-            return fetchDetailAndStreams(best.id, best.type, mediaType, seasonNum, episodeNum);
+            return fetchDetailAndStreams(best.id, mediaType, seasonNum, episodeNum);
         });
 }
 
 function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
     return new Promise(function(resolve) {
         var tmdbType = mediaType === 'movie' ? 'movie' : 'tv';
-        var tmdbUrl = 'https://api.themoviedb.org/3/' + tmdbType + '/' + tmdbId +
-            '?language=tr-TR&api_key=4ef0d7355d9ffb5151e987764708ce96';
+        var tmdbUrl = 'https://api.themoviedb.org/3/' + tmdbType + '/' + tmdbId + '?language=tr-TR&api_key=4ef0d7355d9ffb5151e987764708ce96';
 
         fetch(tmdbUrl)
             .then(function(res) { return res.json(); })
@@ -144,12 +134,8 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                 if (!title) return resolve([]);
                 return searchAndFetch(title, mediaType, seasonNum, episodeNum);
             })
-            .then(function(streams) {
-                resolve(streams || []);
-            })
-            .catch(function() {
-                resolve([]);
-            });
+            .then(function(streams) { resolve(streams || []); })
+            .catch(function() { resolve([]); });
     });
 }
 
