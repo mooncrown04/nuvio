@@ -1,107 +1,174 @@
 /**
- * Nuvio Dizi Motoru - V5.7.0
- * STRATEJİ: Gelen "ID:S:E" formatını parçala ve kesin eşleşme yap.
+ * RecTV_v18_Final_Fix
+ * UI Standartlaştırması, Auto Kalite ve Gelişmiş Eşleşme Algoritması
  */
 
-const DIZI_BASE_URL = 'https://raw.githubusercontent.com/mooncrown04/m3ubirlestir/main/nuvio_dizi_parcalari/';
-const TMDB_API_KEY = '500330721680edb6d5f7f12ba7cd9023';
+var cheerio = require("cheerio-without-node-native");
 
-function ultraClean(s) {
-    if (!s) return '';
-    return s.toString().toLowerCase()
-        .replace(/[ıİ]/g, 'i').replace(/[üÜ]/g, 'u').replace(/[öÖ]/g, 'o')
-        .replace(/[şŞ]/g, 's').replace(/[ğĞ]/g, 'g').replace(/[çÇ]/g, 'c')
-        .replace(/[^a-z0-9]/g, '') 
-        .trim();
+var BASE_URL = "https://a.prectv70.lol";
+var SW_KEY = "4F5A9C3D9A86FA54EACEDDD635185/c3c5bd17-e37b-4b94-a944-8a3688a30452";
+
+var HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
+    'Referer': 'https://twitter.com/',
+    'Accept': 'application/json'
+};
+
+var cachedToken = null;
+
+async function getAuthToken() {
+    if (cachedToken) return cachedToken;
+    try {
+        const res = await fetch(BASE_URL + "/api/attest/nonce", { headers: HEADERS });
+        const text = await res.text();
+        try {
+            const json = JSON.parse(text);
+            cachedToken = json.accessToken || text.trim();
+        } catch (e) { cachedToken = text.trim(); }
+        return cachedToken;
+    } catch (e) { return null; }
 }
 
-async function getStreams(rawId, type, seasonInput, episodeInput) {
-    // 1. VERİ PARÇALAMA (ID:S:E Formatı Kontrolü)
-    // Eğer rawId içinde ":" varsa parçala, yoksa gelen parametreleri kullan
-    let finalTmdbId = rawId;
-    let finalSeason = seasonInput;
-    let finalEpisode = episodeInput;
+function analyzeStream(url, index, itemLabel) {
+    const lowUrl = url.toLowerCase();
+    const lowLabel = (itemLabel || "").toLowerCase();
+    let info = { icon: "🌐", text: "Altyazı" };
 
-    if (rawId.includes(':')) {
-        const parts = rawId.split(':');
-        finalTmdbId = parts[0]; // tt7221388 kısmı
-        finalSeason = parts[1]; // 1 (sezon)
-        finalEpisode = parts[2]; // 1 (bölüm)
+    if (lowLabel.includes("dublaj") || lowUrl.includes("dublaj")) {
+        if (lowLabel.includes("altyazı") && index === 1) {
+            info.icon = "🌐";
+            info.text = "Altyazı";
+        } else {
+            info.icon = "🇹🇷";
+            info.text = "Dublaj";
+        }
     }
+    return info;
+}
 
-    // 2. TÜR DÜZELTME (series -> tv)
-    const finalType = (type === 'series' || type === 'tv') ? 'tv' : 'movie';
-    if (finalType !== 'tv') return [];
-
+async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
     try {
-        // 3. TMDB'den isim bilgilerini al
-        const tmdbRes = await fetch(`https://api.themoviedb.org/3/tv/${finalTmdbId}?api_key=${TMDB_API_KEY}&language=tr-TR`);
-        const d = await tmdbRes.json();
+        const isMovie = (mediaType === 'movie');
+        const tmdbUrl = `https://api.themoviedb.org/3/${isMovie ? 'movie' : 'tv'}/${tmdbId}?language=tr-TR&api_key=4ef0d7355d9ffb5151e987764708ce96`;
+        const tmdbRes = await fetch(tmdbUrl);
+        const tmdbData = await tmdbRes.json();
         
-        if (!d.name) return []; // Dizi bulunamadıysa çık
-
-        const targetTr = ultraClean(d.name);           
-        const targetEn = ultraClean(d.original_name);  
-        const targetSxxExx = `s${finalSeason.toString().padStart(2, '0')}e${finalEpisode.toString().padStart(2, '0')}`;
+        const trTitle = (tmdbData.title || tmdbData.name || "").trim();
+        const orgTitle = (tmdbData.original_title || tmdbData.original_name || "").trim();
         
-        // 4. M3U Dosya Yolunu Belirle
-        const firstChar = targetTr.charAt(0);
-        let harfGrubu = (/[a-z]/.test(firstChar)) ? firstChar : (/[0-9]/.test(firstChar) ? '0_9_rakam' : 'diger');
-        const fileName = `dizi_${harfGrubu}_s${finalSeason}.m3u`;
+        if (!trTitle) return [];
 
-        const m3uRes = await fetch(`${DIZI_BASE_URL}${fileName}?v=${Date.now()}`);
-        if (!m3uRes.ok) return [];
+        const token = await getAuthToken();
+        const searchHeaders = Object.assign({}, HEADERS, { 'Authorization': 'Bearer ' + token });
+        
+        let searchQueries = [trTitle];
+        if (isMovie && orgTitle && orgTitle !== trTitle) searchQueries.push(orgTitle);
 
-        const content = await m3uRes.text();
-        const results = [];
-        const blocks = content.split('#EXTINF');
-
-        for (let i = 1; i < blocks.length; i++) {
-            const block = blocks[i];
-            const lines = block.split('\n');
-            const infoLine = lines[0];
-
-            // SEZON/BÖLÜM KONTROLÜ
-            const displayPart = infoLine.split(',').pop().toLowerCase();
-            if (!displayPart.includes(targetSxxExx)) continue;
-
-            // GRUP BAŞLIĞI TEMİZLİĞİ VE KESİN EŞLEŞME
-            const groupMatch = infoLine.match(/group-title="([^"]+)"/);
-            const groupTitle = groupMatch ? groupMatch[1] : "";
-            const cleanGroup = ultraClean(groupTitle);
-
-            const checkMatch = (targetName) => {
-                if (!targetName) return false;
-                if (cleanGroup === targetName) return true;
-                // "From" faciasını önlemek için uzunluk farkı kontrolü (Max 4 karakter fark)
-                if (cleanGroup.includes(targetName)) {
-                    return Math.abs(cleanGroup.length - targetName.length) <= 4;
-                }
-                return false;
-            };
-
-            if (checkMatch(targetTr) || checkMatch(targetEn)) {
-                const urlLine = lines.find(l => l.trim().startsWith('http'));
-                if (urlLine) {
-                    const authorMatch = infoLine.match(/group-author="([^"]+)"/);
-                    results.push({
-                        url: urlLine.trim(),
-                        name: infoLine.split(',').pop().trim(),
-                        title: `[NUVIO] ${authorMatch ? authorMatch[1] : "KAYNAK"}`,
-                        quality: authorMatch ? authorMatch[1] : "HD"
-                    });
-                }
+        let allItems = [];
+        for (let q of searchQueries) {
+            const searchUrl = `${BASE_URL}/api/search/${encodeURIComponent(q)}/${SW_KEY}/`;
+            const sRes = await fetch(searchUrl, { headers: searchHeaders });
+            const sData = await sRes.json();
+            const found = (sData.series || []).concat(sData.posters || []);
+            if (found.length > 0) {
+                allItems = allItems.concat(found);
+                if (isMovie) break; 
             }
         }
 
-        return results;
+        let finalResults = [];
+        
+        // Temizleme fonksiyonu: Özel karakterleri boşluğa çevirir ve küçük harfe yapar
+        const cleanStr = (str) => str.toLowerCase().replace(/[:\-()]/g, ' ').replace(/\s+/g, ' ').trim();
 
-    } catch (err) {
-        console.error(`[NUVIO_ERROR] ${err.message}`);
-        return [];
+        const sTitleClean = cleanStr(trTitle);
+        const oTitleClean = cleanStr(orgTitle);
+
+        for (let target of allItems) {
+            const tTitleClean = cleanStr(target.title);
+            
+            // --- GELİŞMİŞ EŞLEŞME FİLTRESİ ---
+            let isMatch = false;
+
+            // 1. Tam Eşleşme Kontrolü
+            if (tTitleClean === sTitleClean || tTitleClean === oTitleClean) {
+                isMatch = true;
+            } 
+            // 2. Kelime Bazlı Sınır Kontrolü (Regex \b kullanımı)
+            else {
+                const checkExactWord = (query, target) => {
+                    if (!query || query.length === 0) return false;
+                    // Kelimeyi tam bir öbek olarak arar (Örn: "Yol"u bulur, "Yolcu"yu bulmaz)
+                    const regex = new RegExp(`(^|\\s)${query}(\\s|$)`, 'i');
+                    return regex.test(target);
+                };
+
+                // Kısa kelimelerde (3 harf ve altı: "Yol", "Sis", "It") çok daha katı davran
+                if (sTitleClean.length <= 3) {
+                    isMatch = (tTitleClean === sTitleClean || tTitleClean === sTitleClean + " dizi");
+                } else {
+                    // Uzun kelimelerde hedef başlığın içinde tam öbek olarak geçiyor mu bak
+                    isMatch = checkExactWord(sTitleClean, tTitleClean) || checkExactWord(oTitleClean, tTitleClean);
+                }
+            }
+
+            if (!isMatch) continue;
+
+            // Tür Kontrolü
+            const isActuallySerie = target.type === "serie" || (target.label && target.label.toLowerCase().includes("dizi"));
+            if (isMovie && isActuallySerie) continue;
+            if (!isMovie && !isActuallySerie) continue;
+
+            if (isActuallySerie) {
+                const seasonRes = await fetch(`${BASE_URL}/api/season/by/serie/${target.id}/${SW_KEY}/`, { headers: searchHeaders });
+                const seasons = await seasonRes.json();
+                for (let s of seasons) {
+                    let sNumber = parseInt(s.title.match(/\d+/) || 0);
+                    if (sNumber == seasonNum) {
+                        for (let ep of s.episodes) {
+                            let epNumber = parseInt(ep.title.match(/\d+/) || 0);
+                            if (epNumber == episodeNum) {
+                                (ep.sources || []).forEach((src, idx) => {
+                                    const streamInfo = analyzeStream(src.url, idx, ep.label || s.title || target.label);
+                                    finalResults.push({
+                                        name: trTitle, 
+                                        title: `⌜ RECTV ⌟ | Kaynak ${idx + 1} | ${streamInfo.icon} ${streamInfo.text}`,
+                                        url: src.url,
+                                        quality: "Auto",
+                                        headers: { 'User-Agent': 'googleusercontent', 'Referer': 'https://twitter.com/', 'Accept-Encoding': 'identity' }
+                                    });
+                                });
+                            }
+                        }
+                    }
+                }
+            } else {
+                let movieSources = target.sources || [];
+                if (!movieSources || movieSources.length === 0) {
+                    const detRes = await fetch(`${BASE_URL}/api/movie/${target.id}/${SW_KEY}/`, { headers: searchHeaders });
+                    const detData = await detRes.json();
+                    movieSources = detData.sources || [];
+                }
+                
+                movieSources.forEach((src, idx) => {
+                    const streamInfo = analyzeStream(src.url, idx, target.label);
+                    finalResults.push({
+                        name: trTitle,
+                        title: `⌜ RECTV ⌟ | Kaynak ${idx + 1} | ${streamInfo.icon} ${streamInfo.text}`,
+                        url: src.url,
+                        quality: "Auto",
+                        headers: { 'User-Agent': 'googleusercontent', 'Referer': 'https://twitter.com/', 'Accept-Encoding': 'identity' }
+                    });
+                });
+            }
+        }
+
+        // URL Tekilleştirme
+        return finalResults.filter((v, i, a) => a.findIndex(t => (t.url === v.url)) === i);
+
+    } catch (err) { 
+        return []; 
     }
 }
 
-// DIŞA AKTARMA
-if (typeof module !== 'undefined') module.exports = { getStreams };
-if (typeof globalThis !== 'undefined') globalThis.getStreams = getStreams;
+module.exports = { getStreams };
