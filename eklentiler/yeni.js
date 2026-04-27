@@ -32,17 +32,37 @@ async function getAuthToken() {
 function analyzeStream(url, index, itemLabel) {
     const lowUrl = url.toLowerCase();
     const lowLabel = (itemLabel || "").toLowerCase();
+    
+    // Varsayılan olarak Altyazı ayarla
     let info = { icon: "🌐", text: "Altyazı" };
 
-    if (lowLabel.includes("dublaj") || lowUrl.includes("dublaj")) {
-        if (lowLabel.includes("altyazı") && index === 1) {
+    // Türkçe Ses (Dublaj veya Yerli) tespiti için genişletilmiş liste
+    const isTurkish = 
+        lowLabel.includes("dublaj") || 
+        lowLabel.includes("yerli") || 
+        lowLabel.includes("tr dub") || 
+        lowLabel.includes("türkçe") ||
+        lowUrl.includes("dublaj") || 
+        lowUrl.includes("/tr/") ||
+        lowUrl.includes("-tr-"); // Bazı URL yapılarında dil bu şekilde belirtilir
+
+    if (isTurkish) {
+        // Dual (Çift Dil) kaynak kontrolü: 
+        // Eğer etikette hem altyazı hem dublaj/yerli geçiyorsa ve bu 2. kaynaksa altyazı kabul et
+        if ((lowLabel.includes("altyazı") || lowLabel.includes("sub")) && index === 1) {
             info.icon = "🌐";
             info.text = "Altyazı";
         } else {
             info.icon = "🇹🇷";
-            info.text = "Dublaj";
+            info.text = "Dublaj"; // "Yerli" olsa bile kullanıcıya "Dublaj/TR" ikonu göstermek daha standarttır
         }
+    } 
+    // Sadece Altyazı ibaresi varsa (veya sub/altyazi geçiyorsa)
+    else if (lowLabel.includes("altyazı") || lowLabel.includes("sub") || lowUrl.includes("altyazi")) {
+        info.icon = "🌐";
+        info.text = "Altyazı";
     }
+
     return info;
 }
 
