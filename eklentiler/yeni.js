@@ -28,24 +28,26 @@ function fetchDetailAndStreams(sinewixId, mediaType, seasonNum, episodeNum) {
             if (mediaType === 'movie') {
                 vLinks = (item.videos || []).map(function(v) { return v.link; }).filter(Boolean);
             } else {
-                var s = (item.seasons || []).find(function(x) { return parseInt(x.season_number) === parseInt(seasonNum); });
+                var sNum = parseInt(seasonNum);
+                var eNum = parseInt(episodeNum);
+                var s = (item.seasons || []).find(function(x) { return parseInt(x.season_number) === sNum; });
                 if (s) {
-                    var e = (s.episodes || []).find(function(x) { return parseInt(x.episode_number) === parseInt(episodeNum); });
+                    var e = (s.episodes || []).find(function(x) { return parseInt(x.episode_number) === eNum; });
                     if (e) vLinks = (e.videos || []).map(function(v) { return v.link; }).filter(Boolean);
                 }
             }
 
-            console.error('[DETAY]: ' + title + ' | Link Sayısı: ' + vLinks.length);
+            console.error('[PLUGIN_DEBUG]: ' + title + ' bulundu, ' + vLinks.length + ' link alindi.');
             
-            return vLinks.map(function(link, idx) {
+            return vLinks.map(function(link) {
                 return {
                     name: 'SineWix',
-                    title: title + (year ? ' (' + year + ')' : '') + ' | S' + seasonNum + 'E' + episodeNum,
+                    title: title + (year ? ' (' + year + ')' : '') + (mediaType !== 'movie' ? ' | S' + seasonNum + 'E' + episodeNum : ''),
                     url: link.trim(),
                     headers: STREAM_HEADERS
                 };
             });
-        }).catch(function(e) { console.error('[HATA_DETAY]: ' + e.message); return []; });
+        }).catch(function(e) { return []; });
 }
 
 function searchAndFetch(title, originalTitle, mediaType, seasonNum, episodeNum) {
@@ -56,58 +58,56 @@ function searchAndFetch(title, originalTitle, mediaType, seasonNum, episodeNum) 
         .then(function(data) {
             var results = data.search || [];
             
-            // Sonuç yoksa orijinal ismi dene
-            if (results.length === 0 && originalTitle && originalTitle !== title) {
-                console.error('[BILGI]: Turkce bos, Orijinal deneniyor: ' + originalTitle);
-                return fetch(API_BASE + '/search/' + encodeURIComponent(originalTitle) + '/' + API_KEY, { headers: API_HEADERS }).then(function(r) { return r.json(); });
-            }
-            return data;
-        })
-        .then(function(data) {
-            var res = data.search || [];
+            // 1. TAM EŞLEŞME KONTROLÜ (Büyük/Küçük harf duyarsız)
+            var targetName = title.toLowerCase().trim();
+            var origName = (originalTitle || '').toLowerCase().trim();
             
-            // Tür Filtreleme
-            var filtered = res.filter(function(item) {
-                var t = item.type || '';
-                return (mediaType === 'movie') ? t.includes('movie') : (t.includes('serie') || t.includes('anime'));
+            var match = results.find(function(i) {
+                var n = (i.name || '').toLowerCase().trim();
+                return n === targetName || n === origName;
             });
 
-            if (filtered.length === 0) { console.error('[HATA]: Arama sonucsuz kaldı.'); return []; }
-
-            // Akıllı Seçim
-            var best = filtered.find(function(i) {
-                var name = (i.name || '').toLowerCase().trim();
-                return name === title.toLowerCase().trim() || name === (originalTitle || '').toLowerCase().trim();
-            });
-
-            if (!best) {
-                best = filtered.sort(function(a, b) { return parseFloat(b.rate || 0) - parseFloat(a.rate || 0); })[0];
+            // 2. TAM EŞLEŞME YOKSA EN YÜKSEK SKOR (Örn: Sisu: İntikam Yolu gibi)
+            if (!match && results.length > 0) {
+                match = results.sort(function(a, b) { 
+                    return (b.match_score || 0) - (a.match_score || 0) || (b.vote_average || 0) - (a.vote_average || 0); 
+                })[0];
             }
 
-            console.error('[ANALIZ]: Secilen: ' + best.name + ' | ID: ' + best.id + ' | Puan: ' + best.rate);
-            return fetchDetailAndStreams(best.id, mediaType, seasonNum, episodeNum);
-        });
+            if (!match) {
+                // Eğer hala bir şey yoksa orijinal ismi direkt aramaya gönder (Fallback)
+                if (originalTitle && originalTitle !== title) {
+                    return fetch(API_BASE + '/search/' + encodeURIComponent(originalTitle) + '/' + API_KEY, { headers: API_HEADERS })
+                           .then(function(r) { return r.json(); })
+                           .then(function(d) {
+                               var dRes = d.search || [];
+                               return dRes.length > 0 ? fetchDetailAndStreams(dRes[0].id, mediaType, seasonNum, episodeNum) : [];
+                           });
+                }
+                return [];
+            }
+
+            console.error('[PLUGIN_DEBUG]: Secilen ID -> ' + match.id + ' (' + match.name + ')');
+            return fetchDetailAndStreams(match.id, mediaType, seasonNum, episodeNum);
+        })
+        .catch(function() { return []; });
 }
 
 function getStreams(id, mediaType, seasonNum, episodeNum) {
     return new Promise(function(resolve) {
-        var parts = id.toString().split(':');
-        var tmdbId = parts[0];
-        var sNum = parts[1] || seasonNum || 1;
-        var eNum = parts[2] || episodeNum || 1;
-
+        var tmdbId = id.toString().split(':')[0];
         var tmdbUrl = 'https://api.themoviedb.org/3/' + (mediaType === 'movie' ? 'movie' : 'tv') + '/' + tmdbId + '?language=tr-TR&api_key=4ef0d7355d9ffb5151e987764708ce96';
 
         fetch(tmdbUrl)
             .then(function(res) { return res.json(); })
             .then(function(data) {
-                var title = data.name || data.title;
+                var name = data.name || data.title;
                 var original = data.original_name || data.original_title;
-                if (!title) return resolve([]);
-                return searchAndFetch(title, original, mediaType, sNum, eNum);
+                if (!name) return resolve([]);
+                return searchAndFetch(name, original, mediaType, seasonNum || 1, episodeNum || 1);
             })
             .then(function(streams) { resolve(streams || []); })
-            .catch(function(e) { console.error('[HATA_GENEL]: ' + e.message); resolve([]); });
+            .catch(function() { resolve([]); });
     });
 }
 
