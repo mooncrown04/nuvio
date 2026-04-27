@@ -1,8 +1,7 @@
 /**
  * RecTV_v18_Final_Fix
- * FİLM: Gelişmiş isim/yıl filtresi (Duvar/Yol gibi kısa isimleri korur)
- * DİZİ: Paylaştığın orijinal esnek mantık korundu (Yanlış dizi çıkmasını engeller)
- * DİL: "Yerli", "Türkçe", "Dublaj" etiketleri için 🇹🇷 ikonu eklendi
+ * FİLM: Mad Max gibi "Yol" içeren ama "Yol" olmayan filmleri yıl ve tam isimle eler.
+ * DİZİ: Senin paylaştığın çalışan eski yapıya (From istisnası dahil) geri dönüldü.
  */
 
 var cheerio = require("cheerio-without-node-native");
@@ -36,7 +35,6 @@ function analyzeStream(url, index, itemLabel) {
     const lowLabel = (itemLabel || "").toLowerCase();
     let info = { icon: "🌐", text: "Altyazı" };
 
-    // "Yerli" ve "Türkçe" kelimelerini de kapsama aldık
     const isTurkish = 
         lowLabel.includes("dublaj") || 
         lowLabel.includes("yerli") || 
@@ -89,8 +87,6 @@ async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
         }
 
         let finalResults = [];
-        // Temizleme fonksiyonu (Sadece filmlerde kullanacağız)
-        const clean = (str) => str.toLowerCase().replace(/[:\-()]/g, ' ').replace(/\s+/g, ' ').trim();
 
         for (let target of allItems) {
             const targetTitleLower = target.title.toLowerCase().trim();
@@ -98,19 +94,25 @@ async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
             let isMatch = false;
 
             if (isMovie) {
-                // --- FİLM İÇİN KATİ FİLTRE ---
-                const sTitleClean = clean(trTitle);
-                const oTitleClean = clean(orgTitle);
-                const tTitleClean = clean(target.title);
+                // --- FİLM İÇİN KESİN KONTROL ---
+                const sLower = trTitle.toLowerCase().trim();
+                const oLower = orgTitle.toLowerCase().trim();
                 
-                const checkExact = (q, t) => new RegExp(`(^|\\s)${q}(\\s|$)`, 'i').test(t);
+                // 1. Tam Eşleşme (Duvar === Duvar)
+                const exactMatch = (targetTitleLower === sLower || targetTitleLower === oLower);
                 
-                const nameMatch = (tTitleClean === sTitleClean || tTitleClean === oTitleClean || checkExact(sTitleClean, tTitleClean));
+                // 2. Kelime Sınırı Kontrolü ("Yol"u bulur, "Yollar"ı eler)
+                const wordMatch = new RegExp(`(^|\\s)${sLower}(\\s|$)`, 'i').test(targetTitleLower) || 
+                                  new RegExp(`(^|\\s)${oLower}(\\s|$)`, 'i').test(targetTitleLower);
+
+                // 3. Yıl Kontrolü (+/- 1 yıl)
                 const yearMatch = (tmdbYear > 0 && targetYear > 0) ? Math.abs(tmdbYear - targetYear) <= 1 : true;
 
-                isMatch = nameMatch && yearMatch;
+                // Mad Max (Öfkeli Yollar) ismindeki "Yol"u elemeyi garanti etmek için:
+                isMatch = (exactMatch || wordMatch) && yearMatch;
+                
             } else {
-                // --- DİZİ İÇİN SENİN PAYLAŞTIĞIN ESKİ/DOĞRU ÇALIŞAN MANTIK ---
+                // --- DİZİ İÇİN SENİN İSTEDİĞİN ESKİ YAPI ---
                 const searchTitleLower = trTitle.toLowerCase().trim();
                 const orgTitleLower = orgTitle.toLowerCase().trim();
 
@@ -128,7 +130,6 @@ async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
             if (!isMovie && !isActuallySerie) continue;
 
             if (isActuallySerie) {
-                // Senin koddaki dizi akışı
                 const seasonRes = await fetch(`${BASE_URL}/api/season/by/serie/${target.id}/${SW_KEY}/`, { headers: searchHeaders });
                 const seasons = await seasonRes.json();
                 for (let s of seasons) {
@@ -152,7 +153,6 @@ async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                     }
                 }
             } else {
-                // Film akışı
                 let movieSources = target.sources || [];
                 if (!movieSources || movieSources.length === 0) {
                     const detRes = await fetch(`${BASE_URL}/api/movie/${target.id}/${SW_KEY}/`, { headers: searchHeaders });
