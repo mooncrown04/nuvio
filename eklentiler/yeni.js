@@ -1,7 +1,8 @@
 /**
- * SineWix_Fix_v7
- * - Listede gösterilen isim artık TMDB'den değil, SineWix panelinden gelen isimdir.
- * - Karakter sayısı ve tam eşleşme kontrolü ile "From" ve "Yol" hataları giderildi.
+ * SineWix_Stremio_Compatible_v9
+ * - Stremio ID formatını (tt1190634:1:1) otomatik ayrıştırır.
+ * - TMDB üzerinden IMDb ID ile isim bulur.
+ * - Yanlış dizi eşleşmelerini (The Boys -> Riverdale) isim kontrolüyle engeller.
  */
 
 var API_BASE = 'https://ydfvfdizipanel.ru/public/api';
@@ -21,65 +22,48 @@ var STREAM_HEADERS = {
     'Accept-Encoding': 'identity'
 };
 
-function getApiPaths(mediaType) {
-    return (mediaType === 'movie') ? { genre: 'media', endpoint: 'detail' } : { genre: 'series', endpoint: 'show' };
-}
-
 function resolveMediaFireLink(link) {
-    return fetch(link)
-        .then(function(res) { return res.text(); })
-        .then(function(html) {
-            var match = html.match(/href="(https:\/\/download\d+\.mediafire\.com[^"]+)"/);
-            return match ? match[1] : link;
-        })
-        .catch(function() { return link; });
+    return fetch(link).then(function(res) { return res.text(); }).then(function(html) {
+        var match = html.match(/href="(https:\/\/download\d+\.mediafire\.com[^"]+)"/);
+        return match ? match[1] : link;
+    }).catch(function() { return link; });
 }
 
 function buildStreams(videoLinks, swTitle, swYear) {
-    return Promise.all(
-        videoLinks.map(function(link) {
-            // Buradaki 'name' alanı artık SineWix'ten gelen orijinal başlığı (swTitle) kullanır.
-            var streamObj = {
-                name: 'SineWix - ' + swTitle,
-                title: swTitle + (swYear ? ' (' + swYear + ')' : ''),
-                url: link,
-                quality: 'HD',
-                headers: STREAM_HEADERS,
-                provider: 'sinewix'
-            };
-            if (link.includes('mediafire.com')) {
-                streamObj.name += ' (MF)';
-                return resolveMediaFireLink(link).then(function(fUrl) {
-                    streamObj.url = fUrl;
-                    return streamObj;
-                });
-            }
-            return Promise.resolve(streamObj);
-        })
-    ).then(function(streams) { return streams.filter(function(s) { return s && s.url; }); });
+    return Promise.all(videoLinks.map(function(link) {
+        var streamObj = {
+            name: 'SineWix - ' + swTitle,
+            title: swTitle + (swYear ? ' (' + swYear + ')' : ''),
+            url: link,
+            quality: 'HD',
+            headers: STREAM_HEADERS,
+            provider: 'sinewix'
+        };
+        if (link.includes('mediafire.com')) {
+            return resolveMediaFireLink(link).then(function(fUrl) { streamObj.url = fUrl; return streamObj; });
+        }
+        return Promise.resolve(streamObj);
+    })).then(function(streams) { return streams.filter(function(s) { return s && s.url; }); });
 }
 
 function fetchDetailAndStreams(sinewixId, mediaType, seasonNum, episodeNum) {
-    var paths = getApiPaths(mediaType);
-    var apiUrl = API_BASE + '/' + paths.genre + '/' + paths.endpoint + '/' + sinewixId + '/' + API_KEY;
+    var path = (mediaType === 'movie') ? 'media/detail' : 'series/show';
+    var apiUrl = API_BASE + '/' + path + '/' + sinewixId + '/' + API_KEY;
 
     return fetch(apiUrl, { headers: API_HEADERS })
         .then(function(res) { return res.json(); })
         .then(function(item) {
-            // SineWix'in kendi ismini alıyoruz
-            var swTitle = item.name || item.title || 'Unknown Content';
+            var swTitle = item.name || item.title || 'SineWix';
             var swYear = (item.first_air_date || item.release_date || '').substring(0, 4);
             var videoLinks = [];
 
             if (mediaType === 'movie') {
                 videoLinks = (item.videos || []).map(function(v) { return v.link; }).filter(Boolean);
             } else {
-                var seasons = item.seasons || [];
-                var targetSeason = seasons.find(function(s) { return parseInt(s.season_number) === parseInt(seasonNum); });
-                if (targetSeason) {
-                    var episodes = targetSeason.episodes || [];
-                    var targetEp = episodes.find(function(e) { return parseInt(e.episode_number) === parseInt(episodeNum); });
-                    if (targetEp) videoLinks = (targetEp.videos || []).map(function(v) { return v.link; }).filter(Boolean);
+                var s = (item.seasons || []).find(function(s) { return parseInt(s.season_number) === parseInt(seasonNum); });
+                if (s) {
+                    var e = (s.episodes || []).find(function(e) { return parseInt(e.episode_number) === parseInt(episodeNum); });
+                    if (e) videoLinks = (e.videos || []).map(function(v) { return v.link; }).filter(Boolean);
                 }
             }
             return buildStreams(videoLinks, swTitle, swYear);
@@ -97,13 +81,17 @@ function searchAndFetch(title, mediaType, seasonNum, episodeNum) {
 
             var filtered = results.filter(function(item) {
                 var t = item.type || '';
-                if (mediaType === 'movie') return t.includes('movie');
-                return t.includes('serie') || t.includes('anime');
+                var itemTitle = (item.name || item.title || '').toLowerCase().trim();
+                
+                var typeOk = (mediaType === 'movie') ? t.includes('movie') : (t.includes('serie') || t.includes('anime'));
+                if (!typeOk) return false;
+
+                // KATIKONTROL: Aranan isim ile sonuç uyuşmalı
+                return itemTitle.includes(sTitleLower) || sTitleLower.includes(itemTitle);
             });
 
             if (filtered.length === 0) return [];
 
-            // AKILLI SIRALAMA
             filtered.sort(function(a, b) {
                 var aT = (a.name || a.title || '').toLowerCase().trim();
                 var bT = (b.name || b.title || '').toLowerCase().trim();
@@ -112,30 +100,39 @@ function searchAndFetch(title, mediaType, seasonNum, episodeNum) {
                 return aT.length - bT.length;
             });
 
-            var best = filtered[0];
-            var bestTitle = (best.name || best.title || '').toLowerCase().trim();
-
-            // Güvenlik Bariyeri
-            if (sTitleLower.length <= 4 && bestTitle.length > sTitleLower.length + 6) return [];
-
-            return fetchDetailAndStreams(best.id, mediaType, seasonNum, episodeNum);
+            return fetchDetailAndStreams(filtered[0].id, mediaType, seasonNum, episodeNum);
         });
 }
 
-function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
+/**
+ * STREMIO ID PARSER (getStreams)
+ * tt1190634.1:1 veya tt1190634:1:1 formatlarını kabul eder.
+ */
+function getStreams(stremioId, mediaType, seasonNum, episodeNum) {
     return new Promise(function(resolve) {
-        var tmdbType = mediaType === 'movie' ? 'movie' : 'tv';
-        var tmdbUrl = 'https://api.themoviedb.org/3/' + tmdbType + '/' + tmdbId + '?language=tr-TR&api_key=4ef0d7355d9ffb5151e987764708ce96';
+        // ID içindeki gereksiz noktaları temizle ve IMDb ID'yi al
+        // Örn: tt1190634.1:1 -> tt1190634
+        var imdbId = stremioId.split(/[:\.]/)[0];
+        
+        // Eğer fonksiyona dışarıdan season/episode gelmediyse ID'den çek
+        if (!seasonNum || !episodeNum) {
+            var parts = stremioId.split(/[:\.]/);
+            if (parts.length > 1) seasonNum = parts[1];
+            if (parts.length > 2) episodeNum = parts[2];
+        }
 
-        fetch(tmdbUrl)
-            .then(function(res) { return res.json(); })
-            .then(function(data) {
-                var title = data.title || data.name || '';
-                if (!title) return resolve([]);
-                return searchAndFetch(title, mediaType, seasonNum, episodeNum);
-            })
-            .then(function(streams) { resolve(streams || []); })
-            .catch(function() { resolve([]); });
+        // TMDB üzerinden İsmi Bul
+        var findUrl = 'https://api.themoviedb.org/3/find/' + imdbId + 
+                      '?api_key=4ef0d7355d9ffb5151e987764708ce96&external_source=imdb_id&language=tr-TR';
+
+        fetch(findUrl).then(function(res) { return res.json(); }).then(function(data) {
+            var result = (mediaType === 'movie') ? (data.movie_results || [])[0] : (data.tv_results || [])[0];
+            var title = result ? (result.title || result.name) : '';
+            
+            if (!title) return resolve([]);
+            
+            return searchAndFetch(title, mediaType, seasonNum || 1, episodeNum || 1);
+        }).then(function(s) { resolve(s || []); }).catch(function() { resolve([]); });
     });
 }
 
