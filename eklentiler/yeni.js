@@ -1,4 +1,3 @@
-//v1
 var API_BASE = 'https://ydfvfdizipanel.ru/public/api';
 var API_KEY = '9iQNC5HQwPlaFuJDkhncJ5XTJ8feGXOJatAA';
 
@@ -11,7 +10,8 @@ var API_HEADERS = {
 
 var STREAM_HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-    'Referer': 'https://ydfvfdizipanel.ru/'
+    'Referer': 'https://ydfvfdizipanel.ru/',
+    'Origin': 'https://ydfvfdizipanel.ru'
 };
 
 function searchAndFetch(title, originalTitle, targetImdb, mediaType, seasonNum, episodeNum, releaseDate) {
@@ -19,27 +19,24 @@ function searchAndFetch(title, originalTitle, targetImdb, mediaType, seasonNum, 
     var targetYear = releaseDate ? releaseDate.split('-')[0] : null;
 
     return fetch(searchUrl, { headers: API_HEADERS })
-        .then(res => res.json())
-        .then(data => {
+        .then(function(res) { return res.json(); })
+        .then(function(data) {
             var results = data.search || [];
             var path = (mediaType === 'movie') ? 'media/detail' : 'series/show';
 
-            // Takılmayı önlemek için her aramayı kontrollü yapıyoruz
-            return Promise.all(results.map(item => {
+            // Takılma yapmaması için her sonucun detayını güvenli bir şekilde alıyoruz
+            return Promise.all(results.map(function(item) {
                 return fetch(API_BASE + '/' + path + '/' + item.id + '/' + API_KEY, { headers: API_HEADERS })
-                    .then(r => r.json())
-                    .catch(() => null);
+                    .then(function(r) { return r.json(); })
+                    .catch(function() { return null; });
             }));
         })
-        .then(detailedItems => {
-            // İKİNCİ KODUN GÜÇLÜ FİLTRELEME MANTIĞI
-            var bestMatch = detailedItems.find(item => {
+        .then(function(detailedItems) {
+            // Sadece doğru sonucu seçen filtreleme
+            var bestMatch = detailedItems.find(function(item) {
                 if (!item) return false;
-                // 1. Kural: IMDb ID varsa kesin eşleşmeli
-                if (item.imdb_external_id && targetImdb) {
-                    return item.imdb_external_id === targetImdb;
-                }
-                // 2. Kural: IMDb yoksa Yıl ve İsim eşleşmeli
+                if (item.imdb_external_id && targetImdb && item.imdb_external_id === targetImdb) return true;
+                
                 var itemYear = (item.release_date || item.first_air_date || '').split('-')[0];
                 var nameMatch = (item.name || '').toLowerCase() === originalTitle.toLowerCase();
                 return nameMatch && (itemYear === targetYear);
@@ -51,26 +48,25 @@ function searchAndFetch(title, originalTitle, targetImdb, mediaType, seasonNum, 
             if (mediaType === 'movie') {
                 vList = bestMatch.videos || [];
             } else {
-                var s = (bestMatch.seasons || []).find(s => parseInt(s.season_number) == parseInt(seasonNum));
+                var s = (bestMatch.seasons || []).find(function(s) { return parseInt(s.season_number) == parseInt(seasonNum); });
                 if (s && s.episodes) {
-                    var e = s.episodes.find(e => parseInt(e.episode_number) == parseInt(episodeNum));
+                    var e = s.episodes.find(function(e) { return parseInt(e.episode_number) == parseInt(episodeNum); });
                     if (e) vList = e.videos || [];
                 }
             }
 
-            // SADECE LİNKİ DÖNDÜRÜYORUZ (Takılan MediaFire çözümleyiciyi kaldırdım)
-            return vList.map((v, idx) => {
-                var sName = (v.server || '').toLowerCase();
-                var flag = (sName.includes('tr') || sName.includes('dublaj')) ? '🇹🇷' : '🇬🇧';
+            // Süslemeleri (bayrak, RECTV vb.) kaldırdım, sadece ham veri dönüyor
+            return vList.map(function(v) {
                 return {
                     name: 'SineWix',
-                    title: '⌜ RECTV ⌟ | ' + flag + ' ' + (v.server || 'Sunucu ' + (idx + 1)),
+                    title: v.server || 'Sunucu',
                     url: v.link ? v.link.trim() : '',
-                    headers: STREAM_HEADERS
+                    headers: STREAM_HEADERS,
+                    provider: 'sinewix'
                 };
             });
         })
-        .catch(() => []);
+        .catch(function() { return []; });
 }
 
 function getStreams(id, mediaType, seasonNum, episodeNum) {
@@ -79,14 +75,18 @@ function getStreams(id, mediaType, seasonNum, episodeNum) {
         var tmdbType = mediaType === 'movie' ? 'movie' : 'tv';
         var tmdbUrl = 'https://api.themoviedb.org/3/' + tmdbType + '/' + imdbId + '?api_key=4ef0d7355d9ffb5151e987764708ce96&language=tr-TR&append_to_response=external_ids';
 
-        fetch(tmdbUrl).then(res => res.json()).then(data => {
+        fetch(tmdbUrl).then(function(res) { return res.json(); }).then(function(data) {
             var t = data.title || data.name;
             var ot = data.original_title || data.original_name;
             var releaseDate = data.release_date || data.first_air_date;
-            var targetImdb = data.imdb_id || (data.external_ids && data.external_ids.imdb_id) || imdbId;
+            var targetImdb = data.imdb_id || (data.external_ids && data.external_ids.imdb_id);
             
             return searchAndFetch(t, ot, targetImdb, mediaType, seasonNum || 1, episodeNum || 1, releaseDate);
-        }).then(streams => resolve(streams || [])).catch(() => resolve([]));
+        }).then(function(streams) { 
+            resolve(streams || []); 
+        }).catch(function() { 
+            resolve([]); 
+        });
     });
 }
 
