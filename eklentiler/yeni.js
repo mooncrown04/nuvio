@@ -1,8 +1,8 @@
 /**
- * SineWix_SmartMatch_v16
- * - Yıl ve İsim Karşılaştırmalı Puanlama (The Boys vs Riverdale hatası fix).
+ * SineWix_SmartMatch_v17
+ * - Tüm loglama işlemleri console.error olarak güncellendi.
+ * - Yıl ve İsim Karşılaştırmalı Puanlama sistemi aktif.
  * - Rec TV stili Bayraklı ve Temiz Görünüm.
- * - Stremio/Nuvio hibrit ID desteği.
  */
 
 var API_BASE = 'https://ydfvfdizipanel.ru/public/api';
@@ -81,38 +81,38 @@ function searchAndFetch(title, year, mediaType, seasonNum, episodeNum) {
         .then(function(data) {
             var results = data.search || [];
             
-            // GELİŞMİŞ PUANLAMA: Hem isim hem yıl kontrolü
             var scoredResults = results.map(function(item) {
                 var itemTitle = (item.name || item.title || '').toLowerCase().trim();
                 var itemYear = (item.release_date || item.first_air_date || '').substring(0, 4);
                 var score = 0;
 
-                // İsim eşleşmesi puanı
                 if (itemTitle === sTitleLower) score += 100;
                 else if (itemTitle.includes(sTitleLower)) score += 50;
 
-                // Yıl eşleşmesi puanı (Çok Kritik!)
                 if (year && itemYear === year) score += 200; 
 
-                // Tür eşleşmesi
                 var t = item.type || '';
                 var typeOk = (mediaType === 'movie') ? t.includes('movie') : (t.includes('serie') || t.includes('anime'));
-                if (!typeOk) score = 0; // Tür yanlışsa puanı sıfırla
+                if (!typeOk) score = 0;
 
                 return { item: item, score: score };
             });
 
-            // En yüksek puanlı olanı seç (yıl ve isim tutan)
             scoredResults.sort((a, b) => b.score - a.score);
             var finalTarget = (scoredResults[0] && scoredResults[0].score > 0) ? scoredResults[0].item : null;
 
-            if (!finalTarget) return [];
+            if (!finalTarget) {
+                console.error("PLUGIN_ERROR: SineWix'te uygun sonuç bulunamadı.");
+                return [];
+            }
 
             return fetchDetailAndStreams(finalTarget.id, mediaType, seasonNum, episodeNum);
         });
 }
 
 function getStreams(id, mediaType, seasonNum, episodeNum) {
+    console.error("PLUGIN_INFO: Gelen Ham ID -> " + id);
+    
     return new Promise(function(resolve) {
         var finalId = id;
         if (typeof id === 'string' && id.startsWith('tt')) {
@@ -126,13 +126,20 @@ function getStreams(id, mediaType, seasonNum, episodeNum) {
 
         fetch(tmdbUrl).then(res => res.json()).then(function(data) {
             var result = isImdb ? ((mediaType === 'movie' ? data.movie_results : data.tv_results) || [])[0] : data;
-            if (!result) return resolve([]);
+            if (!result) {
+                console.error("PLUGIN_ERROR: TMDB üzerinde içerik bulunamadı.");
+                return resolve([]);
+            }
 
             var title = result.title || result.name;
             var year = (result.release_date || result.first_air_date || '').substring(0, 4);
             
+            console.error("PLUGIN_INFO: Aranan -> " + title + " (" + year + ")");
             return searchAndFetch(title, year, mediaType, seasonNum || 1, episodeNum || 1);
-        }).then(streams => resolve(streams || [])).catch(() => resolve([]));
+        }).then(streams => resolve(streams || [])).catch(err => {
+            console.error("PLUGIN_CRITICAL: " + err.message);
+            resolve([]);
+        });
     });
 }
 
