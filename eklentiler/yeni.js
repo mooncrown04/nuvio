@@ -14,23 +14,24 @@ async function getStreams(id, mediaType, seasonNum, episodeNum) {
         const tmdbRes = await fetch(`https://api.themoviedb.org/3/${mediaType === 'movie' ? 'movie' : 'tv'}/${tmdbId}?api_key=4ef0d7355d9ffb5151e987764708ce96&language=tr-TR`);
         const tmdb = await tmdbRes.json();
         
-        const title = (tmdb.title || tmdb.name || "").toLowerCase().trim();
-        const orgTitle = (tmdb.original_title || tmdb.original_name || "").toLowerCase().trim();
+        const title = (tmdb.name || tmdb.title || "").toLowerCase().trim();
+        const orgTitle = (tmdb.original_name || tmdb.original_title || "").toLowerCase().trim();
 
-        // Arama sorgusunu daha esnek yapalım (Orijinal ismi önceliklendir)
+        // 1. ARAMA: Orijinal isimle ara (SineWix arama motoru için en sağlıklısı)
         const searchRes = await fetch(`${API_BASE}/search/${encodeURIComponent(orgTitle)}/${API_KEY}`, { headers: API_HEADERS });
-        const sData = await searchRes.json();
-        const list = sData.search || [];
+        const searchData = await searchRes.json();
+        const results = searchData.search || [];
 
-        if (list.length === 0) return [];
+        // 2. FİLTRELEME: Film/Dizi ayrımı ve isim kontrolü
+        const match = results.find(i => {
+            const itemName = (i.name || "").toLowerCase();
+            const isTypeMatch = (mediaType === 'movie' ? i.type !== 'serie' : i.type === 'serie');
+            return (itemName.includes(title) || itemName.includes(orgTitle)) && isTypeMatch;
+        }) || results[0];
 
-        // FİLTRELEME: İsmi içeren ve tipi uyan ilk sonucu al
-        const match = list.find(i => {
-            const n = (i.name || "").toLowerCase();
-            const typeOk = (mediaType === 'movie') ? (i.type !== 'serie') : (i.type === 'serie');
-            return (n.includes(title) || n.includes(orgTitle)) && typeOk;
-        }) || list[0];
+        if (!match) return [];
 
+        // 3. DETAYLARI ÇEK
         const path = (mediaType === 'movie') ? `media/detail/${match.id}` : `series/show/${match.id}`;
         const itemRes = await fetch(`${API_BASE}/${path}/${API_KEY}`, { headers: API_HEADERS });
         const item = await itemRes.json();
@@ -40,38 +41,24 @@ async function getStreams(id, mediaType, seasonNum, episodeNum) {
             vLinks = item.videos || [];
         } else {
             const s = (item.seasons || []).find(x => parseInt(x.season_number) === parseInt(seasonNum));
-            vLinks = s ? (s.episodes || []).find(x => parseInt(x.episode_number) === parseInt(episodeNum)).videos : [];
+            vLinks = (s && s.episodes) ? s.episodes.find(x => parseInt(x.episode_number) === parseInt(episodeNum)).videos : [];
         }
 
+        // 4. LİNK OLUŞTURMA: Mediafire'ı açan o özel header yapısı
         return vLinks.map((v, idx) => {
-            let finalUrl = (v.link || "").trim();
+            const rawUrl = (v.link || "").trim();
             
-            // MEDIAFIRE ÇÖZÜCÜ MANTIĞI
-            // Eğer link mediafire içeriyorsa, onu player'da açmak için sonuna /file eklemeyi dene 
-            // veya doğrudan stream header'larını zorla.
-            if (finalUrl.includes('mediafire.com')) {
-                // Mediafire linklerinin bazıları direkt indirme bağlantısı vermez, 
-                // bu yüzden player'ın "dosya" olarak görmesini sağlayan headerları ekliyoruz.
-                return {
-                    name: "SineWix",
-                    title: `⌜ RECTV ⌟ | ${v.server || 'Kaynak ' + (idx + 1)}`,
-                    url: finalUrl,
-                    headers: {
-                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36',
-                        'Accept': '*/*',
-                        'Referer': finalUrl, // Kendi üzerinden referans ver
-                        'Connection': 'keep-alive'
-                    }
-                };
-            }
-
             return {
                 name: "SineWix",
                 title: `⌜ RECTV ⌟ | ${v.server || 'Kaynak ' + (idx + 1)}`,
-                url: finalUrl,
+                url: rawUrl,
                 headers: {
-                    'User-Agent': 'Mozilla/5.0',
-                    'Referer': 'https://ydfvfdizipanel.ru/'
+                    // BU KISIM KRİTİK: Mediafire'ın korumasını aşan headerlar
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
+                    'Referer': rawUrl, // Linkin kendisini referer olarak ver
+                    'Accept': '*/*',
+                    'Accept-Language': 'tr-TR,tr;q=0.9',
+                    'Connection': 'keep-alive'
                 }
             };
         }).filter(res => res.url.startsWith('http'));
