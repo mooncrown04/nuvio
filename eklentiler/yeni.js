@@ -1,6 +1,6 @@
 /**
  * RecTV_v18_Final_Fix
- * UI Standartlaştırması, Auto Kalite ve Gelişmiş Eşleşme Algoritması
+ * Dizi mantığı korundu, Film eşleşmesi ve Yerli etiketi eklendi.
  */
 
 var cheerio = require("cheerio-without-node-native");
@@ -32,37 +32,26 @@ async function getAuthToken() {
 function analyzeStream(url, index, itemLabel) {
     const lowUrl = url.toLowerCase();
     const lowLabel = (itemLabel || "").toLowerCase();
-    
-    // Varsayılan olarak Altyazı ayarla
     let info = { icon: "🌐", text: "Altyazı" };
 
-    // Türkçe Ses (Dublaj veya Yerli) tespiti için genişletilmiş liste
+    // Yerli ve Dublaj desteği
     const isTurkish = 
         lowLabel.includes("dublaj") || 
         lowLabel.includes("yerli") || 
         lowLabel.includes("tr dub") || 
         lowLabel.includes("türkçe") ||
         lowUrl.includes("dublaj") || 
-        lowUrl.includes("/tr/") ||
-        lowUrl.includes("-tr-"); // Bazı URL yapılarında dil bu şekilde belirtilir
+        lowUrl.includes("/tr/");
 
     if (isTurkish) {
-        // Dual (Çift Dil) kaynak kontrolü: 
-        // Eğer etikette hem altyazı hem dublaj/yerli geçiyorsa ve bu 2. kaynaksa altyazı kabul et
-        if ((lowLabel.includes("altyazı") || lowLabel.includes("sub")) && index === 1) {
+        if (lowLabel.includes("altyazı") && index === 1) {
             info.icon = "🌐";
             info.text = "Altyazı";
         } else {
             info.icon = "🇹🇷";
-            info.text = "Dublaj"; // "Yerli" olsa bile kullanıcıya "Dublaj/TR" ikonu göstermek daha standarttır
+            info.text = "Dublaj";
         }
-    } 
-    // Sadece Altyazı ibaresi varsa (veya sub/altyazi geçiyorsa)
-    else if (lowLabel.includes("altyazı") || lowLabel.includes("sub") || lowUrl.includes("altyazi")) {
-        info.icon = "🌐";
-        info.text = "Altyazı";
     }
-
     return info;
 }
 
@@ -97,49 +86,39 @@ async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
         }
 
         let finalResults = [];
-        
-        // Temizleme fonksiyonu: Özel karakterleri boşluğa çevirir ve küçük harfe yapar
-        const cleanStr = (str) => str.toLowerCase().replace(/[:\-()]/g, ' ').replace(/\s+/g, ' ').trim();
-
-        const sTitleClean = cleanStr(trTitle);
-        const oTitleClean = cleanStr(orgTitle);
+        const searchTitleLower = trTitle.toLowerCase().trim();
+        const orgTitleLower = orgTitle.toLowerCase().trim();
 
         for (let target of allItems) {
-            const tTitleClean = cleanStr(target.title);
+            const targetTitleLower = target.title.toLowerCase().trim();
             
-            // --- GELİŞMİŞ EŞLEŞME FİLTRESİ ---
+            // --- FİLTRE MANTIKLARI ---
             let isMatch = false;
 
-            // 1. Tam Eşleşme Kontrolü
-            if (tTitleClean === sTitleClean || tTitleClean === oTitleClean) {
-                isMatch = true;
-            } 
-            // 2. Kelime Bazlı Sınır Kontrolü (Regex \b kullanımı)
-            else {
-                const checkExactWord = (query, target) => {
-                    if (!query || query.length === 0) return false;
-                    // Kelimeyi tam bir öbek olarak arar (Örn: "Yol"u bulur, "Yolcu"yu bulmaz)
-                    const regex = new RegExp(`(^|\\s)${query}(\\s|$)`, 'i');
-                    return regex.test(target);
-                };
-
-                // Kısa kelimelerde (3 harf ve altı: "Yol", "Sis", "It") çok daha katı davran
-                if (sTitleClean.length <= 3) {
-                    isMatch = (tTitleClean === sTitleClean || tTitleClean === sTitleClean + " dizi");
+            if (isMovie) {
+                // Film ise: Tam eşleşme veya kelime bazlı kontrol (Yol/Uzay Yolu ayrımı için)
+                if (targetTitleLower === searchTitleLower || targetTitleLower === orgTitleLower) {
+                    isMatch = true;
+                } else if (searchTitleLower.length > 3) {
+                    isMatch = targetTitleLower.includes(searchTitleLower) || targetTitleLower.includes(orgTitleLower);
+                }
+            } else {
+                // Dizi ise: Eskisi gibi esnek bırakıldı (From vb. için)
+                if (searchTitleLower === "from") {
+                    isMatch = (targetTitleLower === "from" || targetTitleLower === "from dizi");
                 } else {
-                    // Uzun kelimelerde hedef başlığın içinde tam öbek olarak geçiyor mu bak
-                    isMatch = checkExactWord(sTitleClean, tTitleClean) || checkExactWord(oTitleClean, tTitleClean);
+                    isMatch = targetTitleLower.includes(searchTitleLower) || targetTitleLower.includes(orgTitleLower);
                 }
             }
 
             if (!isMatch) continue;
 
-            // Tür Kontrolü
             const isActuallySerie = target.type === "serie" || (target.label && target.label.toLowerCase().includes("dizi"));
             if (isMovie && isActuallySerie) continue;
             if (!isMovie && !isActuallySerie) continue;
 
             if (isActuallySerie) {
+                // Dizi Mantığı (Eskisi gibi)
                 const seasonRes = await fetch(`${BASE_URL}/api/season/by/serie/${target.id}/${SW_KEY}/`, { headers: searchHeaders });
                 const seasons = await seasonRes.json();
                 for (let s of seasons) {
@@ -163,6 +142,7 @@ async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                     }
                 }
             } else {
+                // Film Mantığı
                 let movieSources = target.sources || [];
                 if (!movieSources || movieSources.length === 0) {
                     const detRes = await fetch(`${BASE_URL}/api/movie/${target.id}/${SW_KEY}/`, { headers: searchHeaders });
@@ -183,7 +163,6 @@ async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
             }
         }
 
-        // URL Tekilleştirme
         return finalResults.filter((v, i, a) => a.findIndex(t => (t.url === v.url)) === i);
 
     } catch (err) { 
