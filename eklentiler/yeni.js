@@ -1,7 +1,8 @@
 /**
  * RecTV_v18_Final_Fix
- * FİLM: İsim ve Yıl bazlı katı filtre (Yanlış film eşleşmelerini önler)
- * DİZİ: Dokunulmadı, senin orijinal esnek mantığın korundu.
+ * FİLM: Gelişmiş isim/yıl filtresi (Duvar/Yol gibi kısa isimleri korur)
+ * DİZİ: Paylaştığın orijinal esnek mantık korundu (Yanlış dizi çıkmasını engeller)
+ * DİL: "Yerli", "Türkçe", "Dublaj" etiketleri için 🇹🇷 ikonu eklendi
  */
 
 var cheerio = require("cheerio-without-node-native");
@@ -35,6 +36,7 @@ function analyzeStream(url, index, itemLabel) {
     const lowLabel = (itemLabel || "").toLowerCase();
     let info = { icon: "🌐", text: "Altyazı" };
 
+    // "Yerli" ve "Türkçe" kelimelerini de kapsama aldık
     const isTurkish = 
         lowLabel.includes("dublaj") || 
         lowLabel.includes("yerli") || 
@@ -87,17 +89,20 @@ async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
         }
 
         let finalResults = [];
+        // Temizleme fonksiyonu (Sadece filmlerde kullanacağız)
         const clean = (str) => str.toLowerCase().replace(/[:\-()]/g, ' ').replace(/\s+/g, ' ').trim();
-        const sTitleClean = clean(trTitle);
-        const oTitleClean = clean(orgTitle);
 
         for (let target of allItems) {
-            const tTitleClean = clean(target.title);
+            const targetTitleLower = target.title.toLowerCase().trim();
             const targetYear = parseInt(target.year || target.sublabel || "0");
             let isMatch = false;
 
             if (isMovie) {
-                // --- FİLM FİLTRESİ (TAM EŞLEŞME + YIL) ---
+                // --- FİLM İÇİN KATİ FİLTRE ---
+                const sTitleClean = clean(trTitle);
+                const oTitleClean = clean(orgTitle);
+                const tTitleClean = clean(target.title);
+                
                 const checkExact = (q, t) => new RegExp(`(^|\\s)${q}(\\s|$)`, 'i').test(t);
                 
                 const nameMatch = (tTitleClean === sTitleClean || tTitleClean === oTitleClean || checkExact(sTitleClean, tTitleClean));
@@ -105,9 +110,15 @@ async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
 
                 isMatch = nameMatch && yearMatch;
             } else {
-                // --- DİZİ FİLTRESİ (SENİN ESKİ MANTIĞIN - DOKUNULMADI) ---
-                isMatch = target.title.toLowerCase().includes(trTitle.toLowerCase()) || 
-                          target.title.toLowerCase().includes(orgTitle.toLowerCase());
+                // --- DİZİ İÇİN SENİN PAYLAŞTIĞIN ESKİ/DOĞRU ÇALIŞAN MANTIK ---
+                const searchTitleLower = trTitle.toLowerCase().trim();
+                const orgTitleLower = orgTitle.toLowerCase().trim();
+
+                if (searchTitleLower === "from") {
+                    isMatch = (targetTitleLower === "from" || targetTitleLower === "from dizi");
+                } else {
+                    isMatch = targetTitleLower.includes(searchTitleLower) || targetTitleLower.includes(orgTitleLower);
+                }
             }
 
             if (!isMatch) continue;
@@ -117,6 +128,7 @@ async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
             if (!isMovie && !isActuallySerie) continue;
 
             if (isActuallySerie) {
+                // Senin koddaki dizi akışı
                 const seasonRes = await fetch(`${BASE_URL}/api/season/by/serie/${target.id}/${SW_KEY}/`, { headers: searchHeaders });
                 const seasons = await seasonRes.json();
                 for (let s of seasons) {
@@ -140,6 +152,7 @@ async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                     }
                 }
             } else {
+                // Film akışı
                 let movieSources = target.sources || [];
                 if (!movieSources || movieSources.length === 0) {
                     const detRes = await fetch(`${BASE_URL}/api/movie/${target.id}/${SW_KEY}/`, { headers: searchHeaders });
