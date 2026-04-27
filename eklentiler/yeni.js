@@ -1,8 +1,8 @@
 /**
- * SineWix_DeepScan_v28
- * - Sezon/Bölüm eslesmesi esneklestirildi.
- * - Video bulunamadıgında nedenini detaylı loglar.
- * - Euphoria gibi dizilerde derin tarama yapar.
+ * SineWix_IMDb_Match_v32
+ * - IMDb ID Doğrulaması: Yanlış filmi/diziyi saniyesinde eler.
+ * - Çapraz Arama: Hem orijinal hem Türkçe isimle SineWix veritabanını tarar.
+ * - Tür Güvenliği: Dizi/Film karışıklığını bitirir.
  */
 
 var API_BASE = 'https://ydfvfdizipanel.ru/public/api';
@@ -15,71 +15,72 @@ var API_HEADERS = {
     'Accept': 'application/json'
 };
 
-function searchAndFetch(title, year, mediaType, seasonNum, episodeNum) {
-    var searchUrl = API_BASE + '/search/' + encodeURIComponent(title) + '/' + API_KEY;
-    return fetch(searchUrl, { headers: API_HEADERS })
+function searchAndFetch(title, originalTitle, targetImdb, mediaType, seasonNum, episodeNum) {
+    var queryList = [originalTitle, title];
+    
+    return Promise.all(queryList.map(q => 
+        fetch(API_BASE + '/search/' + encodeURIComponent(q) + '/' + API_KEY, { headers: API_HEADERS })
         .then(res => res.json())
-        .then(function(data) {
-            var results = data.search || [];
-            var best = results.find(item => {
-                var it = (item.name || item.title || '').toLowerCase().trim();
-                return it === title.toLowerCase().trim() && (mediaType === 'movie' ? (item.type || '').includes('movie') : (item.type || '').includes('serie'));
-            }) || results[0];
+    )).then(function(responses) {
+        var allResults = [];
+        responses.forEach(r => { if(r.search) allResults = allResults.concat(r.search); });
 
-            if (!best) return [];
-
+        // 1. ADIM: Arama sonuçlarını detaylandırıp IMDb ID'sine bakıyoruz
+        return Promise.all(allResults.map(resItem => {
             var path = (mediaType === 'movie') ? 'media/detail' : 'series/show';
-            return fetch(API_BASE + '/' + path + '/' + best.id + '/' + API_KEY, { headers: API_HEADERS })
-                .then(res => res.json())
-                .then(function(item) {
-                    var vList = [];
-                    if (mediaType === 'movie') {
-                        vList = item.videos || [];
-                    } else {
-                        // SEZON VE BOLUM KONTROLU (ESNEK KARSIALSTIRMA)
-                        var seasons = item.seasons || [];
-                        var targetS = seasons.find(s => s.season_number == seasonNum);
-                        
-                        if (targetS) {
-                            var episodes = targetS.episodes || [];
-                            var targetE = episodes.find(e => e.episode_number == episodeNum);
-                            if (targetE) {
-                                vList = targetE.videos || [];
-                            } else {
-                                console.error("PLUGIN_LOG: Bolum E" + episodeNum + " bulunamadi. Mevcut bolumler: " + episodes.length);
-                            }
-                        } else {
-                            console.error("PLUGIN_LOG: Sezon S" + seasonNum + " bulunamadi. Mevcut sezonlar: " + seasons.length);
-                        }
-                    }
-
-                    if (vList.length === 0) console.error("PLUGIN_LOG: Video listesi bos! Sunucu veri gondermedi.");
-
-                    return vList.map(function(v, idx) {
-                        var serverStr = (v.server || '').toLowerCase();
-                        var hasTr = serverStr.includes('tr') || serverStr.includes('dublaj') || (v.lang || '').toLowerCase() === 'tr';
-                        var flags = serverStr.includes('dual') ? '🇹🇷🇬🇧' : (hasTr ? '🇹🇷' : '🇬🇧');
-
-                        return {
-                            name: (item.name || item.title),
-                            title: '⌜ RECTV ⌟ | K' + (idx + 1) + ' | ' + flags + ' ' + (v.server || 'Sunucu'),
-                            url: v.link,
-                            headers: { 'User-Agent': 'Mozilla/5.0', 'Referer': 'https://ydfvfdizipanel.ru/' }
-                        };
-                    });
+            return fetch(API_BASE + '/' + path + '/' + resItem.id + '/' + API_KEY, { headers: API_HEADERS })
+                   .then(r => r.json());
+        })).then(function(detailedItems) {
+            // IMDb ID eşleşen en doğru öğeyi bul (tt0898367 gibi)
+            var bestMatch = detailedItems.find(item => item.imdb_external_id === targetImdb);
+            
+            // Eğer IMDb tutmuyorsa, isim ve tip bazlı son bir şans ver
+            if (!bestMatch) {
+                bestMatch = detailedItems.find(item => {
+                   var isSerie = (item.type === 'serie');
+                   var typeOk = (mediaType === 'movie' ? !isSerie : isSerie);
+                   return typeOk && (item.name === originalTitle || item.name === title);
                 });
+            }
+
+            if (!bestMatch) return [];
+
+            var videos = [];
+            if (mediaType === 'movie') {
+                videos = bestMatch.videos || [];
+            } else {
+                var s = (bestMatch.seasons || []).find(s => parseInt(s.season_number) == parseInt(seasonNum));
+                if (s && s.episodes) {
+                    var e = s.episodes.find(e => parseInt(e.episode_number) == parseInt(episodeNum));
+                    if (e) videos = e.videos || [];
+                }
+            }
+
+            return videos.map(function(v, idx) {
+                var sName = (v.server || '').toLowerCase();
+                var flag = (sName.includes('tr') || sName.includes('dublaj')) ? '🇹🇷' : '🇬🇧';
+                return {
+                    name: bestMatch.name,
+                    title: '⌜ RECTV ⌟ | ' + flag + ' ' + (v.server || 'Sunucu ' + (idx + 1)),
+                    url: v.link,
+                    headers: { 'User-Agent': 'Mozilla/5.0', 'Referer': 'https://ydfvfdizipanel.ru/' }
+                };
+            });
         });
+    });
 }
 
 function getStreams(id, mediaType, seasonNum, episodeNum) {
     return new Promise(function(resolve) {
-        var finalId = (typeof id === 'string' && id.startsWith('tt')) ? id.split(/[:\.]/)[0] : id;
-        var tmdbUrl = 'https://api.themoviedb.org/3/' + (mediaType === 'movie' ? 'movie' : 'tv') + '/' + finalId + '?api_key=4ef0d7355d9ffb5151e987764708ce96&language=tr-TR';
+        var imdbId = (typeof id === 'string') ? id.split(/[:\.]/)[0] : id;
+        // TMDB üzerinden verileri topla
+        var tmdbUrl = 'https://api.themoviedb.org/3/' + (mediaType === 'movie' ? 'movie' : 'tv') + '/' + imdbId + '?api_key=4ef0d7355d9ffb5151e987764708ce96&language=tr-TR';
 
         fetch(tmdbUrl).then(res => res.json()).then(function(data) {
-            var res = (finalId.toString().startsWith('tt')) ? ((mediaType === 'movie' ? data.movie_results : data.tv_results) || [])[0] : data;
-            if (!res) return resolve([]);
-            return searchAndFetch(res.title || res.name, (res.release_date || res.first_air_date || '').substring(0, 4), mediaType, seasonNum || 1, episodeNum || 1);
+            var t = data.title || data.name;
+            var ot = data.original_title || data.original_name;
+            var targetImdb = data.imdb_id || data.external_ids?.imdb_id || imdbId;
+            return searchAndFetch(t, ot, targetImdb, mediaType, seasonNum || 1, episodeNum || 1);
         }).then(streams => resolve(streams || [])).catch(() => resolve([]));
     });
 }
