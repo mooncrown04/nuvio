@@ -1,3 +1,4 @@
+//v1
 var API_BASE = 'https://ydfvfdizipanel.ru/public/api';
 var API_KEY = '9iQNC5HQwPlaFuJDkhncJ5XTJ8feGXOJatAA';
 
@@ -10,15 +11,14 @@ var API_HEADERS = {
 
 var STREAM_HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-    'Referer': 'https://ydfvfdizipanel.ru/',
-    'Origin': 'https://ydfvfdizipanel.ru'
+    'Referer': 'https://ydfvfdizipanel.ru/'
 };
 
 function buildStreams(videoLinks, title, year) {
     return videoLinks.map(function(link, idx) {
         return {
             name: 'SineWix',
-            title: title + (year ? ' (' + year + ')' : '') + ' - Server ' + (idx + 1),
+            title: title + (year ? ' (' + year + ')' : '') + ' | Server ' + (idx + 1),
             url: link.trim(),
             headers: STREAM_HEADERS
         };
@@ -26,93 +26,74 @@ function buildStreams(videoLinks, title, year) {
 }
 
 function fetchDetailAndStreams(sinewixId, mediaType, seasonNum, episodeNum) {
-    var path = (mediaType === 'movie') ? 'media/detail' : 'series/show';
     var genre = (mediaType === 'movie') ? 'media' : 'series';
-    var apiUrl = API_BASE + '/' + genre + '/' + path + '/' + sinewixId + '/' + API_KEY;
+    var endpoint = (mediaType === 'movie') ? 'detail' : 'show';
+    var apiUrl = API_BASE + '/' + genre + '/' + endpoint + '/' + sinewixId + '/' + API_KEY;
 
     return fetch(apiUrl, { headers: API_HEADERS })
         .then(function(res) { return res.json(); })
         .then(function(item) {
             var title = item.name || item.title || 'SineWix';
             var year = (item.first_air_date || item.release_date || '').substring(0, 4);
-            var videoLinks = [];
+            var vLinks = [];
 
             if (mediaType === 'movie') {
-                videoLinks = (item.videos || []).map(function(v) { return v.link; }).filter(Boolean);
+                vLinks = (item.videos || []).map(function(v) { return v.link; }).filter(Boolean);
             } else {
                 var s = (item.seasons || []).find(function(x) { return parseInt(x.season_number) === parseInt(seasonNum); });
                 if (s) {
                     var e = (s.episodes || []).find(function(x) { return parseInt(x.episode_number) === parseInt(episodeNum); });
-                    if (e) {
-                        videoLinks = (e.videos || []).map(function(v) { return v.link; }).filter(Boolean);
-                    }
+                    if (e) vLinks = (e.videos || []).map(function(v) { return v.link; }).filter(Boolean);
                 }
             }
-            return buildStreams(videoLinks, title, year);
-        }).catch(function(err) {
-            console.error('[SineWix] Detay Hatası:', err.message);
-            return [];
-        });
+            return buildStreams(vLinks, title, year);
+        }).catch(function() { return []; });
 }
 
-function searchAndFetch(title, mediaType, seasonNum, episodeNum, targetYear) {
+function searchAndFetch(title, mediaType, seasonNum, episodeNum) {
     var searchUrl = API_BASE + '/search/' + encodeURIComponent(title) + '/' + API_KEY;
 
     return fetch(searchUrl, { headers: API_HEADERS })
         .then(function(res) { return res.json(); })
         .then(function(data) {
             var results = data.search || [];
-            
-            // Filtreleme: Hem tip kontrolü (movie/serie) hem de yıl kontrolü
             var filtered = results.filter(function(item) {
-                var t = (item.type || '').toLowerCase();
-                var isTypeMatch = (mediaType === 'movie') ? t.includes('movie') : (t.includes('serie') || t.includes('anime'));
-                
-                // Eğer hedef yılımız varsa, sonuçtaki yılla karşılaştır (opsiyonel ama hata payını azaltır)
-                var itemYear = (item.release_date || '').substring(0, 4);
-                var isYearMatch = targetYear ? (itemYear === targetYear) : true;
-
-                return isTypeMatch && isYearMatch;
+                var t = item.type || '';
+                if (mediaType === 'movie') return t.includes('movie');
+                return t.includes('serie') || t.includes('anime');
             });
-
-            // Eğer yıl kontrolüyle hiç sonuç çıkmazsa, sadece tipe göre en iyisini al (güvenlik ağı)
-            if (filtered.length === 0) {
-                filtered = results.filter(function(item) {
-                    var t = (item.type || '').toLowerCase();
-                    return (mediaType === 'movie') ? t.includes('movie') : (t.includes('serie') || t.includes('anime'));
-                });
-            }
 
             if (filtered.length === 0) return [];
 
-            // İlk sonucu en iyi eşleşme kabul ediyoruz (senin kodundaki mantık)
-            var best = filtered[0];
+            // TAM İSİM EŞLEŞMESİ KONTROLÜ (From gibi kısa isimli dizileri kurtarır)
+            var best = filtered.find(function(i) {
+                return (i.name || '').toLowerCase().trim() === title.toLowerCase().trim();
+            }) || filtered[0];
+
             return fetchDetailAndStreams(best.id, mediaType, seasonNum, episodeNum);
-        }).catch(function(err) {
-            console.error('[SineWix] Arama Hatası:', err.message);
-            return [];
         });
 }
 
-function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
+function getStreams(id, mediaType, seasonNum, episodeNum) {
     return new Promise(function(resolve) {
-        var tmdbType = mediaType === 'movie' ? 'movie' : 'tv';
+        // tt1196946:1:1 formatını veya sadece tmdbId'yi parçalar
+        var parts = id.toString().split(':');
+        var tmdbId = parts[0];
+        var sNum = parts[1] || seasonNum || 1;
+        var eNum = parts[2] || episodeNum || 1;
+
+        var tmdbType = (mediaType === 'movie') ? 'movie' : 'tv';
         var tmdbUrl = 'https://api.themoviedb.org/3/' + tmdbType + '/' + tmdbId + '?language=tr-TR&api_key=4ef0d7355d9ffb5151e987764708ce96';
 
         fetch(tmdbUrl)
             .then(function(res) { return res.json(); })
             .then(function(data) {
                 var title = data.name || data.title || '';
-                var targetYear = (data.first_air_date || data.release_date || '').substring(0, 4);
-                
                 if (!title) return resolve([]);
-                return searchAndFetch(title, mediaType, seasonNum, episodeNum, targetYear);
+                return searchAndFetch(title, mediaType, sNum, eNum);
             })
             .then(function(streams) { resolve(streams || []); })
-            .catch(function(err) {
-                console.error('[SineWix] Genel Hata:', err.message);
-                resolve([]);
-            });
+            .catch(function() { resolve([]); });
     });
 }
 
