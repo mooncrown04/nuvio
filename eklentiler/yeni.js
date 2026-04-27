@@ -1,7 +1,7 @@
 /**
  * RecTV_v18_Final_Fix
- * FİLM: Mad Max gibi "Yol" içeren ama "Yol" olmayan filmleri yıl ve tam isimle eler.
- * DİZİ: Senin paylaştığın çalışan eski yapıya (From istisnası dahil) geri dönüldü.
+ * FİLM: Karakter sayısı kontrolü eklendi. Aranan isimden uzun olanlar elenir.
+ * DİZİ: Senin paylaştığın eski çalışan yapıya dokunulmadı.
  */
 
 var cheerio = require("cheerio-without-node-native");
@@ -64,7 +64,6 @@ async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
         
         const trTitle = (tmdbData.title || tmdbData.name || "").trim();
         const orgTitle = (tmdbData.original_title || tmdbData.original_name || "").trim();
-        const tmdbYear = parseInt((tmdbData.release_date || tmdbData.first_air_date || "0").split("-")[0]);
         
         if (!trTitle) return [];
 
@@ -90,32 +89,21 @@ async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
 
         for (let target of allItems) {
             const targetTitleLower = target.title.toLowerCase().trim();
-            const targetYear = parseInt(target.year || target.sublabel || "0");
+            const searchTitleLower = trTitle.toLowerCase().trim();
+            const orgTitleLower = orgTitle.toLowerCase().trim();
             let isMatch = false;
 
             if (isMovie) {
-                // --- FİLM İÇİN KESİN KONTROL ---
-                const sLower = trTitle.toLowerCase().trim();
-                const oLower = orgTitle.toLowerCase().trim();
+                // --- FİLM İÇİN NET HARF SAYISI VE TAM EŞLEŞME ---
+                // Hedef başlık, aradığımız başlıktan daha uzunsa direkt elenir.
+                const isLengthOk = targetTitleLower.length <= searchTitleLower.length + 2; // +2 pay (yıl vs. için)
+                const isExact = targetTitleLower === searchTitleLower || targetTitleLower === orgTitleLower;
                 
-                // 1. Tam Eşleşme (Duvar === Duvar)
-                const exactMatch = (targetTitleLower === sLower || targetTitleLower === oLower);
-                
-                // 2. Kelime Sınırı Kontrolü ("Yol"u bulur, "Yollar"ı eler)
-                const wordMatch = new RegExp(`(^|\\s)${sLower}(\\s|$)`, 'i').test(targetTitleLower) || 
-                                  new RegExp(`(^|\\s)${oLower}(\\s|$)`, 'i').test(targetTitleLower);
-
-                // 3. Yıl Kontrolü (+/- 1 yıl)
-                const yearMatch = (tmdbYear > 0 && targetYear > 0) ? Math.abs(tmdbYear - targetYear) <= 1 : true;
-
-                // Mad Max (Öfkeli Yollar) ismindeki "Yol"u elemeyi garanti etmek için:
-                isMatch = (exactMatch || wordMatch) && yearMatch;
+                // Eğer tam eşleşmiyorsa bile en azından içermeli ama uzun olmamalı
+                isMatch = isExact || (targetTitleLower.includes(searchTitleLower) && isLengthOk);
                 
             } else {
-                // --- DİZİ İÇİN SENİN İSTEDİĞİN ESKİ YAPI ---
-                const searchTitleLower = trTitle.toLowerCase().trim();
-                const orgTitleLower = orgTitle.toLowerCase().trim();
-
+                // --- DİZİ İÇİN SENİN ÇALIŞAN ESKİ YAPIN ---
                 if (searchTitleLower === "from") {
                     isMatch = (targetTitleLower === "from" || targetTitleLower === "from dizi");
                 } else {
