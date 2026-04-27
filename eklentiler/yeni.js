@@ -24,18 +24,21 @@ function resolveMediaFireLink(link) {
         .catch(function() { return link; });
 }
 
-function buildStreams(videos, title, year) {
+function buildStreams(videos, sinewixName) {
     return Promise.all(
         videos.map(function(v) {
             var link = v.link;
             var serverName = v.server || 'Sunucu';
             var isMF = link.includes('mediafire.com');
             
+            // Başlık formatı: ⌜ SİNEWİX ⌟ | MEDİAFİRE veya SUNUCU ADI
+            var displayTitle = '⌜ SİNEWİX ⌟ | ' + (isMF ? 'MEDİAFİRE' : serverName.toUpperCase());
+
             if (isMF) {
                 return resolveMediaFireLink(link).then(function(finalUrl) {
                     return {
-                        name: 'SineWix - MediaFire',
-                        title: serverName + ' (' + year + ')',
+                        name: sinewixName, // SineWix'ten gelen isim
+                        title: displayTitle,
                         url: finalUrl,
                         headers: STREAM_HEADERS,
                         provider: 'sinewix'
@@ -43,8 +46,8 @@ function buildStreams(videos, title, year) {
                 });
             }
             return Promise.resolve({
-                name: 'SineWix',
-                title: serverName + ' (' + year + ')',
+                name: sinewixName, // SineWix'ten gelen isim
+                title: displayTitle,
                 url: link,
                 headers: STREAM_HEADERS,
                 provider: 'sinewix'
@@ -62,7 +65,6 @@ function searchAndFetch(title, originalTitle, targetImdb, mediaType, seasonNum, 
             var results = data.search || [];
             var path = (mediaType === 'movie') ? 'media/detail' : 'series/show';
 
-            // Takılmayı önleyen güvenli detay toplama
             return Promise.all(results.map(function(item) {
                 return fetch(API_BASE + '/' + path + '/' + item.id + '/' + API_KEY, { headers: API_HEADERS })
                     .then(function(r) { return r.json(); })
@@ -70,12 +72,9 @@ function searchAndFetch(title, originalTitle, targetImdb, mediaType, seasonNum, 
             }));
         })
         .then(function(detailedItems) {
-            // İSTEDİĞİN GÜÇLÜ FİLTRELEME
             var bestMatch = detailedItems.find(function(item) {
                 if (!item) return false;
-                // 1. Varsa IMDb kontrolü
                 if (item.imdb_external_id && targetImdb && item.imdb_external_id === targetImdb) return true;
-                // 2. Yoksa İsim ve Yıl kontrolü
                 var itemYear = (item.release_date || item.first_air_date || '').split('-')[0];
                 var nameMatch = (item.name || '').toLowerCase() === originalTitle.toLowerCase();
                 return nameMatch && (itemYear === targetYear);
@@ -98,7 +97,8 @@ function searchAndFetch(title, originalTitle, targetImdb, mediaType, seasonNum, 
                 }
             }
 
-            return buildStreams(vList, bestMatch.name, targetYear);
+            // bestMatch.name ile SineWix'teki orijinal ismi gönderiyoruz
+            return buildStreams(vList, bestMatch.name || title);
         })
         .catch(function() { return []; });
 }
