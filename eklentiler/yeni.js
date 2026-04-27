@@ -1,8 +1,8 @@
 /**
- * SineWix_LinkValidator_v26
- * - Linklerin saglamligi player'a gitmeden kontrol edilir.
- * - Bozuk veya erisilemeyen linkler loglara basilir.
- * - Headerlar güncellendi.
+ * SineWix_DeepScan_v28
+ * - Sezon/Bölüm eslesmesi esneklestirildi.
+ * - Video bulunamadıgında nedenini detaylı loglar.
+ * - Euphoria gibi dizilerde derin tarama yapar.
  */
 
 var API_BASE = 'https://ydfvfdizipanel.ru/public/api';
@@ -15,93 +15,58 @@ var API_HEADERS = {
     'Accept': 'application/json'
 };
 
-var STREAM_HEADERS = {
-    'User-Agent': 'EasyPlex (Android 14; SM-A546B; Samsung Galaxy A54 5G; tr)',
-    'Referer': 'https://ydfvfdizipanel.ru/',
-    'X-Requested-With': 'com.easypulex.tv'
-};
-
 function searchAndFetch(title, year, mediaType, seasonNum, episodeNum) {
     var searchUrl = API_BASE + '/search/' + encodeURIComponent(title) + '/' + API_KEY;
-    var sTitle = title.toLowerCase().trim();
-
-    console.error("PLUGIN_DEBUG: Aranan -> " + title);
-
     return fetch(searchUrl, { headers: API_HEADERS })
         .then(res => res.json())
         .then(function(data) {
-            console.error("PLUGIN_RAW_DATA: " + JSON.stringify(data));
             var results = data.search || [];
-            
-            var scoredResults = results.map(function(item) {
-                var itemTitle = (item.name || item.title || '').toLowerCase().trim();
-                var itemYear = (item.release_date || item.first_air_date || '').substring(0, 4);
-                var score = 0;
+            var best = results.find(item => {
+                var it = (item.name || item.title || '').toLowerCase().trim();
+                return it === title.toLowerCase().trim() && (mediaType === 'movie' ? (item.type || '').includes('movie') : (item.type || '').includes('serie'));
+            }) || results[0];
 
-                // Uzunluk ve Isim Uyumu
-                if (itemTitle.length > (sTitle.length * 2.5)) score = -50000;
-                else if (itemTitle === sTitle) score += 5000;
-                else {
-                    var regex = new RegExp('\\b' + sTitle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b', 'i');
-                    if (regex.test(itemTitle)) {
-                        score += 1000;
-                        score -= (Math.abs(itemTitle.length - sTitle.length) * 200);
-                    } else score = -50000;
-                }
-
-                if (year && itemYear === year) score += 1000;
-                else score -= 2000;
-
-                return { item: item, score: score };
-            });
-
-            scoredResults.sort((a, b) => b.score - a.score);
-            var best = (scoredResults[0] && scoredResults[0].score >= 2000) ? scoredResults[0].item : null;
-
-            if (!best) {
-                console.error("PLUGIN_LOG: Uygun sonuc bulunamadi.");
-                return [];
-            }
+            if (!best) return [];
 
             var path = (mediaType === 'movie') ? 'media/detail' : 'series/show';
             return fetch(API_BASE + '/' + path + '/' + best.id + '/' + API_KEY, { headers: API_HEADERS })
                 .then(res => res.json())
                 .then(function(item) {
-                    console.error("PLUGIN_ITEM_DETAIL: " + JSON.stringify(item));
                     var vList = [];
-                    if (mediaType === 'movie') vList = item.videos || [];
-                    else {
-                        var s = (item.seasons || []).find(s => parseInt(s.season_number) === parseInt(seasonNum));
-                        if (s) {
-                            var e = (s.episodes || []).find(e => parseInt(e.episode_number) === parseInt(episodeNum));
-                            if (e) vList = e.videos || [];
+                    if (mediaType === 'movie') {
+                        vList = item.videos || [];
+                    } else {
+                        // SEZON VE BOLUM KONTROLU (ESNEK KARSIALSTIRMA)
+                        var seasons = item.seasons || [];
+                        var targetS = seasons.find(s => s.season_number == seasonNum);
+                        
+                        if (targetS) {
+                            var episodes = targetS.episodes || [];
+                            var targetE = episodes.find(e => e.episode_number == episodeNum);
+                            if (targetE) {
+                                vList = targetE.videos || [];
+                            } else {
+                                console.error("PLUGIN_LOG: Bolum E" + episodeNum + " bulunamadi. Mevcut bolumler: " + episodes.length);
+                            }
+                        } else {
+                            console.error("PLUGIN_LOG: Sezon S" + seasonNum + " bulunamadi. Mevcut sezonlar: " + seasons.length);
                         }
                     }
 
-                    // Linklerin saglamligini tek tek kontrol et
-                    return Promise.all(vList.map(function(v, idx) {
-                        return fetch(v.link, { method: 'HEAD', headers: STREAM_HEADERS })
-                            .then(checkRes => {
-                                if (!checkRes.ok) console.error("LINK_BOZUK (" + checkRes.status + "): " + v.link);
-                                
-                                var serverStr = (v.server || '').toLowerCase();
-                                var langStr = (v.lang || '').toLowerCase();
-                                var hasTr = serverStr.includes('tr') || serverStr.includes('dublaj') || serverStr.includes('türkçe') || langStr === 'tr';
-                                var hasEn = serverStr.includes('en') || serverStr.includes('altyazı') || serverStr.includes('sub') || langStr === 'en' || (!hasTr);
-                                var flags = (serverStr.includes('dual') || (hasTr && hasEn)) ? '🇹🇷🇬🇧' : (hasTr ? '🇹🇷' : '🇬🇧');
+                    if (vList.length === 0) console.error("PLUGIN_LOG: Video listesi bos! Sunucu veri gondermedi.");
 
-                                return {
-                                    name: (item.name || item.title),
-                                    title: '⌜ RECTV ⌟ | K' + (idx + 1) + ' | ' + flags + ' ' + (v.server || 'Sunucu'),
-                                    url: v.link,
-                                    headers: STREAM_HEADERS
-                                };
-                            })
-                            .catch(err => {
-                                console.error("LINK_HATASI: " + v.link + " Error: " + err.message);
-                                return null; 
-                            });
-                    })).then(results => results.filter(r => r !== null));
+                    return vList.map(function(v, idx) {
+                        var serverStr = (v.server || '').toLowerCase();
+                        var hasTr = serverStr.includes('tr') || serverStr.includes('dublaj') || (v.lang || '').toLowerCase() === 'tr';
+                        var flags = serverStr.includes('dual') ? '🇹🇷🇬🇧' : (hasTr ? '🇹🇷' : '🇬🇧');
+
+                        return {
+                            name: (item.name || item.title),
+                            title: '⌜ RECTV ⌟ | K' + (idx + 1) + ' | ' + flags + ' ' + (v.server || 'Sunucu'),
+                            url: v.link,
+                            headers: { 'User-Agent': 'Mozilla/5.0', 'Referer': 'https://ydfvfdizipanel.ru/' }
+                        };
+                    });
                 });
         });
 }
