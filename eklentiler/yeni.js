@@ -1,8 +1,8 @@
 /**
- * SineWix_SmartMatch_v17
- * - Tüm loglama işlemleri console.error olarak güncellendi.
- * - Yıl ve İsim Karşılaştırmalı Puanlama sistemi aktif.
- * - Rec TV stili Bayraklı ve Temiz Görünüm.
+ * SineWix_RecTV_Master_v19
+ * - Rec TV stili: İsim üstte (name), Detaylar (Bayrak + Kaynak + Sağlayıcı) altta (title).
+ * - console.log tamamen kaldırıldı, tüm çıktılar console.error yapıldı.
+ * - Akıllı Eşleşme: "From" ararken "Girl From Nowhere" gibi yanlış sonuçlar puan kırma sistemiyle elenir.
  */
 
 var API_BASE = 'https://ydfvfdizipanel.ru/public/api';
@@ -34,7 +34,9 @@ function buildStreams(videoList, swTitle, swYear) {
         var serverName = v.server || 'Sunucu';
 
         return {
+            // Üstteki ana başlık: Dizi Adı (Yıl)
             name: swTitle + (swYear ? ' (' + swYear + ')' : ''),
+            // Alttaki Rec TV stili detay: ⌜ RECTV ⌟ | Kaynak X | 🇹🇷 Sunucu Adı
             title: '⌜ RECTV ⌟ | Kaynak ' + (idx + 1) + ' | ' + flag + ' ' + serverName,
             url: v.link,
             quality: 'HD',
@@ -86,26 +88,37 @@ function searchAndFetch(title, year, mediaType, seasonNum, episodeNum) {
                 var itemYear = (item.release_date || item.first_air_date || '').substring(0, 4);
                 var score = 0;
 
-                if (itemTitle === sTitleLower) score += 100;
-                else if (itemTitle.includes(sTitleLower)) score += 50;
+                // 1. TAM İSİM BONUSU (En kritik aşama)
+                if (itemTitle === sTitleLower) {
+                    score += 1000;
+                } else if (itemTitle.includes(sTitleLower)) {
+                    score += 100;
+                    // Kelime sayısı farkı varsa puan kır (From vs Girl From Nowhere)
+                    var diff = Math.abs(itemTitle.split(' ').length - sTitleLower.split(' ').length);
+                    score -= (diff * 50); 
+                }
 
-                if (year && itemYear === year) score += 200; 
+                // 2. YIL BONUSU
+                if (year && itemYear === year) score += 500; 
 
+                // 3. TÜR FİLTRESİ
                 var t = item.type || '';
                 var typeOk = (mediaType === 'movie') ? t.includes('movie') : (t.includes('serie') || t.includes('anime'));
-                if (!typeOk) score = 0;
+                if (!typeOk) score = -5000; // Tür farklıysa tamamen devre dışı bırak
 
                 return { item: item, score: score };
             });
 
+            // En yüksek puanlıyı bul
             scoredResults.sort((a, b) => b.score - a.score);
             var finalTarget = (scoredResults[0] && scoredResults[0].score > 0) ? scoredResults[0].item : null;
 
             if (!finalTarget) {
-                console.error("PLUGIN_ERROR: SineWix'te uygun sonuç bulunamadı.");
+                console.error("PLUGIN_ERROR: SineWix'te uygun eşleşme bulunamadı.");
                 return [];
             }
 
+            console.error("PLUGIN_INFO: Eşleşen İçerik -> " + (finalTarget.name || finalTarget.title));
             return fetchDetailAndStreams(finalTarget.id, mediaType, seasonNum, episodeNum);
         });
 }
@@ -127,7 +140,7 @@ function getStreams(id, mediaType, seasonNum, episodeNum) {
         fetch(tmdbUrl).then(res => res.json()).then(function(data) {
             var result = isImdb ? ((mediaType === 'movie' ? data.movie_results : data.tv_results) || [])[0] : data;
             if (!result) {
-                console.error("PLUGIN_ERROR: TMDB üzerinde içerik bulunamadı.");
+                console.error("PLUGIN_ERROR: TMDB verisi alınamadı.");
                 return resolve([]);
             }
 
@@ -137,7 +150,7 @@ function getStreams(id, mediaType, seasonNum, episodeNum) {
             console.error("PLUGIN_INFO: Aranan -> " + title + " (" + year + ")");
             return searchAndFetch(title, year, mediaType, seasonNum || 1, episodeNum || 1);
         }).then(streams => resolve(streams || [])).catch(err => {
-            console.error("PLUGIN_CRITICAL: " + err.message);
+            console.error("PLUGIN_CRITICAL_ERROR: " + err.message);
             resolve([]);
         });
     });
