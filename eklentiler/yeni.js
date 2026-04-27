@@ -1,6 +1,6 @@
 /**
- * Nuvio Dizi Motoru - V5.6.0
- * STRATEJİ: Kesin/Yakın Eşleşme Skoru + Çift İsim Kontrolü + Tam Dışa Aktarma
+ * Nuvio Dizi Motoru - V5.7.0
+ * STRATEJİ: Gelen "ID:S:E" formatını parçala ve kesin eşleşme yap.
  */
 
 const DIZI_BASE_URL = 'https://raw.githubusercontent.com/mooncrown04/m3ubirlestir/main/nuvio_dizi_parcalari/';
@@ -15,25 +15,40 @@ function ultraClean(s) {
         .trim();
 }
 
-async function getStreams(tmdbId, type, season, episode) {
-    // Nuvio ve Stremio için sadece TV tipini destekliyoruz
-    if (type !== 'tv') return [];
+async function getStreams(rawId, type, seasonInput, episodeInput) {
+    // 1. VERİ PARÇALAMA (ID:S:E Formatı Kontrolü)
+    // Eğer rawId içinde ":" varsa parçala, yoksa gelen parametreleri kullan
+    let finalTmdbId = rawId;
+    let finalSeason = seasonInput;
+    let finalEpisode = episodeInput;
+
+    if (rawId.includes(':')) {
+        const parts = rawId.split(':');
+        finalTmdbId = parts[0]; // tt7221388 kısmı
+        finalSeason = parts[1]; // 1 (sezon)
+        finalEpisode = parts[2]; // 1 (bölüm)
+    }
+
+    // 2. TÜR DÜZELTME (series -> tv)
+    const finalType = (type === 'series' || type === 'tv') ? 'tv' : 'movie';
+    if (finalType !== 'tv') return [];
 
     try {
-        // 1. TMDB Verisini Al (Hem Türkçe hem Orijinal İsim)
-        const tmdbRes = await fetch(`https://api.themoviedb.org/3/tv/${tmdbId}?api_key=${TMDB_API_KEY}&language=tr-TR`);
+        // 3. TMDB'den isim bilgilerini al
+        const tmdbRes = await fetch(`https://api.themoviedb.org/3/tv/${finalTmdbId}?api_key=${TMDB_API_KEY}&language=tr-TR`);
         const d = await tmdbRes.json();
         
+        if (!d.name) return []; // Dizi bulunamadıysa çık
+
         const targetTr = ultraClean(d.name);           
         const targetEn = ultraClean(d.original_name);  
-        const targetSxxExx = `s${season.toString().padStart(2, '0')}e${episode.toString().padStart(2, '0')}`;
+        const targetSxxExx = `s${finalSeason.toString().padStart(2, '0')}e${finalEpisode.toString().padStart(2, '0')}`;
         
-        // 2. Klasörleme mantığına göre doğru M3U dosyasını belirle
+        // 4. M3U Dosya Yolunu Belirle
         const firstChar = targetTr.charAt(0);
         let harfGrubu = (/[a-z]/.test(firstChar)) ? firstChar : (/[0-9]/.test(firstChar) ? '0_9_rakam' : 'diger');
-        const fileName = `dizi_${harfGrubu}_s${season}.m3u`;
+        const fileName = `dizi_${harfGrubu}_s${finalSeason}.m3u`;
 
-        // 3. M3U dosyasını indir
         const m3uRes = await fetch(`${DIZI_BASE_URL}${fileName}?v=${Date.now()}`);
         if (!m3uRes.ok) return [];
 
@@ -46,27 +61,20 @@ async function getStreams(tmdbId, type, season, episode) {
             const lines = block.split('\n');
             const infoLine = lines[0];
 
-            // --- SEZON/BÖLÜM FİLTRESİ ---
+            // SEZON/BÖLÜM KONTROLÜ
             const displayPart = infoLine.split(',').pop().toLowerCase();
             if (!displayPart.includes(targetSxxExx)) continue;
 
-            // --- GRUP ADI VE İSİM EŞLEŞTİRME ---
+            // GRUP BAŞLIĞI TEMİZLİĞİ VE KESİN EŞLEŞME
             const groupMatch = infoLine.match(/group-title="([^"]+)"/);
             const groupTitle = groupMatch ? groupMatch[1] : "";
             const cleanGroup = ultraClean(groupTitle);
 
-            /**
-             * AKILLI FİLTRELEME: 
-             * 1. Tam eşitlik var mı?
-             * 2. Veya isim içinde geçiyor mu? 
-             * 3. (ÖNEMLİ) İsim içinde geçiyorsa uzunluk farkı 3 karakterden fazla mı? 
-             * (Bu, "From" ararken "Tales from the Loop" gelmesini engeller)
-             */
             const checkMatch = (targetName) => {
                 if (!targetName) return false;
                 if (cleanGroup === targetName) return true;
+                // "From" faciasını önlemek için uzunluk farkı kontrolü (Max 4 karakter fark)
                 if (cleanGroup.includes(targetName)) {
-                    // Eğer aranan kelime içinde geçiyorsa, toplam uzunluk farkına bak
                     return Math.abs(cleanGroup.length - targetName.length) <= 4;
                 }
                 return false;
@@ -74,10 +82,8 @@ async function getStreams(tmdbId, type, season, episode) {
 
             if (checkMatch(targetTr) || checkMatch(targetEn)) {
                 const urlLine = lines.find(l => l.trim().startsWith('http'));
-
                 if (urlLine) {
                     const authorMatch = infoLine.match(/group-author="([^"]+)"/);
-                    // Nuvio'nun beklediği nesne yapısı
                     results.push({
                         url: urlLine.trim(),
                         name: infoLine.split(',').pop().trim(),
@@ -88,19 +94,14 @@ async function getStreams(tmdbId, type, season, episode) {
             }
         }
 
-        console.log(`[NUVIO] Arama tamamlandı. ID: ${tmdbId} | Sonuç: ${results.length}`);
         return results;
 
     } catch (err) {
-        console.error(`[NUVIO_CRITICAL] Hata: ${err.message}`);
+        console.error(`[NUVIO_ERROR] ${err.message}`);
         return [];
     }
 }
 
-// --- DIŞA AKTARMA (EXPORT) BÖLÜMÜ - Nuvio/Stremio bu kısmı bekler ---
-if (typeof module !== 'undefined') {
-    module.exports = { getStreams };
-}
-if (typeof globalThis !== 'undefined') {
-    globalThis.getStreams = getStreams;
-}
+// DIŞA AKTARMA
+if (typeof module !== 'undefined') module.exports = { getStreams };
+if (typeof globalThis !== 'undefined') globalThis.getStreams = getStreams;
