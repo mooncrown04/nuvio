@@ -1,5 +1,9 @@
+/* * SERVİS: STREAMIMDB (Embed)
+ * AÇIKLAMA: IMDb ID üzerinden film ve dizi stream linkleri sağlar.
+ * Sürüm: 8.3.0-ERROR-LOGGING-VERIFIED
+ */
+
 var TMDB_API_KEY = '500330721680edb6d5f7f12ba7cd9023';
-var VERSION      = "8.2.0-STREAMIMDB-VERIFIED-CONTROL";
 
 async function getStreams(tmdbId, mediaType, season, episode) {
     try {
@@ -10,10 +14,16 @@ async function getStreams(tmdbId, mediaType, season, episode) {
         const tmdbRes = await fetch(tmdbUrl);
         const d = await tmdbRes.json();
         
+        // HAM VERİ KONTROLÜ (TMDB'den gelen tüm veri)
+        console.error('[StreamIMDB] TMDB Ham Veri:', JSON.stringify(d));
+        
         const imdbId = d.external_ids ? d.external_ids.imdb_id : null;
         const title = d.title || d.name || "İçerik";
         
-        if (!imdbId || !imdbId.startsWith('tt')) return [];
+        if (!imdbId || !imdbId.startsWith('tt')) {
+            console.error('[StreamIMDB] Hata: Geçerli bir IMDb ID bulunamadı.');
+            return [];
+        }
 
         // 2. URL Formatını Belirle
         let targetUrl = "";
@@ -24,16 +34,14 @@ async function getStreams(tmdbId, mediaType, season, episode) {
             const releaseYear = (d.release_date || '').slice(0, 4);
             displayTitle += title + (releaseYear ? ` (${releaseYear})` : "");
         } else {
-            // Dizi formatı: /tt1234567/1/1
             targetUrl = `https://streamimdb.me/embed/${imdbId}/${season}/${episode}`;
             displayTitle += `${title} - S${season}E${episode}`;
         }
 
-        // 3. Link Doğrulama (VİDMODY'DEKİ GİBİ KONTROL)
+        // 3. Link Doğrulama (GET Kontrolü)
         try {
-            // Embed siteleri bazen HEAD reddeder, bu yüzden GET ile ama çok kısa bir süre bekleyerek bakıyoruz
             const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 3000); // 3 saniye içinde cevap gelmezse iptal et
+            const timeoutId = setTimeout(() => controller.abort(), 4000); 
 
             const checkRes = await fetch(targetUrl, { 
                 method: 'GET', 
@@ -43,13 +51,14 @@ async function getStreams(tmdbId, mediaType, season, episode) {
             
             clearTimeout(timeoutId);
 
-            // Eğer sayfa 404 (bulunamadı) dönüyorsa linki gösterme
+            // HAM VERİ KONTROLÜ (Siteden dönen HTTP Durumu)
+            console.error('[StreamIMDB] Hedef URL Durumu:', checkRes.status, '| URL:', targetUrl);
+
             if (checkRes.status === 404) {
-                console.log(`[V${VERSION}] Link bulunamadı (404): ${targetUrl}`);
+                console.error('[StreamIMDB] Link geçersiz (404 Not Found)');
                 return [];
             }
             
-            // Link sağlamsa objeyi döndür
             return [{
                 name: title,
                 title: displayTitle,
@@ -63,13 +72,12 @@ async function getStreams(tmdbId, mediaType, season, episode) {
             }];
 
         } catch (linkErr) {
-            // Eğer site fetch isteğini tamamen engellerse (CORS vb.), 
-            // risk almamak için boş dönüyoruz (Vidmody mantığı)
+            console.error('[StreamIMDB] Bağlantı Hatası veya Timeout:', linkErr.message);
             return [];
         }
 
     } catch (e) {
-        console.error(`[V${VERSION}] HATA: ${e.message}`);
+        console.error('[StreamIMDB] Kritik Sistem Hatası:', e.message);
         return [];
     }
 }
