@@ -1,6 +1,8 @@
 /**
- * RecTV_v19_Final_Fix
- * Dizi mantığı korundu, Film eşleşmesi ve Yerli etiketi eklendi.
+ * RecTV_v18_Final_Fix
+ * Film: Gelişmiş Eşleşme (Kısa isim koruması eklendi)
+ * Dizi: Standart Yapı (Sezon/Bölüm bazlı akış korundu)
+ * Dil: "Yerli" ve "Türkçe" etiket desteği eklendi
  */
 
 var cheerio = require("cheerio-without-node-native");
@@ -34,7 +36,7 @@ function analyzeStream(url, index, itemLabel) {
     const lowLabel = (itemLabel || "").toLowerCase();
     let info = { icon: "🌐", text: "Altyazı" };
 
-    // Yerli ve Dublaj desteği
+    // Türkçe/Yerli ses kontrolü
     const isTurkish = 
         lowLabel.includes("dublaj") || 
         lowLabel.includes("yerli") || 
@@ -44,6 +46,7 @@ function analyzeStream(url, index, itemLabel) {
         lowUrl.includes("/tr/");
 
     if (isTurkish) {
+        // Dual kaynaklarda 2. index genelde altyazıdır
         if (lowLabel.includes("altyazı") && index === 1) {
             info.icon = "🌐";
             info.text = "Altyazı";
@@ -86,29 +89,24 @@ async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
         }
 
         let finalResults = [];
-        const searchTitleLower = trTitle.toLowerCase().trim();
-        const orgTitleLower = orgTitle.toLowerCase().trim();
+        const clean = (str) => str.toLowerCase().replace(/[:\-()]/g, ' ').replace(/\s+/g, ' ').trim();
+        const sTitleClean = clean(trTitle);
+        const oTitleClean = clean(orgTitle);
 
         for (let target of allItems) {
-            const targetTitleLower = target.title.toLowerCase().trim();
-            
-            // --- FİLTRE MANTIKLARI ---
+            const tTitleClean = clean(target.title);
             let isMatch = false;
 
             if (isMovie) {
-                // Film ise: Tam eşleşme veya kelime bazlı kontrol (Yol/Uzay Yolu ayrımı için)
-                if (targetTitleLower === searchTitleLower || targetTitleLower === orgTitleLower) {
+                // Filmlerde "Yol" ararken "Uzay Yolu" gelmemesi için sıkı kontrol
+                if (tTitleClean === sTitleClean || tTitleClean === oTitleClean) {
                     isMatch = true;
-                } else if (searchTitleLower.length > 3) {
-                    isMatch = targetTitleLower.includes(searchTitleLower) || targetTitleLower.includes(orgTitleLower);
+                } else if (sTitleClean.length > 3) {
+                    isMatch = tTitleClean.includes(sTitleClean) || tTitleClean.includes(oTitleClean);
                 }
             } else {
-                // Dizi ise: Eskisi gibi esnek bırakıldı (From vb. için)
-                if (searchTitleLower === "from") {
-                    isMatch = (targetTitleLower === "from" || targetTitleLower === "from dizi");
-                } else {
-                    isMatch = targetTitleLower.includes(searchTitleLower) || targetTitleLower.includes(orgTitleLower);
-                }
+                // Dizilerde zaten sezon/bölüm (ttId:s:e) yapısı olduğu için esnek (eski) mantık
+                isMatch = tTitleClean.includes(sTitleClean) || tTitleClean.includes(oTitleClean);
             }
 
             if (!isMatch) continue;
@@ -118,7 +116,7 @@ async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
             if (!isMovie && !isActuallySerie) continue;
 
             if (isActuallySerie) {
-                // Dizi Mantığı (Eskisi gibi)
+                // Dizi Akışı
                 const seasonRes = await fetch(`${BASE_URL}/api/season/by/serie/${target.id}/${SW_KEY}/`, { headers: searchHeaders });
                 const seasons = await seasonRes.json();
                 for (let s of seasons) {
@@ -142,7 +140,7 @@ async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                     }
                 }
             } else {
-                // Film Mantığı
+                // Film Akışı
                 let movieSources = target.sources || [];
                 if (!movieSources || movieSources.length === 0) {
                     const detRes = await fetch(`${BASE_URL}/api/movie/${target.id}/${SW_KEY}/`, { headers: searchHeaders });
@@ -164,7 +162,6 @@ async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
         }
 
         return finalResults.filter((v, i, a) => a.findIndex(t => (t.url === v.url)) === i);
-
     } catch (err) { 
         return []; 
     }
