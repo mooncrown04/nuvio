@@ -1,7 +1,7 @@
 /**
  * RecTV_v18_Final_Fix
- * Film: İsim, Yıl ve Puan Filtresi (Çılgın Max / Yol ayrımı için)
- * Dizi: Eski esnek yapı korundu.
+ * FİLM: İsim ve Yıl bazlı katı filtre (Yanlış film eşleşmelerini önler)
+ * DİZİ: Dokunulmadı, senin orijinal esnek mantığın korundu.
  */
 
 var cheerio = require("cheerio-without-node-native");
@@ -97,30 +97,17 @@ async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
             let isMatch = false;
 
             if (isMovie) {
-                // --- FİLM İÇİN KESİN FİLTRELEME ---
+                // --- FİLM FİLTRESİ (TAM EŞLEŞME + YIL) ---
+                const checkExact = (q, t) => new RegExp(`(^|\\s)${q}(\\s|$)`, 'i').test(t);
                 
-                // 1. Kelime sınırları kontrolü (Regex \b)
-                // "Yol"u bulur, "Yollar" veya "Yolcu"yu eler.
-                const checkExact = (query, target) => {
-                    const regex = new RegExp(`(^|\\s)${query}(\\s|$)`, 'i');
-                    return regex.test(target);
-                };
-
-                // 2. İsim Tam Eşleşme Kontrolü
                 const nameMatch = (tTitleClean === sTitleClean || tTitleClean === oTitleClean || checkExact(sTitleClean, tTitleClean));
-                
-                // 3. Yıl Kontrolü (+/- 1 yıl esneklik)
                 const yearMatch = (tmdbYear > 0 && targetYear > 0) ? Math.abs(tmdbYear - targetYear) <= 1 : true;
 
-                // 4. Katı Filtre: Kısa isimlerde (örn: "Yol") isim tam tutmalı veya yıl kesin tutmalı
-                if (sTitleClean.length <= 4) {
-                    isMatch = (tTitleClean === sTitleClean || tTitleClean === oTitleClean) && yearMatch;
-                } else {
-                    isMatch = nameMatch && yearMatch;
-                }
+                isMatch = nameMatch && yearMatch;
             } else {
-                // --- DİZİ İÇİN ESKİ/ESNEK MANTIK ---
-                isMatch = tTitleClean.includes(sTitleClean) || tTitleClean.includes(oTitleClean);
+                // --- DİZİ FİLTRESİ (SENİN ESKİ MANTIĞIN - DOKUNULMADI) ---
+                isMatch = target.title.toLowerCase().includes(trTitle.toLowerCase()) || 
+                          target.title.toLowerCase().includes(orgTitle.toLowerCase());
             }
 
             if (!isMatch) continue;
