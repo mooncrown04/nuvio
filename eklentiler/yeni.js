@@ -1,67 +1,45 @@
-/* * SERVİS: STREAMIMDB (Embed)
- * AÇIKLAMA: IMDb ID üzerinden film ve dizi stream linkleri sağlar.
- * Sürüm: 8.3.0-ERROR-LOGGING-VERIFIED
+/* * SERVİS: STREAMIMDB (DEBUG MODU)
+ * AÇIKLAMA: Tüm istekleri sabit bir test linkine yönlendirir ve ham verileri loglar.
+ * Sürüm: 9.0.0-DEBUG-RAW-DATA
  */
 
 var TMDB_API_KEY = '500330721680edb6d5f7f12ba7cd9023';
 
 async function getStreams(tmdbId, mediaType, season, episode) {
     try {
-        // 1. TMDB Verisini Çek
+        // 1. TMDB İsteği ve Ham Veri Loglama
         const typePath = (mediaType === 'movie') ? 'movie' : 'tv';
         const tmdbUrl = `https://api.themoviedb.org/3/${typePath}/${tmdbId}?api_key=${TMDB_API_KEY}&language=tr-TR&append_to_response=external_ids`;
         
         const tmdbRes = await fetch(tmdbUrl);
-        const d = await tmdbRes.json();
+        const rawTmdbData = await tmdbRes.json();
         
-        // HAM VERİ KONTROLÜ (TMDB'den gelen tüm veri)
-        console.error('[StreamIMDB] TMDB Ham Veri:', JSON.stringify(d));
-        
-        const imdbId = d.external_ids ? d.external_ids.imdb_id : null;
-        const title = d.title || d.name || "İçerik";
-        
-        if (!imdbId || !imdbId.startsWith('tt')) {
-            console.error('[StreamIMDB] Hata: Geçerli bir IMDb ID bulunamadı.');
-            return [];
-        }
+        // KRİTİK: TMDB'den gelen tüm ham veri
+        console.error('[DEBUG] TMDB HAM VERI:', JSON.stringify(rawTmdbData));
 
-        // 2. URL Formatını Belirle
-        let targetUrl = "";
-        let displayTitle = `⌜ STREAMIMDB ⌟ | `;
+        // 2. Yönlendirme ve Sabit Link Testi
+        // Kullanıcı isteği ne olursa olsun bu linke zorluyoruz
+        const targetUrl = "https://streamimdb.me/embed/tt1270797";
+        console.error('[DEBUG] Hedef Linke Zorlanıyor:', targetUrl);
 
-        if (mediaType === 'movie') {
-            targetUrl = `https://streamimdb.me/embed/${imdbId}`;
-            const releaseYear = (d.release_date || '').slice(0, 4);
-            displayTitle += title + (releaseYear ? ` (${releaseYear})` : "");
-        } else {
-            targetUrl = `https://streamimdb.me/embed/${imdbId}/${season}/${episode}`;
-            displayTitle += `${title} - S${season}E${episode}`;
-        }
-
-        // 3. Link Doğrulama (GET Kontrolü)
+        // 3. Hedef Siteden Ham Yanıt Başlıklarını Alalım
         try {
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 4000); 
-
             const checkRes = await fetch(targetUrl, { 
-                method: 'GET', 
-                signal: controller.signal,
+                method: 'GET',
                 headers: { 'User-Agent': 'Mozilla/5.0' } 
             });
-            
-            clearTimeout(timeoutId);
 
-            // HAM VERİ KONTROLÜ (Siteden dönen HTTP Durumu)
-            console.error('[StreamIMDB] Hedef URL Durumu:', checkRes.status, '| URL:', targetUrl);
-
-            if (checkRes.status === 404) {
-                console.error('[StreamIMDB] Link geçersiz (404 Not Found)');
-                return [];
-            }
+            // KRİTİK: Siteden gelen HTTP yanıtı ve Content-Type
+            console.error('[DEBUG] Site Yanıt Kodu:', checkRes.status);
+            console.error('[DEBUG] Site Content-Type:', checkRes.headers.get('content-type'));
             
+            // Sayfanın ilk 500 karakterini çekip ham metne bakalım (Hata mesajı var mı?)
+            const rawHtmlSample = await checkRes.text();
+            console.error('[DEBUG] Site Ham Metin (İlk 500 Karakter):', rawHtmlSample.substring(0, 500));
+
             return [{
-                name: title,
-                title: displayTitle,
+                name: "TEST MODU: " + (rawTmdbData.title || rawTmdbData.name || "Bilinmeyen"),
+                title: `⌜ DEBUG ⌟ | STREAMIMDB TEST`,
                 url: targetUrl,
                 quality: "Auto",
                 headers: {
@@ -72,12 +50,12 @@ async function getStreams(tmdbId, mediaType, season, episode) {
             }];
 
         } catch (linkErr) {
-            console.error('[StreamIMDB] Bağlantı Hatası veya Timeout:', linkErr.message);
+            console.error('[DEBUG] Siteye Erişilirken Hata Oluştu:', linkErr.message);
             return [];
         }
 
     } catch (e) {
-        console.error('[StreamIMDB] Kritik Sistem Hatası:', e.message);
+        console.error('[DEBUG] Genel Sistem Hatası:', e.message);
         return [];
     }
 }
