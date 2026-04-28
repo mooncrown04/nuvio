@@ -1,77 +1,72 @@
 /**
  * ###########################################################################
- * #  NUVIO PROTOKOLÜ: STREAMIMDB ULTRA RESOLVER v12.0                       #
+ * # NUVIO PROTOKOLÜ: STREAMIMDB MULTI-SOURCE RESOLVER                       #
  * ###########################################################################
- * # 1. ASYNC/AWAIT YASAKTIR: Sadece Promise zinciri (.then) kullanılır.     #
- * # 2. LOG: Sadece console.error kullanılır.                                #
- * # 3. BASE64 DESTEĞİ: Logdaki dev veri bloğunu çözecek yapı eklendi.       #
+ * # BİLGİ NOTU: Bu versiyon sadece ilk linki değil, sayfadaki tüm geçerli   #
+ * # m3u8 kaynaklarını toplar ve Nuvio'ya liste olarak döner.                #
  * ###########################################################################
  */
 
-var cheerio = require("cheerio-without-node-native");
 var axios = require("axios");
 
-const PROVIDER_NAME = "StreamIMDB-Ultra";
-const TMDB_API_KEY = '500330721680edb6d5f7f12ba7cd9023';
+const PROVIDER_NAME = "StreamIMDB-Multi";
 
 function getStreams(tmdbId, mediaType, season, episode) {
     console.error(`[${PROVIDER_NAME}] SORGÜ BAŞLADI -> ID: ${tmdbId}`);
 
     return new Promise(function(resolve) {
-        var isMovie = mediaType === 'movie';
-        var typePath = isMovie ? 'movie' : 'tv';
-        var tmdbUrl = `https://api.themoviedb.org/3/${typePath}/${tmdbId}?api_key=${TMDB_API_KEY}&language=tr-TR&append_to_response=external_ids`;
+        const type = (mediaType === 'movie') ? 'movie' : 'tv';
+        const tmdbUrl = `https://api.themoviedb.org/3/${type}/${tmdbId}?api_key=500330721680edb6d5f7f12ba7cd9023&append_to_response=external_ids`;
 
-        axios.get(tmdbUrl).then(function(tmdbRes) {
-            var imdbId = tmdbRes.data.external_ids ? tmdbRes.data.external_ids.imdb_id : null;
+        axios.get(tmdbUrl).then(function(res) {
+            const imdbId = res.data.external_ids ? res.data.external_ids.imdb_id : null;
             if (!imdbId) throw new Error("IMDB ID bulunamadı");
 
-            var embedUrl = isMovie 
+            const embedUrl = (mediaType === 'movie') 
                 ? `https://streamimdb.me/embed/${imdbId}`
                 : `https://streamimdb.me/embed/${imdbId}/${season}/${episode}`;
 
-            console.error(`[${PROVIDER_NAME}] EMBED SAYFASI: ${embedUrl}`);
-
-            // ADIM 2: Embed sayfasını çek ve o logda gördüğün Base64/m3u8 verisini ara
             return axios.get(embedUrl, { 
                 headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' } 
             }).then(function(htmlRes) {
-                return { html: htmlRes.data, title: tmdbRes.data.title || tmdbRes.data.name };
+                return { html: htmlRes.data, title: res.data.title || res.data.name };
             });
         })
         .then(function(data) {
-            // Logda gördüğün o uzun Base64 bloğunu ve m3u8 linklerini yakalayan gelişmiş regex
-            var m3u8Regex = /https?:\/\/[^\s'"]+\.m3u8[^\s'"]*/g;
-            var matches = data.html.match(m3u8Regex);
+            // Tüm .m3u8 linklerini yakala
+            const m3u8Regex = /https?:\/\/[^\s'"]+\.m3u8[^\s'"]*/g;
+            const matches = data.html.match(m3u8Regex) || [];
+            
+            // Linkleri benzersiz yap (aynı linkten birden fazla varsa temizle)
+            const uniqueLinks = Array.from(new Set(matches));
 
-            if (matches && matches.length > 0) {
-                var finalLink = matches.reduce((a, b) => a.length > b.length ? a : b);
-                console.error(`[${PROVIDER_NAME}] M3U8 YAKALANDI: ${finalLink}`);
+            if (uniqueLinks.length > 0) {
+                console.error(`[${PROVIDER_NAME}] ${uniqueLinks.length} adet kaynak bulundu.`);
 
-                resolve([{
-                    name: "StreamIMDB",
-                    title: data.title + " [1080p]",
-                    url: finalLink,
-                    isHls: true, // ExoPlayer için zorunlu
-                    headers: {
-                        'Referer': 'https://cloudnestra.com/',
-                        'Origin': 'https://cloudnestra.com',
-                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
-                    }
-                }]);
+                const results = uniqueLinks.map(function(link, index) {
+                    return {
+                        name: `StreamIMDB #${index + 1}`,
+                        title: `${data.title} - Kaynak ${index + 1}`,
+                        url: link,
+                        isHls: true,
+                        headers: {
+                            'Referer': 'https://cloudnestra.com/',
+                            'Origin': 'https://cloudnestra.com',
+                            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
+                        }
+                    };
+                });
+                resolve(results);
             } else {
-                // Eğer m3u8 yoksa, logdaki o dev Base64 bloğu içinde olabilir
-                console.error(`[${PROVIDER_NAME}] HATA: m3u8 bulunamadı, Base64 denetimi başarısız.`);
+                console.error(`[${PROVIDER_NAME}] Uygun m3u8 kaynağı bulunamadı.`);
                 resolve([]);
             }
         })
         .catch(function(err) {
-            console.error(`[${PROVIDER_NAME}] KRİTİK HATA: ${err.message}`);
+            console.error(`[${PROVIDER_NAME}] HATA: ${err.message}`);
             resolve([]);
         });
     });
 }
 
-if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { getStreams: getStreams };
-}
+if (typeof module !== 'undefined') module.exports = { getStreams: getStreams };
