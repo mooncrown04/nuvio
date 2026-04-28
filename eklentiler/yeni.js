@@ -1,9 +1,8 @@
-/* * MoOnCrOwN - StreamIMDB Nuvio Provider
- * Bilgi: Bu kod Playerjs içindeki şifreli kaynakları Nuvio formatında ayıklar.
+/** * MoOnCrOwN - StreamIMDB Nuvio Provider
+ * Bilgi: QuickJS motoru için 'export' kaldırıldı.
  */
 
 async function getSources(input) {
-    // Nuvio genellikle veriyi 'tt1270797:1:1' gibi gönderir
     const id = input.id.split(":")[0]; 
     const targetUrl = `https://streamimdb.me/embed/${id}`;
     
@@ -17,49 +16,45 @@ async function getSources(input) {
 
         const html = response.data;
 
-        // Bilgi: Siteden gelen ham veriyi kontrol ediyoruz
         if (!html) {
-            console.error("HATA: Ham veri alınamadı!");
+            console.error("HATA: Siteden veri dönmedi.");
             return [];
         }
 
-        // Bilgi: Playerjs içindeki 'file' değişkenini yakalıyoruz
+        // Bilgi: Playerjs linkini ayıkla
         const fileMatch = html.match(/file\s*:\s*["']([^"']+)["']/);
         
         if (fileMatch && fileMatch[1]) {
-            let encodedData = fileMatch[1];
+            let streamUrl = fileMatch[1];
 
-            // Bilgi: Eğer veri '#' ile başlıyorsa veya düz link değilse şifre çözme uygulanır
-            if (encodedData.startsWith("#") || !encodedData.startsWith("http")) {
+            // Bilgi: Şifreli (Base64) kontrolü ve çözümü
+            if (streamUrl.startsWith("#") || !streamUrl.startsWith("http")) {
                 try {
-                    // Playerjs şifreleme mantığı: Genelde ters çevirme veya özel Base64 kullanılır
-                    // Loglardaki yapıya göre en yaygın çözücü:
-                    encodedData = encodedData.replace("#", "").split("").reverse().join("");
-                    encodedData = atob(encodedData);
+                    // Ters çevir ve Base64 çöz (Playerjs standardı)
+                    streamUrl = atob(streamUrl.replace("#", "").split("").reverse().join(""));
                 } catch (e) {
-                    console.error("HATA: Şifre çözme başarısız: " + e.message);
+                    console.error("HATA: Şifre çözme işlemi başarısız.");
                 }
             }
 
-            // Bilgi: Nuvio'nun oynatabileceği formatta geri döndür
-            if (encodedData.includes(".m3u8") || encodedData.includes(".mp4")) {
+            if (streamUrl.includes(".m3u8") || streamUrl.includes(".mp4")) {
                 return [{
-                    name: "StreamIMDB (MoOnCrOwN)",
-                    url: encodedData,
-                    type: "hls" // m3u8 için hls, mp4 için 'url'
+                    name: "MoOnCrOwN - StreamIMDB",
+                    url: streamUrl,
+                    type: streamUrl.includes(".m3u8") ? "hls" : "url"
                 }];
             }
         }
 
-        // Bilgi: Eğer hiçbir şey bulunamazsa ham verinin bir kısmını hata olarak bas
-        console.error("HATA: Link bulunamadı. Sayfa içeriği: " + html.substring(0, 500));
+        console.error("HATA: Video kaynağı bulunamadı.");
         return [];
 
     } catch (err) {
-        console.error("NUVIO SISTEM HATASI: " + err.message);
+        console.error("SİSTEM HATASI: " + err.message);
         return [];
     }
 }
 
-// Bilgi: Nuvio eklenti manifest yapısı için gerekli export
-export default { getSources };
+// Bilgi: Bazı Nuvio sürümleri için export yerine doğrudan objeyi tanımlıyoruz
+// Eğer hala SyntaxError alırsan bu satırı da silip sadece fonksiyonu bırakabilirsin.
+({ getSources });
