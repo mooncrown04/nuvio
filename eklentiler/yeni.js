@@ -1,61 +1,82 @@
-/* * SERVİS: STREAMIMDB (DEBUG MODU)
- * AÇIKLAMA: Tüm istekleri sabit bir test linkine yönlendirir ve ham verileri loglar.
- * Sürüm: 9.0.0-DEBUG-RAW-DATA
+/* * SERVİS: STREAMIMDB (CLOUDNESTRA AUTO-RESOLVER)
+ * AÇIKLAMA: Sayfa içindeki cloudnestra m3u8 linkini otomatik bulur ve çözer.
+ * Sürüm: 9.5.0-STABLE-RESOLVER
  */
 
 var TMDB_API_KEY = '500330721680edb6d5f7f12ba7cd9023';
 
+// Sayfadaki gizli m3u8 linkini ayıklayan fonksiyon (MediaFire mantığı)
+async function resolveCloudnestra(embedUrl) {
+    try {
+        const res = await fetch(embedUrl, {
+            headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' }
+        });
+        const html = await res.text();
+
+        // Cloudnestra m3u8 linkini yakalayan Regex
+        const regex = /"(https:\/\/cloudnestra\.com\/hls\/[^"]+\.m3u8)"/;
+        const match = html.match(regex);
+
+        if (match && match[1]) {
+            return match[1];
+        } else {
+            // Eğer tırnak içinde değilse direkt metin olarak ara
+            const regexAlt = /https:\/\/cloudnestra\.com\/hls\/[^\s'"]+\.m3u8/;
+            const matchAlt = html.match(regexAlt);
+            return matchAlt ? matchAlt[0] : embedUrl;
+        }
+    } catch (e) {
+        console.error('[StreamIMDB] Resolver Hatası:', e.message);
+        return embedUrl;
+    }
+}
+
 async function getStreams(tmdbId, mediaType, season, episode) {
     try {
-        // 1. TMDB İsteği ve Ham Veri Loglama
+        // 1. TMDB Verisini Çek
         const typePath = (mediaType === 'movie') ? 'movie' : 'tv';
         const tmdbUrl = `https://api.themoviedb.org/3/${typePath}/${tmdbId}?api_key=${TMDB_API_KEY}&language=tr-TR&append_to_response=external_ids`;
         
         const tmdbRes = await fetch(tmdbUrl);
-        const rawTmdbData = await tmdbRes.json();
+        const d = await tmdbRes.json();
         
-        // KRİTİK: TMDB'den gelen tüm ham veri
-        console.error('[DEBUG] TMDB HAM VERI:', JSON.stringify(rawTmdbData));
-
-        // 2. Yönlendirme ve Sabit Link Testi
-        // Kullanıcı isteği ne olursa olsun bu linke zorluyoruz
-        const targetUrl = "https://streamimdb.me/embed/tt1270797";
-        console.error('[DEBUG] Hedef Linke Zorlanıyor:', targetUrl);
-
-        // 3. Hedef Siteden Ham Yanıt Başlıklarını Alalım
-        try {
-            const checkRes = await fetch(targetUrl, { 
-                method: 'GET',
-                headers: { 'User-Agent': 'Mozilla/5.0' } 
-            });
-
-            // KRİTİK: Siteden gelen HTTP yanıtı ve Content-Type
-            console.error('[DEBUG] Site Yanıt Kodu:', checkRes.status);
-            console.error('[DEBUG] Site Content-Type:', checkRes.headers.get('content-type'));
-            
-            // Sayfanın ilk 500 karakterini çekip ham metne bakalım (Hata mesajı var mı?)
-            const rawHtmlSample = await checkRes.text();
-            console.error('[DEBUG] Site Ham Metin (İlk 500 Karakter):', rawHtmlSample.substring(0, 500));
-
-            return [{
-                name: "TEST MODU: " + (rawTmdbData.title || rawTmdbData.name || "Bilinmeyen"),
-                title: `⌜ DEBUG ⌟ | STREAMIMDB TEST`,
-                url: targetUrl,
-                quality: "Auto",
-                headers: {
-                    'Referer': 'https://streamimdb.me/',
-                    'User-Agent': 'Mozilla/5.0'
-                },
-                provider: 'streamimdb'
-            }];
-
-        } catch (linkErr) {
-            console.error('[DEBUG] Siteye Erişilirken Hata Oluştu:', linkErr.message);
+        const imdbId = d.external_ids ? d.external_ids.imdb_id : null;
+        const title = d.title || d.name || "İçerik";
+        
+        if (!imdbId || !imdbId.startsWith('tt')) {
+            console.error('[StreamIMDB] Hata: IMDb ID bulunamadı.');
             return [];
         }
 
+        // 2. Embed URL'sini Oluştur
+        let embedUrl = (mediaType === 'movie') 
+            ? `https://streamimdb.me/embed/${imdbId}`
+            : `https://streamimdb.me/embed/${imdbId}/${season}/${episode}`;
+
+        console.error('[StreamIMDB] Çözülüyor:', embedUrl);
+
+        // 3. Cloudnestra Linkini Otomatik Çek (Resolver Çalışıyor)
+        const finalStreamUrl = await resolveCloudnestra(embedUrl);
+        
+        console.error('[StreamIMDB] Ham Veri (Final URL):', finalStreamUrl);
+
+        // 4. Sonucu Döndür
+        return [{
+            name: title,
+            title: `⌜ STREAMIMDB ⌟ | CLOUDNESTRA`,
+            url: finalStreamUrl,
+            quality: "Auto",
+            headers: {
+                // Cloudnestra'nın çalışması için bu headerlar ŞART
+                'Referer': 'https://streamimdb.me/',
+                'Origin': 'https://streamimdb.me',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            },
+            provider: 'streamimdb'
+        }];
+
     } catch (e) {
-        console.error('[DEBUG] Genel Sistem Hatası:', e.message);
+        console.error('[StreamIMDB] Kritik Hata:', e.message);
         return [];
     }
 }
