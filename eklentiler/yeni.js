@@ -1,39 +1,48 @@
-/* * SERVİS: STREAMIMDB (CLOUDNESTRA AUTO-RESOLVER)
- * AÇIKLAMA: Sayfa içindeki cloudnestra m3u8 linkini otomatik bulur ve çözer.
- * Sürüm: 9.5.0-STABLE-RESOLVER
+/* * SERVİS: STREAMIMDB (STABLE RESOLVER V2)
+ * AÇIKLAMA: Cloudnestra linklerini daha derin tarayarak çözer.
+ * Sürüm: 9.6.0-DEEP-SCAN
  */
 
 var TMDB_API_KEY = '500330721680edb6d5f7f12ba7cd9023';
 
-// Sayfadaki gizli m3u8 linkini ayıklayan fonksiyon (MediaFire mantığı)
 async function resolveCloudnestra(embedUrl) {
     try {
         const res = await fetch(embedUrl, {
-            headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' }
+            headers: { 
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'Referer': 'https://streamimdb.me/'
+            }
         });
         const html = await res.text();
 
-        // Cloudnestra m3u8 linkini yakalayan Regex
-        const regex = /"(https:\/\/cloudnestra\.com\/hls\/[^"]+\.m3u8)"/;
-        const match = html.match(regex);
+        // 1. Yöntem: Düz m3u8 araması
+        const m3u8Regex = /(https:\/\/cloudnestra\.com\/hls\/[^\s'"]+\.m3u8)/;
+        const match = html.match(m3u8Regex);
+        if (match) return match[1];
 
-        if (match && match[1]) {
-            return match[1];
-        } else {
-            // Eğer tırnak içinde değilse direkt metin olarak ara
-            const regexAlt = /https:\/\/cloudnestra\.com\/hls\/[^\s'"]+\.m3u8/;
-            const matchAlt = html.match(regexAlt);
-            return matchAlt ? matchAlt[0] : embedUrl;
+        // 2. Yöntem: Base64 şifreli olabilir, sayfadaki tüm tırnak içindeki metinleri tara
+        const allStrings = html.match(/"[A-Za-z0-9+/=]{20,}"/g) || [];
+        for (let str of allStrings) {
+            try {
+                const decoded = atob(str.replace(/"/g, ''));
+                if (decoded.includes('cloudnestra.com')) {
+                    const found = decoded.match(/https?:\/\/[^\s'"]+\.m3u8/);
+                    if (found) return found[0];
+                }
+            } catch(e) {}
         }
+
+        // 3. Yöntem: Hiçbir şey bulunamazsa hata bas
+        console.error('[StreamIMDB] HATA: Sayfa içinde m3u8 linki bulunamadı!');
+        return null; 
     } catch (e) {
-        console.error('[StreamIMDB] Resolver Hatası:', e.message);
-        return embedUrl;
+        console.error('[StreamIMDB] Sayfa çekme hatası:', e.message);
+        return null;
     }
 }
 
 async function getStreams(tmdbId, mediaType, season, episode) {
     try {
-        // 1. TMDB Verisini Çek
         const typePath = (mediaType === 'movie') ? 'movie' : 'tv';
         const tmdbUrl = `https://api.themoviedb.org/3/${typePath}/${tmdbId}?api_key=${TMDB_API_KEY}&language=tr-TR&append_to_response=external_ids`;
         
@@ -43,31 +52,29 @@ async function getStreams(tmdbId, mediaType, season, episode) {
         const imdbId = d.external_ids ? d.external_ids.imdb_id : null;
         const title = d.title || d.name || "İçerik";
         
-        if (!imdbId || !imdbId.startsWith('tt')) {
-            console.error('[StreamIMDB] Hata: IMDb ID bulunamadı.');
-            return [];
-        }
+        if (!imdbId) return [];
 
-        // 2. Embed URL'sini Oluştur
         let embedUrl = (mediaType === 'movie') 
             ? `https://streamimdb.me/embed/${imdbId}`
             : `https://streamimdb.me/embed/${imdbId}/${season}/${episode}`;
 
-        console.error('[StreamIMDB] Çözülüyor:', embedUrl);
+        console.error('[StreamIMDB] Kaynak aranıyor:', embedUrl);
 
-        // 3. Cloudnestra Linkini Otomatik Çek (Resolver Çalışıyor)
         const finalStreamUrl = await resolveCloudnestra(embedUrl);
         
-        console.error('[StreamIMDB] Ham Veri (Final URL):', finalStreamUrl);
+        if (!finalStreamUrl) {
+            console.error('[StreamIMDB] Video linki çözülemedi, iptal ediliyor.');
+            return [];
+        }
 
-        // 4. Sonucu Döndür
+        console.error('[StreamIMDB] BAŞARILI: Çözülen Link:', finalStreamUrl);
+
         return [{
             name: title,
-            title: `⌜ STREAMIMDB ⌟ | CLOUDNESTRA`,
+            title: `⌜ STREAMIMDB ⌟ | HD`,
             url: finalStreamUrl,
             quality: "Auto",
             headers: {
-                // Cloudnestra'nın çalışması için bu headerlar ŞART
                 'Referer': 'https://streamimdb.me/',
                 'Origin': 'https://streamimdb.me',
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
