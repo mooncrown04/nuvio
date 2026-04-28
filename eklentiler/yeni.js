@@ -1,109 +1,65 @@
-var cheerio = require("cheerio-without-node-native");
+/* * MoOnCrOwN - StreamIMDB Nuvio Fix
+ * Bilgi: Fonksiyon ismi 'getStreams' olarak güncellendi.
+ * Bilgi: QuickJS uyumluluğu için globalThis kullanıldı.
+ */
 
-var BASE_URL = 'https://asyafanatiklerim.com';
-
-var HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Referer': BASE_URL + '/',
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8'
-};
-
-// URL'den kaynağın adını (ok.ru, vidmoly vb.) almak için basit yardımcı fonksiyon
-function getHostName(url) {
+async function getStreams(input) {
+    // Bilgi: IMDb ID'sini gelen veriden ayıklıyoruz
+    const id = input.id.includes(':') ? input.id.split(':')[0] : input.id;
+    const targetUrl = `https://streamimdb.me/embed/${id}`;
+    
     try {
-        var hostname = new URL(url).hostname;
-        return hostname.replace('www.', '');
-    } catch (e) {
-        return 'Oynatıcı';
+        // Bilgi: Siteye tarayıcı gibi görünmek için Header ekliyoruz
+        const response = await http.get(targetUrl, {
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'Referer': 'https://streamimdb.me/'
+            }
+        });
+
+        const html = response.data;
+
+        // Bilgi: Sayfa boş gelirse hata logu basıyoruz
+        if (!html) {
+            console.error("HATA: Sayfa içeriği boş!");
+            return [];
+        }
+
+        // Bilgi: Playerjs içindeki 'file' etiketini arıyoruz
+        const fileMatch = html.match(/file\s*:\s*["']([^"']+)["']/);
+        
+        if (fileMatch && fileMatch[1]) {
+            let videoUrl = fileMatch[1];
+
+            // Bilgi: Link şifreliyse (Base64/Reverse) çözüyoruz
+            if (videoUrl.startsWith("#") || !videoUrl.startsWith("http")) {
+                try {
+                    videoUrl = atob(videoUrl.replace("#", "").split("").reverse().join(""));
+                } catch (e) {
+                    console.error("HATA: Link şifresi çözülemedi.");
+                }
+            }
+
+            // Bilgi: Geçerli bir video linki varsa Nuvio formatında döndür
+            if (videoUrl.includes(".m3u8") || videoUrl.includes(".mp4")) {
+                return [{
+                    name: "MoOnCrOwN - StreamIMDB",
+                    url: videoUrl,
+                    type: "hls"
+                }];
+            }
+        }
+
+        // Bilgi: Link bulunamazsa ham veriden bir parça basıyoruz ki sorunu görelim
+        console.error("HATA: Link ayıklanamadı. Ham Veri: " + html.substring(0, 200));
+        return [];
+
+    } catch (err) {
+        // Bilgi: Ağ veya sistem hatalarını yakalıyoruz
+        console.error("KRİTİK HATA: " + err.message);
+        return [];
     }
 }
 
-function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
-    return new Promise(function(resolve, reject) {
-        if (mediaType !== 'tv') return resolve([]);
-
-        var tmdbUrl = 'https://api.themoviedb.org/3/tv/' + tmdbId + '?language=tr-TR&api_key=4ef0d7355d9ffb5151e987764708ce96';
-
-        fetch(tmdbUrl, { headers: { 'User-Agent': HEADERS['User-Agent'] } })
-            .then(function(res) { return res.json(); })
-            .then(function(data) {
-                var diziIsmi = (data.name || '').trim();
-                var orgName = (data.original_name || '').trim();
-                
-                // Sitede nokta atışı arama yapmak için: "Dizi Adı X Bölüm"
-                var searchQuery = (orgName || diziIsmi) + " " + episodeNum + " bölüm";
-                var searchUrl = BASE_URL + '/?s=' + encodeURIComponent(searchQuery);
-
-                console.log('[AsyaFanatiklerim] Aranıyor: ' + searchUrl);
-
-                // 1. Arama sonuçlarını çek
-                return fetch(searchUrl, { headers: HEADERS })
-                    .then(function(res) { return res.text(); })
-                    .then(function(html) {
-                        var $ = cheerio.load(html);
-                        var episodeLink = null;
-
-                        // WordPress sitelerindeki yaygın başlık class'ları
-                        var results = $('.post-title a, .entry-title a, h2 a, .title a, .item-title a');
-
-                        if (results.length > 0) {
-                            // Arama sonucundaki ilk linki al
-                            episodeLink = results.first().attr('href');
-                        }
-
-                        if (!episodeLink) {
-                            throw new Error("Sitede bölüm araması sonuç vermedi.");
-                        }
-
-                        console.log('[AsyaFanatiklerim] Bölüm Linki Bulundu: ' + episodeLink);
-
-                        // 2. Bulunan bölüm sayfasına gir ve iframe'i çek
-                        return fetch(episodeLink, { headers: HEADERS })
-                            .then(function(res) { return res.text(); })
-                            .then(function(epHtml) {
-                                var _$ = cheerio.load(epHtml);
-                                var streams = [];
-                                var videoSrc = null;
-
-                                // Sayfadaki iframe'leri tara
-                                _$('iframe').each(function() {
-                                    var src = _$(this).attr('src');
-                                    // Sık kullanılan video kaynaklarını filtrele (reklamları vb. elemek için)
-                                    if (src && (src.includes('ok.ru') || src.includes('vidmoly') || src.includes('mail.ru') || src.includes('fembed') || src.includes('vk.com'))) {
-                                        videoSrc = src;
-                                        return false; // Döngüyü kır, ilk bulduğunu al
-                                    }
-                                });
-
-                                // Eğer özel bir kaynak bulamadıysa, sayfadaki ilk iframe'i al
-                                if (!videoSrc && _$('iframe').length > 0) {
-                                    videoSrc = _$('iframe').first().attr('src');
-                                }
-
-                                if (videoSrc) {
-                                    // Protokolsüz (//ok.ru/..) linkleri https ile tamamla
-                                    if (videoSrc.startsWith('//')) {
-                                        videoSrc = 'https:' + videoSrc;
-                                    }
-
-                                    streams.push({
-                                        name: diziIsmi,
-                                        title: '⌜ AsyaFanatiklerim ⌟ | ' + getHostName(videoSrc),
-                                        url: videoSrc, // DİKKAT: Stremio iframe oynatamaz, bu linkin çözülmesi (resolve) gerekebilir.
-                                        quality: '1080p',
-                                        headers: { 'Referer': episodeLink }
-                                    });
-                                }
-
-                                resolve(streams);
-                            });
-                    });
-            })
-            .catch(function(err) {
-                console.error('[AsyaFanatiklerim Hata]: ' + err.message);
-                resolve([]);
-            });
-    });
-}
-
-module.exports = { getStreams };
+// Bilgi: Nuvio'nun fonksiyonu bulabilmesi için global tanımlama
+globalThis.getStreams = getStreams;
