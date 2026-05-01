@@ -1,5 +1,5 @@
 /**
- * FullHDFilmizlesene Nuvio Scraper - v28.7 (Flexible Match with Year Priority)
+ * FullHDFilmizlesene Nuvio Scraper - v28.8 (URL & Title Deep Analysis)
  */
 
 var cheerio = require("cheerio-without-node-native");
@@ -40,6 +40,15 @@ function decodeRapidVid(encodedData) {
         var finalUrl = universalAtob(adjusted);
         return (finalUrl && finalUrl.startsWith('http')) ? finalUrl.replace(/\\/g, "").trim() : null;
     } catch (e) { return null; }
+}
+
+function slugify(text) {
+    const trMap = { 'ç':'c','ğ':'g','ş':'s','ü':'u','ı':'i','ö':'o' };
+    return text.toLowerCase()
+        .replace(/[çğşüıö]/g, m => trMap[m])
+        .replace(/[^a-z0-9]/g, '-')
+        .replace(/-+/g, '-')
+        .replace(/^-|-$/g, '');
 }
 
 async function getStreamsFromAPI(vidid, movieTitle) {
@@ -114,28 +123,27 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                 let foundTitle = "";
 
                 $("ul.list li.film").each((i, el) => {
-                    let link = $(el).find("a.tt").attr("href");
+                    let link = $(el).find("a.tt").attr("href") || "";
                     let siteTitleText = $(el).find("span.film-title").text().trim();
-                    let siteTitleLower = siteTitleText.toLowerCase();
                     let siteYear = $(el).find("span.film-yil").text().trim();
-                    let qTitleLower = queryTitle.toLowerCase();
                     
-                    // 1. Yıl Eşleşmesi (En Önemli Kriter)[cite: 1]
+                    const qTitleSlug = slugify(queryTitle);
+                    const linkSlug = link.toLowerCase();
+                    const siteTitleLower = siteTitleText.toLowerCase();
+                    
+                    // 1. Yıl Kontrolü[cite: 1]
                     const isYearMatch = year !== "" && siteYear.includes(year);
                     
-                    // 2. İsim Eşleşme Kontrolü
-                    const qWords = qTitleLower.split(/\s+/).filter(w => w.length > 2);
-                    const matchCount = qWords.filter(word => siteTitleLower.includes(word)).length;
-                    const wordMatchRatio = qWords.length > 0 ? (matchCount / qWords.length) : 0;
+                    // 2. İsim & URL Analizi[cite: 1]
+                    // Link içinde "olumcul-deney" geçiyor mu? VEYA Görünen isimde "Ölümcül Deney" geçiyor mu?
+                    const isLinkMatch = linkSlug.includes(qTitleSlug);
+                    const isNameMatch = siteTitleLower.includes(queryTitle.toLowerCase());
 
-                    // Mantık: Yıl tutuyorsa ve (isim tam tutuyor VEYA kelimelerin yarısı tutuyorsa) kabul et[cite: 1]
-                    if (link && isYearMatch && (siteTitleLower === qTitleLower || wordMatchRatio >= 0.5)) {
-                        console.error(`[NUVIO] DOĞRU EŞLEŞME: ${siteTitleText} [${siteYear}]`);
+                    if (link && isYearMatch && (isLinkMatch || isNameMatch)) {
+                        console.error(`[NUVIO] EŞLEŞTİ: ${siteTitleText} [URL: ${link}]`);
                         filmLink = link;
                         foundTitle = siteTitleText;
                         return false; 
-                    } else if (link && isYearMatch) {
-                        console.error(`[NUVIO] ATLANDI (Yıl tutuyor ama isim çok farklı): ${siteTitleText}`);
                     }
                 });
 
