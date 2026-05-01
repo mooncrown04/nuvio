@@ -1,5 +1,5 @@
 /**
- * FullHDFilmizlesene Nuvio Scraper - v32.2 (Force Scx Search & Multi-Layer Debug)
+ * FullHDFilmizlesene Nuvio Scraper - v33.0 (KekikStream Logic)
  */
 
 var cheerio = require("cheerio-without-node-native");
@@ -12,15 +12,18 @@ const WORKING_HEADERS = {
     'Origin': BASE_URL
 };
 
+// KekikStream StringCodec.decode mantığı (RTT + Base64)
 function superDecode(enc) {
     if (!enc) return null;
     try {
-        // Kotlin: atob(rtt(enc))
+        // Python'daki decode: string[::-1] (ters çevir) ve b64decode
         let decoded = Buffer.from(enc.split('').reverse().join(''), 'base64').toString('utf8');
         if (decoded && (decoded.startsWith('http') || decoded.startsWith('//'))) {
             return decoded.startsWith('//') ? 'https:' + decoded : decoded;
         }
-    } catch (e) { }
+    } catch (e) {
+        // console.error("[DECODE-ERROR]", e.message);
+    }
     return null;
 }
 
@@ -28,7 +31,7 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
     return new Promise(function(resolve) {
         if (mediaType !== 'movie') return resolve([]);
 
-        console.log(`[NUVIO] İşlem TMDB: ${tmdbId} için başlatıldı.`);
+        console.log(`[NUVIO] İstek: ${tmdbId}`);
 
         fetch(`https://api.themoviedb.org/3/movie/${tmdbId}?language=tr-TR&api_key=4ef0d7355d9ffb5151e987764708ce96`)
             .then(res => res.json())
@@ -52,58 +55,68 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                 });
 
                 if (!bestMatch || maxScore < 50) {
-                    console.error("[NUVIO] Eşleşme bulunamadı.");
+                    console.error("[NUVIO-ERROR] Film bulunamadı.");
                     return resolve([]);
                 }
 
-                console.log(`[NUVIO] Film Sayfası Çekiliyor: ${bestMatch}`);
+                console.log(`[NUVIO-LOG] Sayfa: ${bestMatch}`);
                 let fRes = await fetch(bestMatch.startsWith('http') ? bestMatch : BASE_URL + (bestMatch.startsWith('/') ? '' : '/') + bestMatch, { headers: WORKING_HEADERS });
                 let fHtml = await fRes.text();
+                let fDoc = cheerio.load(fHtml);
 
                 let results = [];
 
-                // --- KATMAN 1: STANDART SCX TARAMASI ---
-                let tMatches = fHtml.match(/"t"\s*:\s*"([^"]+)"/g);
-                
-                // --- KATMAN 2: DERİN TARAMA (Eğer ilk katman boşsa) ---
-                if (!tMatches || tMatches.length === 0) {
-                    console.log("[NUVIO] Katman 1 başarısız, derin tarama (regex search) başlıyor...");
-                    // Bazen 't' değerleri t: "..." şeklinde veya farklı tırnaklarla gelebilir
-                    tMatches = fHtml.match(/['"]?t['"]?\s*[:=]\s*['"]([^'"]+)['"]/g);
-                }
+                // --- KRİTİK NOKTA: Python kodundaki gibi İLK script'i hedef alıyoruz ---
+                let firstScript = fDoc("script").first().html() || "";
+                console.log("[NUVIO-LOG] İlk script bloğu analiz ediliyor...");
 
-                if (tMatches) {
-                    console.log(`[NUVIO] ${tMatches.length} adet potansiyel veri bulundu.`);
-                    tMatches.forEach((m) => {
-                        // Regex ile sadece tırnak içindeki şifreli kısmı al
-                        let parts = m.match(/[:=]\s*['"]([^'"]+)['"]/);
-                        let enc = parts ? parts[1] : null;
-                        
-                        if (enc && enc.length > 20) { // Kısa stringleri (başlık vs) ele
-                            let url = superDecode(enc);
-                            if (url && (url.includes('m3u8') || url.includes('mp4') || url.includes('google'))) {
-                                results.push({ 
-                                    name: "FHD - Stream", 
-                                    url: url, 
-                                    quality: "Auto", 
-                                    headers: { 'User-Agent': WORKING_HEADERS['User-Agent'], 'Referer': 'https://turbo.imgz.me/' } 
+                // scx = { ... }; yapısını yakala
+                let scxMatch = firstScript.match(/scx\s*=\s*({.*?});/s);
+                
+                if (scxMatch) {
+                    try {
+                        let scxData = JSON.parse(scxMatch[1]);
+                        console.log(`[NUVIO-LOG] SCX Objesi yakalandı. Key sayısı: ${Object.keys(scxData).length}`);
+
+                        Object.keys(scxData).forEach(key => {
+                            let t = scxData[key]?.sx?.t;
+                            if (t) {
+                                // Eğer liste (Array) ise veya obje (Dict) ise içindekileri çöz
+                                let encList = Array.isArray(t) ? t : Object.values(t);
+                                encList.forEach(enc => {
+                                    let url = superDecode(enc);
+                                    if (url) {
+                                        results.push({ 
+                                            name: `FHD - ${key.toUpperCase()}`, 
+                                            url: url, 
+                                            quality: "Auto", 
+                                            headers: { 'User-Agent': WORKING_HEADERS['User-Agent'], 'Referer': 'https://turbo.imgz.me/' } 
+                                        });
+                                    }
                                 });
                             }
-                        }
-                    });
-                }
-
-                if (results.length === 0) {
-                    console.error("[NUVIO] Tüm katmanlar başarısız. Sayfa yapısı değişmiş veya bot koruması aktif.");
-                    // Son çare: iFrame taraması gerekebilir ama önce bunu görelim.
+                        });
+                    } catch (e) {
+                        console.error("[NUVIO-ERROR] JSON Ayrıştırma hatası:", e.message);
+                    }
                 } else {
-                    console.log(`[NUVIO] Başarılı! ${results.length} link üretildi.`);
+                    console.error("[NUVIO-ERROR] İlk script içinde 'scx' bulunamadı, fallback (tüm sayfa taraması) deneniyor.");
+                    // Fallback: Tüm sayfa içinde "t":"..." taraması (Önceki kodun yaptığı)
+                    let tMatches = fHtml.match(/"t"\s*:\s*"([^"]+)"/g);
+                    if (tMatches) {
+                        tMatches.forEach(m => {
+                            let enc = m.match(/"t"\s*:\s*"([^"]+)"/)[1];
+                            let url = superDecode(enc);
+                            if (url && url.length > 20) results.push({ name: "FHD - ALT", url: url, quality: "Auto", headers: WORKING_HEADERS });
+                        });
+                    }
                 }
 
+                if (results.length === 0) console.error("[NUVIO-ERROR] Hiçbir sonuç üretilemedi.");
                 resolve(results);
             })
             .catch(err => {
-                console.error(`[NUVIO] Kritik Hata: ${err.message}`);
+                console.error("[NUVIO-CRITICAL]", err.message);
                 resolve([]);
             });
     });
