@@ -1,5 +1,5 @@
 /**
- * FullHDFilmizlesene Nuvio Scraper - v30.0 (Hex Decoding & Subtitle Support)
+ * FullHDFilmizlesene Nuvio Scraper - v32.1 (Full Logging & Nuvio Logic)
  */
 
 var cheerio = require("cheerio-without-node-native");
@@ -12,54 +12,17 @@ const WORKING_HEADERS = {
     'Origin': BASE_URL
 };
 
-// Kotlin'deki rtt() - String Ters Çevirme
-function rtt(str) { return str ? str.split('').reverse().join('') : ""; }
-
-// Kotlin'deki Hex decoding mantığı (\x hex kodlarını çözer)
-function hexDecode(str) {
+// Kotlin: atob(rtt(link)) mantığı
+function superDecode(enc) {
+    if (!enc) return null;
     try {
-        if (!str) return null;
-        // Eğer \x içeriyorsa hex decode uygula
-        if (str.includes('\\x')) {
-            return str.replace(/\\x([0-9A-Fa-f]{2})/g, (match, p1) => {
-                return String.fromCharCode(parseInt(p1, 16));
-            });
+        let decoded = Buffer.from(enc.split('').reverse().join(''), 'base64').toString('utf8');
+        if (decoded && (decoded.startsWith('http') || decoded.startsWith('//'))) {
+            return decoded.startsWith('//') ? 'https:' + decoded : decoded;
         }
-        return str;
-    } catch (e) { return str; }
-}
-
-function universalAtob(str) {
-    try {
-        if (typeof atob === 'function') return atob(str);
-        return Buffer.from(str, 'base64').toString('binary');
-    } catch (e) { return null; }
-}
-
-// Hibrit Çözücü: Önce RTT, sonra Base64, sonra Hex
-function superDecode(encoded) {
-    if (!encoded) return null;
-    let text = encoded;
-    
-    // 1. Eğer doğrudan URL ise temizle dön
-    if (text.startsWith('http') || text.startsWith('//')) {
-        return text.startsWith('//') ? 'https:' + text : text;
+    } catch (e) {
+        console.error(`[NUVIO-ERROR] Decode Başarısız: ${e.message}`);
     }
-
-    // 2. RTT + Base64 Çözümü (Kotlin: atob(rtt(link)))
-    try {
-        let b64 = universalAtob(rtt(text));
-        if (b64 && (b64.startsWith('http') || b64.startsWith('//'))) {
-            return b64.startsWith('//') ? 'https:' + b64 : b64;
-        }
-    } catch (e) {}
-
-    // 3. Hex Çözümü (Kotlin'deki \x filtreleme)
-    let hexed = hexDecode(text);
-    if (hexed && (hexed.startsWith('http') || hexed.startsWith('//'))) {
-        return hexed.startsWith('//') ? 'https:' + hexed : hexed;
-    }
-
     return null;
 }
 
@@ -67,64 +30,79 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
     return new Promise(function(resolve) {
         if (mediaType !== 'movie') return resolve([]);
 
+        console.log(`[NUVIO-LOG] İşlem Başladı -> TMDB ID: ${tmdbId}`);
+
         fetch(`https://api.themoviedb.org/3/movie/${tmdbId}?language=tr-TR&api_key=4ef0d7355d9ffb5151e987764708ce96`)
             .then(res => res.json())
             .then(data => {
                 const year = data.release_date ? data.release_date.split('-')[0] : "";
                 const queryTitle = (data.title || data.original_title).split('(')[0].trim();
+                console.log(`[NUVIO-LOG] Aranan Film: ${queryTitle} (${year})`);
                 return Promise.all([fetch(`${BASE_URL}/arama/${encodeURIComponent(queryTitle)}`, { headers: WORKING_HEADERS }), year, queryTitle]);
             })
             .then(async ([res, year, queryTitle]) => {
-                let $ = cheerio.load(await res.text());
-                let bestLink = null;
+                let html = await res.text();
+                let $ = cheerio.load(html);
+                let bestMatch = null;
                 let maxScore = -1;
 
                 $("li.film").each((i, el) => {
                     let link = $(el).find("a").first().attr("href") || "";
                     let sTitle = $(el).find("span.film-title").text().trim();
                     let sYear = $(el).find("span.film-yil").text().trim();
+                    
                     let score = (sYear.includes(year) ? 60 : 0) + (sTitle.toLowerCase().includes(queryTitle.toLowerCase()) ? 40 : 0);
-                    if (score > maxScore) { maxScore = score; bestLink = link; }
+                    
+                    if (score > maxScore) {
+                        maxScore = score;
+                        bestMatch = link;
+                    }
                 });
 
-                if (!bestLink || maxScore < 55) return resolve([]);
+                if (!bestMatch || maxScore < 50) {
+                    console.error("[NUVIO-ERROR] Uygun eşleşme bulunamadı!");
+                    return resolve([]);
+                }
 
-                let fUrl = bestLink.startsWith('http') ? bestLink : BASE_URL + (bestLink.startsWith('/') ? '' : '/') + bestLink;
-                let fRes = await fetch(fUrl, { headers: WORKING_HEADERS });
+                console.log(`[NUVIO-LOG] Eşleşme Başarılı: ${bestMatch} (Puan: ${maxScore})`);
+
+                let fRes = await fetch(bestMatch.startsWith('http') ? bestMatch : BASE_URL + (bestMatch.startsWith('/') ? '' : '/') + bestMatch, { headers: WORKING_HEADERS });
                 let fHtml = await fRes.text();
 
                 let results = [];
+                // Nuvio Kuralları: "t" parametreli gizli linkleri yakala
+                let tMatches = fHtml.match(/"t"\s*:\s*"([^"]+)"/g);
                 
-                // --- SCX Katmanı ---
-                let scxMatch = fHtml.match(/scx\s*=\s*({.*?});/s);
-                if (scxMatch) {
-                    try {
-                        let scx = JSON.parse(scxMatch[1]);
-                        ["atom", "advid", "proton", "fastly", "tr", "en"].forEach(key => {
-                            let t = scx[key] && scx[key].sx ? scx[key].sx.t : null;
-                            if (t) {
-                                (Array.isArray(t) ? t : Object.values(t)).forEach(enc => {
-                                    let url = superDecode(enc);
-                                    if (url) results.push({ name: `FHD - ${key.toUpperCase()}`, url: url, quality: "Auto", headers: WORKING_HEADERS });
-                                });
-                            }
-                        });
-                    } catch (e) {}
+                if (!tMatches) {
+                    console.error("[NUVIO-ERROR] Sayfa içerisinde 't' parametreli link bulunamadı.");
+                } else {
+                    console.log(`[NUVIO-LOG] Bulunan şifreli 't' bloğu sayısı: ${tMatches.length}`);
+                    tMatches.forEach((m, index) => {
+                        let enc = m.match(/"t"\s*:\s*"([^"]+)"/)[1];
+                        let decodedUrl = superDecode(enc);
+                        
+                        if (decodedUrl && (decodedUrl.includes('m3u8') || decodedUrl.includes('mp4'))) {
+                            console.log(`[NUVIO-SUCCESS] Link Çözüldü [${index}]: ${decodedUrl.substring(0, 50)}...`);
+                            results.push({ 
+                                name: "FHD - Kaynak " + (index + 1), 
+                                url: decodedUrl, 
+                                quality: "Auto", 
+                                headers: { 
+                                    'User-Agent': WORKING_HEADERS['User-Agent'], 
+                                    'Referer': 'https://turbo.imgz.me/' 
+                                } 
+                            });
+                        }
+                    });
                 }
 
-                // --- Altyazı Katmanı (Kotlin VidMoxy Mantığı) ---
-                let subMatches = fHtml.matchAll(/"captions","file":"([^"]+)","label":"([^"]+)"/g);
-                for (const match of subMatches) {
-                    let subUrl = superDecode(match[1].replace(/\\/g, ""));
-                    if (subUrl) {
-                        console.error(`[NUVIO] Altyazı Bulundu: ${match[2]}`);
-                        // Nuvio altyazı objesi buraya eklenebilir
-                    }
-                }
-
+                if (results.length === 0) console.error("[NUVIO-ERROR] Hiçbir stream linki üretilemedi.");
                 resolve(results);
             })
-            .catch(() => resolve([]));
+            .catch(err => {
+                console.error(`[NUVIO-CRITICAL] Genel Hata: ${err.message}`);
+                resolve([]);
+            });
     });
 }
 
