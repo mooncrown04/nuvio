@@ -1,5 +1,5 @@
 /**
- * FullHDFilmizlesene Nuvio Scraper - v28.2 (Final Stable)
+ * FullHDFilmizlesene Nuvio Scraper - v28.3 (Strict Matching)
  */
 
 var cheerio = require("cheerio-without-node-native");
@@ -95,59 +95,59 @@ async function getStreamsFromAPI(vidid, movieTitle) {
 
 function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
     return new Promise(function(resolve) {
-        // Sadece film desteği
         if (mediaType !== 'movie') return resolve([]);
 
         fetch('https://api.themoviedb.org/3/movie/' + tmdbId + '?language=tr-TR&api_key=4ef0d7355d9ffb5151e987764708ce96')
             .then(res => res.json())
             .then(data => {
                 const year = data.release_date ? data.release_date.split('-')[0] : "";
-                const movieTitle = data.title || data.original_title;
-                // Arama URL'si
-                const searchUrl = BASE_URL + '/arama/' + encodeURIComponent(movieTitle);
-                return Promise.all([fetch(searchUrl, { headers: WORKING_HEADERS }), year, movieTitle]);
+                const queryTitle = data.title || data.original_title;
+                const searchUrl = BASE_URL + '/arama/' + encodeURIComponent(queryTitle);
+                return Promise.all([fetch(searchUrl, { headers: WORKING_HEADERS }), year]);
             })
-            .then(async ([res, year, movieTitle]) => {
+            .then(async ([res, year]) => {
                 let searchHtml = await res.text();
                 let $ = cheerio.load(searchHtml);
                 let filmLink = "";
+                let foundTitle = ""; // Siteden gelen ismi tutmak için[cite: 1]
 
-                // HTML yapısına göre nokta atışı seçim[cite: 1]
                 $("ul.list li.film").each((i, el) => {
-                    let link = $(el).find("a.tt").attr("href"); // Film linki[cite: 1]
-                    let siteYear = $(el).find("span.film-yil").text().trim(); // Yıl bilgisi[cite: 1]
+                    let link = $(el).find("a.tt").attr("href");
+                    let siteTitle = $(el).find("span.film-title").text().trim(); // Gerçek film ismi[cite: 1]
+                    let siteYear = $(el).find("span.film-yil").text().trim(); 
                     
-                    // Yıl eşleşmesi veya arama doğruluğu
+                    // Yıl filtresi: Eğer yıl eşleşmezse bu sonucu atla[cite: 1]
                     if (link && (year === "" || siteYear.includes(year))) {
                         filmLink = link;
-                        return false;
+                        foundTitle = siteTitle; // Bulunan ismi kaydet[cite: 1]
+                        return false; 
                     }
                 });
 
-                // Eşleşme bulunamazsa ilk sonucu al[cite: 1]
-                if (!filmLink) filmLink = $("ul.list li.film a.tt").first().attr("href");
+                // Eğer eşleşen film bulunamadıysa boş döner[cite: 1]
+                if (!filmLink) {
+                    return resolve([]);
+                }
                 
-                if (!filmLink) throw new Error("Film bulunamadı");
-                
-                // Film sayfasına git
                 let finalUrl = filmLink.startsWith('http') ? filmLink : BASE_URL + filmLink;
                 let filmRes = await fetch(finalUrl, { headers: WORKING_HEADERS });
                 let filmHtml = await filmRes.text();
                 
-                // Video ID'sini çek
                 let vidMatch = filmHtml.match(/vidid\s*=\s*['"](\d+)['"]/);
-                if (vidMatch) return getStreamsFromAPI(vidMatch[1], movieTitle);
-                
-                return [];
+                if (vidMatch) {
+                    // Bulunan gerçek ismi API fonksiyonuna gönderiyoruz[cite: 1]
+                    let streams = await getStreamsFromAPI(vidMatch[1], foundTitle);
+                    resolve(streams);
+                } else {
+                    resolve([]);
+                }
             })
-            .then(streams => resolve(streams))
             .catch(err => { 
                 resolve([]); 
             });
     });
 }
 
-// Export mantığı
 if (typeof module !== 'undefined' && module.exports) { 
     module.exports = { getStreams: getStreams }; 
 } else { 
