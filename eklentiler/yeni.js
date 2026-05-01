@@ -9,7 +9,6 @@ const WORKING_HEADERS = {
     'Origin': BASE_URL
 };
 
-// Android TV / Nuvio için güvenli decode fonksiyonu
 function universalAtob(str) {
     try {
         if (typeof atob === 'function') return atob(str);
@@ -41,21 +40,27 @@ function decodeRapidVid(encodedData) {
 async function getStreamsFromAPI(vidid, movieTitle) {
     const fetchSource = async (name, title) => {
         try {
-            let res = await fetch(`${API_BASE}?id=${vidid}&type=t&name=${name}&get=video&format=json`, { headers: WORKING_HEADERS });
+            // Dublaj için pno=tr parametresi ve format=json önemli
+            let res = await fetch(`${API_BASE}?id=${vidid}&type=t&name=${name}&get=video&pno=tr&format=json`, { headers: WORKING_HEADERS });
             let data = await res.json();
             if (data && data.html) {
                 let pRes = await fetch(data.html.replace(/\\/g, ''), { headers: WORKING_HEADERS });
                 let pHtml = await pRes.text();
                 let avMatch = pHtml.match(/av\(['"]([^'"]+)['"]\)/);
                 let m3u8Match = pHtml.match(/file:\s*"(.*?\.m3u8.*?)"/i);
-
                 let streamUrl = avMatch ? decodeRapidVid(avMatch[1]) : (m3u8Match ? m3u8Match[1] : null);
-                if (streamUrl) return { name: movieTitle, title: `⌜ FULLHDFILM ⌟ | ${title}`, url: streamUrl, quality: "Auto", headers: WORKING_HEADERS };
+                
+                if (streamUrl) return { 
+                    name: movieTitle, 
+                    title: `⌜ FULLHDFILM ⌟ | ${title} | 🇹🇷 Dublaj`, // İstediğin emoji ve yazı eklendi
+                    url: streamUrl, 
+                    quality: "Auto", 
+                    headers: WORKING_HEADERS 
+                };
             }
         } catch (e) { }
         return null;
     };
-
     let results = await Promise.all([fetchSource('atom', 'Atom'), fetchSource('advid', 'Turbo')]);
     return results.filter(r => r !== null);
 }
@@ -67,16 +72,15 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
         fetch(`https://api.themoviedb.org/3/movie/${tmdbId}?language=tr-TR&api_key=4ef0d7355d9ffb5151e987764708ce96&append_to_response=alternative_titles`)
             .then(res => res.json())
             .then(data => {
-                const year = data.release_date ? data.release_date.split('-')[0] : "";
-                const trTitle = data.title.toLowerCase();
-                const enTitle = data.original_title.toLowerCase();
-                
-                console.error(`[NUVIO] Hedef: ${trTitle} / ${enTitle} (${year})`);
-
-                const searchUrl = `${BASE_URL}/arama/${encodeURIComponent(data.title)}`;
-                return Promise.all([fetch(searchUrl, { headers: WORKING_HEADERS }), year, trTitle, enTitle]);
+                const targetYear = data.release_date ? data.release_date.split('-')[0] : "";
+                const titles = new Set([data.title.toLowerCase(), data.original_title.toLowerCase()]);
+                if (data.alternative_titles && data.alternative_titles.titles) {
+                    data.alternative_titles.titles.forEach(t => titles.add(t.title.toLowerCase()));
+                }
+                console.error(`[NUVIO] Hedef: ${data.title} (${targetYear})`);
+                return Promise.all([fetch(`${BASE_URL}/arama/${encodeURIComponent(data.title)}`, { headers: WORKING_HEADERS }), targetYear, Array.from(titles)]);
             })
-            .then(async ([res, targetYear, trTitle, enTitle]) => {
+            .then(async ([res, targetYear, allTitles]) => {
                 let $ = cheerio.load(await res.text());
                 let candidates = [];
 
@@ -85,33 +89,27 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                     let siteTitle = $(el).find(".film-title").text().trim().toLowerCase();
                     let siteYear = $(el).find(".film-yil").text().trim();
 
-                    // 1. KRİTİK KONTROL: YIL TUTMUYORSA ELE GİTSİN
+                    // YIL KONTROLÜ (KESİN)
                     if (!siteYear.includes(targetYear)) return;
 
-                    // 2. PUANLAMA MANTIĞI
                     let score = 0;
-                    if (siteTitle.includes(trTitle)) score += 50;
-                    if (siteTitle.includes(enTitle)) score += 50;
-                    
-                    // Kelime bazlı ekstra puan
-                    let words = trTitle.split(" ");
-                    words.forEach(word => { if(word.length > 2 && siteTitle.includes(word)) score += 10; });
+                    allTitles.forEach(t => {
+                        if (siteTitle === t) score += 100;
+                        else if (siteTitle.includes(t) || t.includes(siteTitle)) score += 50;
+                    });
 
-                    candidates.push({ link, score, title: siteTitle });
+                    if (score > 0) candidates.push({ link, score, title: siteTitle });
                 });
 
-                // En yüksek puanlı olanı seç
                 candidates.sort((a, b) => b.score - a.score);
-                let bestMatch = candidates[0];
+                let bestMatch = candidates.find(c => c.score > 0);
 
                 if (bestMatch && bestMatch.link) {
-                    console.error(`[NUVIO] EN İYİ EŞLEŞME: ${bestMatch.title} (Puan: ${bestMatch.score})`);
+                    console.error(`[NUVIO] EŞLEŞME: ${bestMatch.title} (${bestMatch.score} Puan)`);
                     let fRes = await fetch(bestMatch.link.startsWith('http') ? bestMatch.link : BASE_URL + bestMatch.link, { headers: WORKING_HEADERS });
                     let vidMatch = (await fRes.text()).match(/vidid\s*=\s*['"](\d+)['"]/);
                     if (vidMatch) return resolve(await getStreamsFromAPI(vidMatch[1], bestMatch.title.toUpperCase()));
                 }
-
-                console.error("[NUVIO] Uygun sonuç bulunamadı.");
                 resolve([]);
             })
             .catch(() => resolve([]));
