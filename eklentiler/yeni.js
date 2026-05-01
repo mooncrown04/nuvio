@@ -1,6 +1,6 @@
 /**
- * FullHDFilmizlesene Nuvio Scraper - v34.0
- * İsimle arama öncelikli ve Yıl/ID doğrulamalı.
+ * FullHDFilmizlesene Nuvio Scraper - v35.0 (TAM SÜRÜM)
+ * İsimle arama öncelikli, Dublaj kontrollü ve tam log desteği.
  */
 
 var cheerio = require("cheerio-without-node-native");
@@ -15,51 +15,81 @@ const WORKING_HEADERS = {
     'Origin': BASE_URL
 };
 
-// ... (universalAtob ve decodeRapidVid fonksiyonları aynı kalacak) ...
-
-async function performSearch(query) {
-    // Sitenin arama motoru genellikle boşluk yerine + veya - kullanır.
-    // İsimle aramada daha başarılı olması için temizlik yapıyoruz.
-    const formattedQuery = query.replace(/\s+/g, '+').trim();
-    const url = `${BASE_URL}/arama/${encodeURIComponent(formattedQuery)}`;
-    
-    console.error(`[SEARCH-REQ] Sorgu: ${query} | URL: ${url}`);
-    
+// --- YARDIMCI FONKSİYONLAR ---
+function universalAtob(str) {
     try {
-        let res = await fetch(url, { headers: WORKING_HEADERS });
-        if (!res.ok) throw new Error("Site cevap vermedi: " + res.status);
-        
-        let html = await res.text();
-        let $ = cheerio.load(html);
-        let results = [];
-
-        // Site yapısına göre seçiciyi geniş tutuyoruz
-        $(".film-listesi li, .filmler-listesi li").each((i, el) => {
-            let link = $(el).find("a").attr("href");
-            let title = $(el).find(".film-adi, h2, h3").text().trim() || $(el).text().trim();
-            let text = $(el).text().toLowerCase();
-            
-            if (link) {
-                results.push({ 
-                    link: link, 
-                    title: title,
-                    isDublaj: text.includes("dublaj") || text.includes("türkçe"),
-                    fullText: text 
-                });
-            }
-        });
-        return results;
-    } catch (e) {
-        console.error("[SEARCH-ERROR] " + e.message);
-        return [];
-    }
+        if (typeof atob === 'function') return atob(str);
+        var chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=';
+        var out = ''; str = String(str).replace(/[=]+$/, '');
+        for (var bc = 0, bs, buffer, idx = 0; buffer = str.charAt(idx++); ~buffer && (bs = bc % 4 ? bs * 64 + buffer : buffer, bc++ % 4) ? out += String.fromCharCode(255 & bs >> (-2 * bc & 6)) : 0) {
+            buffer = chars.indexOf(buffer);
+        }
+        return out;
+    } catch (e) { return null; }
 }
 
+function decodeRapidVid(encodedData) {
+    try {
+        if (!encodedData) return null;
+        var reversed = encodedData.split('').reverse().join('');
+        var decodedBinary = universalAtob(reversed.replace(/[^A-Za-z0-9+/=]/g, ""));
+        var key = "K9L"; var adjusted = "";
+        for (var i = 0; i < decodedBinary.length; i++) {
+            var charCode = decodedBinary.charCodeAt(i);
+            var shift = (key.charCodeAt(i % key.length) % 5) + 1;
+            adjusted += String.fromCharCode(charCode - shift);
+        }
+        var finalUrl = universalAtob(adjusted);
+        return (finalUrl && finalUrl.startsWith('http')) ? finalUrl.replace(/\\/g, "").trim() : null;
+    } catch (e) { return null; }
+}
+
+// --- API KAYNAK ÇÖZÜCÜ ---
+async function getStreamsFromAPI(vidid, movieTitle) {
+    console.error(`[API-ISTEK] Kaynaklar cekiliyor ID: ${vidid}`);
+    
+    const fetchAtom = async () => {
+        try {
+            let res = await fetch(API_BASE + '?id=' + vidid + '&type=t&name=atom&get=video&format=json', { headers: WORKING_HEADERS });
+            let data = await res.json();
+            if (data && data.html) {
+                let playerRes = await fetch(data.html.replace(/\\/g, ''), { headers: WORKING_HEADERS });
+                let playerHtml = await playerRes.text();
+                let avMatch = playerHtml.match(/av\(['"]([^'"]+)['"]\)/);
+                if (avMatch) {
+                    let url = decodeRapidVid(avMatch[1]);
+                    if (url) return { name: "Atom", title: `${movieTitle} (TR Dublaj)`, url: url, quality: "Auto", headers: WORKING_HEADERS, provider: "FullHD" };
+                }
+            }
+        } catch (e) { console.error("[PLAYER-HATA] Atom: " + e.message); }
+        return null;
+    };
+
+    const fetchTurbo = async () => {
+        try {
+            let res = await fetch(API_BASE + '?id=' + vidid + '&type=t&name=advid&get=video&pno=tr&format=json', { headers: WORKING_HEADERS });
+            let data = await res.json();
+            if (data && data.html && data.html.includes('/watch/')) {
+                let watchId = data.html.match(/\/watch\/(.*?)"/)[1];
+                let playRes = await fetch('https://turbo.imgz.me/play/' + watchId + '?autoplay=true', { headers: Object.assign({}, WORKING_HEADERS, { 'Referer': BASE_URL }) });
+                let playHtml = await playRes.text();
+                let m3u8 = playHtml.match(/file:\s*"(.*?\.m3u8.*?)"/i);
+                if (m3u8) return { name: "Turbo", title: `${movieTitle} (TR Dublaj)`, url: m3u8[1], quality: "Auto", headers: Object.assign({}, WORKING_HEADERS, { 'Referer': 'https://turbo.imgz.me/' }), provider: "FullHD" };
+            }
+        } catch (e) { console.error("[PLAYER-HATA] Turbo: " + e.message); }
+        return null;
+    };
+
+    let results = await Promise.all([fetchAtom(), fetchTurbo()]);
+    return results.filter(r => r !== null);
+}
+
+// --- ANA AKIŞ ---
 function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
     return new Promise(function(resolve) {
         if (mediaType !== 'movie') return resolve([]);
 
-        // 1. TMDB Verilerini Çek
+        // 1. TMDB'den Bilgileri Al
         fetch(`https://api.themoviedb.org/3/movie/${tmdbId}?api_key=4ef0d7355d9ffb5151e987764708ce96&append_to_response=external_ids&language=tr-TR`)
             .then(res => res.json())
             .then(async (data) => {
@@ -67,42 +97,46 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                 const year = data.release_date ? data.release_date.split('-')[0] : "";
                 const ttId = data.external_ids ? data.external_ids.imdb_id : "";
 
-                console.error(`[START] İsimle Araniyor: ${movieTitle} (${year})`);
+                console.error(`[BASLADI] Film: ${movieTitle} | Yil: ${year} | ID: ${ttId}`);
 
-                // 2. İSİMLE ARA (Elle arama yaptığında bulduğu yöntem)
-                let results = await performSearch(movieTitle);
+                // 2. İsimle Arama Yap
+                const searchUrl = `${BASE_URL}/arama/${encodeURIComponent(movieTitle.replace(/\s+/g, '+'))}`;
+                console.error(`[SITE-ARAMA] URL: ${searchUrl}`);
 
-                // 3. BULUNAMAZSA ttID İLE DENE
-                if (results.length === 0 && ttId) {
-                    console.error("[RE-TRY] İsimle bulunamadi, ttID deneniyor...");
-                    results = await performSearch(ttId);
-                }
+                let searchRes = await fetch(searchUrl, { headers: WORKING_HEADERS });
+                let searchHtml = await searchRes.text();
+                let $ = cheerio.load(searchHtml);
+                let results = [];
 
-                if (results.length === 0) throw new Error("Sitede hicbir sonuc bulunamadi.");
+                $(".film-listesi li, .filmler-listesi li").each((i, el) => {
+                    let link = $(el).find("a").attr("href");
+                    let text = $(el).text().toLowerCase();
+                    if (link) {
+                        results.push({ 
+                            link: link, 
+                            isDublaj: text.includes("dublaj") || text.includes("türkçe"), 
+                            fullText: text 
+                        });
+                    }
+                });
 
-                // 4. SONUÇLAR İÇİNDE EN DOĞRUSUNU BUL
-                let selected = null;
+                console.error(`[ARAMA-SONUC] Bulunan öğe sayısı: ${results.length}`);
 
-                // A) Hem Yıl tutsun hem Dublaj olsun
-                selected = results.find(r => r.fullText.includes(year) && r.isDublaj);
-                
-                // B) Dublaj yoksa sadece Yıl tutsun
-                if (!selected) selected = results.find(r => r.fullText.includes(year));
-                
-                // C) Yıl da tutmuyorsa ama isimle arattık diye güvenip ilk sonucu al
-                if (!selected) {
-                    console.error("[INFO] Tam yil eslesmesi yok, ilk sonuc aliniyor.");
-                    selected = results[0];
-                }
+                // 3. Dublaj ve Yıl Filtrelemesi
+                let selected = results.find(r => r.fullText.includes(year) && r.isDublaj) || 
+                               results.find(r => r.fullText.includes(year)) || 
+                               results[0];
 
-                console.error(`[SELECTED] Seçilen: ${selected.title} | Link: ${selected.link}`);
+                if (!selected) throw new Error("Sitede hicbir sonuc bulunamadi.");
 
-                // 5. VİDEO SAYFASINA GİT VE VIDID BUL
+                console.error(`[SECIM] Link: ${selected.link} | Dublaj: ${selected.isDublaj}`);
+
+                // 4. Film Sayfasından Video ID'sini Al
                 let filmRes = await fetch(selected.link.startsWith('http') ? selected.link : BASE_URL + selected.link, { headers: WORKING_HEADERS });
                 let filmHtml = await filmRes.text();
                 let vidMatch = filmHtml.match(/vidid\s*=\s*['"](\d+)['"]/);
 
-                if (!vidMatch) throw new Error("Film sayfasinda vidid bulunamadi!");
+                if (!vidMatch) throw new Error("Film sayfasinda 'vidid' bulunamadi.");
                 
                 return getStreamsFromAPI(vidMatch[1], movieTitle);
             })
@@ -114,4 +148,9 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
     });
 }
 
-// ... (Export ve getStreamsFromAPI aynı kalacak) ...
+// --- EXPORT ---
+if (typeof module !== 'undefined' && module.exports) { 
+    module.exports = { getStreams: getStreams }; 
+} else { 
+    globalThis.getStreams = getStreams; 
+}
