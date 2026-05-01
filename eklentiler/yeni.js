@@ -1,5 +1,5 @@
 /**
- * FullHDFilmizlesene Nuvio Scraper - v28.0 (Visual & Quality Update)
+ * FullHDFilmizlesene Nuvio Scraper - v29.0 (Raw Data Debug Mode)
  */
 
 var cheerio = require("cheerio-without-node-native");
@@ -63,8 +63,7 @@ async function getStreamsFromAPI(vidid, movieTitle) {
                     };
                 }
             }
-        } catch (e) {    console.error("FullHD-API-Error: " + e.message);
-        return [];}
+        } catch (e) { console.error("FullHD-API-Error: " + e.message); return null; }
         return null;
     };
 
@@ -103,12 +102,18 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
             .then(data => {
                 const year = data.release_date ? data.release_date.split('-')[0] : "";
                 const movieTitle = data.title || data.original_title;
-                const query = data.title || data.original_title;
-                const searchUrl = BASE_URL + '/arama/' + encodeURIComponent(query);
+                const searchUrl = BASE_URL + '/arama/' + encodeURIComponent(movieTitle);
                 return Promise.all([fetch(searchUrl, { headers: WORKING_HEADERS }), year, movieTitle]);
             })
             .then(async ([res, year, movieTitle]) => {
                 let searchHtml = await res.text();
+                
+                // --- DEBUG: Arama Sayfası Ham Veri ---
+                console.error("--- RAW SEARCH DATA START ---");
+                console.error("Search URL: " + res.url);
+                console.error("Search HTML (First 1000 chars): " + searchHtml.substring(0, 1000));
+                console.error("--- RAW SEARCH DATA END ---");
+
                 let $ = cheerio.load(searchHtml);
                 let filmLink = "";
                 
@@ -120,20 +125,37 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                 });
 
                 if (!filmLink) filmLink = $(".film-listesi a").first().attr("href") || $("a[href*='/film/']").first().attr("href");
-                if (!filmLink) throw new Error("Film bulunamadı");
                 
-                let filmRes = await fetch(filmLink.startsWith('http') ? filmLink : BASE_URL + filmLink, { headers: WORKING_HEADERS });
+                if (!filmLink) {
+                    console.error("DEBUG: Arama sonucunda film linki yakalanamadı!");
+                    throw new Error("Film bulunamadı");
+                }
+                
+                let targetUrl = filmLink.startsWith('http') ? filmLink : BASE_URL + (filmLink.startsWith('/') ? '' : '/') + filmLink;
+                let filmRes = await fetch(targetUrl, { headers: WORKING_HEADERS });
                 let filmHtml = await filmRes.text();
+
+                // --- DEBUG: Film Sayfası Ham Veri ---
+                console.error("--- RAW FILM PAGE START ---");
+                console.error("Target Film URL: " + targetUrl);
+                console.error("Film HTML (Total length): " + filmHtml.length);
+                console.error("Film HTML (Snippet): " + filmHtml.substring(filmHtml.indexOf('vidid'), filmHtml.indexOf('vidid') + 100));
+                console.error("--- RAW FILM PAGE END ---");
                 
                 let vidMatch = filmHtml.match(/vidid\s*=\s*['"](\d+)['"]/);
-                if (vidMatch) return getStreamsFromAPI(vidMatch[1], movieTitle);
+                if (vidMatch) {
+                    console.error("DEBUG: Bulunan vidid -> " + vidMatch[1]);
+                    return getStreamsFromAPI(vidMatch[1], movieTitle);
+                }
                 
+                console.error("DEBUG: Film sayfasında vidid eşleşmesi bulunamadı!");
                 return [];
             })
             .then(streams => resolve(streams))
             .catch(err => { 
-			 console.error("FullHD-Main-Error: " + err.message);
-			resolve([]); });
+                console.error("FullHD-Main-Error: " + err.message);
+                resolve([]); 
+            });
     });
 }
 
