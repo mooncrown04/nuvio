@@ -1,5 +1,5 @@
 /**
- * FullHDFilmizlesene Nuvio Scraper - v33.0 (No-Log Debugging)
+ * FullHDFilmizlesene Nuvio Scraper - v34.0 (Logcat Optimized)
  */
 
 var cheerio = require("cheerio-without-node-native");
@@ -23,7 +23,10 @@ function universalAtob(str) {
             buffer = chars.indexOf(buffer);
         }
         return out;
-    } catch (e) { return null; }
+    } catch (e) { 
+        console.error("ScraperError: atob decoder failed:", e.message);
+        return null; 
+    }
 }
 
 function decodeRapidVid(encodedData) {
@@ -39,10 +42,14 @@ function decodeRapidVid(encodedData) {
         }
         var finalUrl = universalAtob(adjusted);
         return (finalUrl && finalUrl.startsWith('http')) ? finalUrl.replace(/\\/g, "").trim() : null;
-    } catch (e) { return null; }
+    } catch (e) { 
+        console.error("ScraperError: RapidVid decoding failed:", e.message);
+        return null; 
+    }
 }
 
-async function getStreamsFromAPI(vidid, movieTitle, debugMsg) {
+async function getStreamsFromAPI(vidid, movieTitle) {
+    console.error("ScraperLog: Starting API fetch for VIDID:", vidid);
     const fetchAtom = async () => {
         try {
             let res = await fetch(API_BASE + '?id=' + vidid + '&type=t&name=atom&get=video&format=json', { headers: WORKING_HEADERS });
@@ -53,17 +60,10 @@ async function getStreamsFromAPI(vidid, movieTitle, debugMsg) {
                 let avMatch = playerHtml.match(/av\(['"]([^'"]+)['"]\)/);
                 if (avMatch) {
                     let url = decodeRapidVid(avMatch[1]);
-                    if (url) return { 
-                        name: movieTitle, 
-                        title: `⌜ FULLHDFILM ⌟ | Atom | ${debugMsg}`, 
-                        url: url, 
-                        quality: "Auto", 
-                        headers: WORKING_HEADERS, 
-                        provider: "fullhd_scraper" 
-                    };
+                    if (url) return { name: movieTitle, title: "⌜ FULLHDFILM ⌟ | Atom", url: url, quality: "Auto", headers: WORKING_HEADERS, provider: "fullhd_scraper" };
                 }
             }
-        } catch (e) { }
+        } catch (e) { console.error("ScraperError: Atom player fetch failed:", e.message); }
         return null;
     };
 
@@ -76,16 +76,9 @@ async function getStreamsFromAPI(vidid, movieTitle, debugMsg) {
                 let playRes = await fetch('https://turbo.imgz.me/play/' + watchId + '?autoplay=true', { headers: Object.assign({}, WORKING_HEADERS, { 'Referer': BASE_URL }) });
                 let playHtml = await playRes.text();
                 let m3u8 = playHtml.match(/file:\s*"(.*?\.m3u8.*?)"/i);
-                if (m3u8) return { 
-                    name: movieTitle, 
-                    title: `⌜ FULLHDFILM ⌟ | Turbo | ${debugMsg}`, 
-                    url: m3u8[1], 
-                    quality: "Auto", 
-                    headers: Object.assign({}, WORKING_HEADERS, { 'Referer': 'https://turbo.imgz.me/' }), 
-                    provider: "fullhd_scraper" 
-                };
+                if (m3u8) return { name: movieTitle, title: "⌜ FULLHDFILM ⌟ | Turbo", url: m3u8[1], quality: "Auto", headers: Object.assign({}, WORKING_HEADERS, { 'Referer': 'https://turbo.imgz.me/' }), provider: "fullhd_scraper" };
             }
-        } catch (e) { }
+        } catch (e) { console.error("ScraperError: Turbo player fetch failed:", e.message); }
         return null;
     };
 
@@ -97,6 +90,8 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
     return new Promise(function(resolve) {
         if (mediaType !== 'movie') return resolve([]);
 
+        console.error("ScraperLog: getStreams initiated for TMDB ID:", tmdbId);
+
         fetch('https://api.themoviedb.org/3/movie/' + tmdbId + '?language=tr-TR&api_key=4ef0d7355d9ffb5151e987764708ce96')
             .then(res => res.json())
             .then(data => {
@@ -106,12 +101,16 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                 const query = movieTitleTr || movieTitleEn;
                 const searchUrl = BASE_URL + '/arama/' + encodeURIComponent(query);
                 
+                console.error(`ScraperLog: TMDB Data - TR: ${movieTitleTr}, EN: ${movieTitleEn}, Year: ${year}`);
+                
                 return Promise.all([fetch(searchUrl, { headers: WORKING_HEADERS }), year, movieTitleTr, movieTitleEn]);
             })
             .then(async ([res, year, movieTitleTr, movieTitleEn]) => {
                 let searchHtml = await res.text();
                 let $ = cheerio.load(searchHtml);
                 let candidates = [];
+
+                console.error("ScraperLog: Parsing search results...");
 
                 $(".film-listesi li").each((i, el) => {
                     let link = $(el).find("a").attr("href");
@@ -120,36 +119,54 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
 
                     if (!link) return;
 
-                    // Yıl ve isim kontrolü
-                    if (year && itemText.includes(year)) score += 150;
+                    // Yıl Kontrolü - En yüksek öncelik[cite: 1]
+                    if (year && itemText.includes(year)) {
+                        score += 200;
+                    }
+
+                    // İsim Kontrolü[cite: 1]
                     if (movieTitleTr && itemText.includes(movieTitleTr.toLowerCase())) score += 50;
                     if (movieTitleEn && itemText.includes(movieTitleEn.toLowerCase())) score += 50;
 
-                    candidates.push({ link, score, title: itemText });
+                    console.error(`ScraperLog: Candidate found - Score: ${score}, Title: ${itemText.trim().substring(0, 40)}`);
+                    candidates.push({ link, score });
                 });
 
+                // Skorları sırala[cite: 1]
                 candidates.sort((a, b) => b.score - a.score);
                 
-                let best = candidates[0];
-                if (!best || best.score < 50) {
-                   // Hiç uygun eşleşme yoksa hatayı title olarak döndür
-                   return resolve([{ name: movieTitleTr, title: "HATA: Uygun film bulunamadı", url: "", provider: "error" }]);
+                let filmLink = (candidates.length > 0 && candidates[0].score > 0) ? candidates[0].link : "";
+
+                if (!filmLink) {
+                    console.error("ScraperError: No matching film found by score. Falling back to first result.");
+                    filmLink = $(".film-listesi a").first().attr("href");
                 }
 
-                // Debug bilgisini title'a ekle[cite: 1]
-                let debugLabel = `Puan:${best.score} | Yıl:${year}`;
+                if (!filmLink) {
+                    console.error("ScraperError: Search results are empty.");
+                    throw new Error("No link found");
+                }
                 
-                let filmRes = await fetch(best.link.startsWith('http') ? best.link : BASE_URL + best.link, { headers: WORKING_HEADERS });
+                console.error("ScraperLog: Target film link selected:", filmLink);
+                let filmRes = await fetch(filmLink.startsWith('http') ? filmLink : BASE_URL + filmLink, { headers: WORKING_HEADERS });
                 let filmHtml = await filmRes.text();
                 
                 let vidMatch = filmHtml.match(/vidid\s*=\s*['"](\d+)['"]/);
-                if (vidMatch) return getStreamsFromAPI(vidMatch[1], movieTitleTr || movieTitleEn, debugLabel);
+                if (vidMatch) {
+                    console.error("ScraperLog: vidid extracted:", vidMatch[1]);
+                    return getStreamsFromAPI(vidMatch[1], movieTitleTr || movieTitleEn);
+                }
                 
-                return resolve([{ name: movieTitleTr, title: "HATA: Sayfada Video ID Yok", url: "", provider: "error" }]);
+                console.error("ScraperError: vidid not found on the film page.");
+                return [];
             })
-            .then(streams => resolve(streams))
+            .then(streams => {
+                console.error("ScraperLog: Final streams found:", streams.length);
+                resolve(streams);
+            })
             .catch(err => { 
-                resolve([{ name: "Sistem Hatası", title: err.message, url: "", provider: "error" }]); 
+                console.error("ScraperCriticalError:", err.message);
+                resolve([]); 
             });
     });
 }
