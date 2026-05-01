@@ -1,5 +1,5 @@
 /**
- * FullHDFilmizlesene Nuvio Scraper - Debug Edition
+ * FullHDFilmizlesene Nuvio Scraper - v31.0 (Clean Metadata)
  */
 
 var cheerio = require("cheerio-without-node-native");
@@ -14,6 +14,7 @@ const WORKING_HEADERS = {
     'Origin': BASE_URL
 };
 
+// --- Yardımcı Fonksiyonlar (Aynı Kalıyor) ---
 function universalAtob(str) {
     try {
         if (typeof atob === 'function') return atob(str);
@@ -42,6 +43,7 @@ function decodeRapidVid(encodedData) {
     } catch (e) { return null; }
 }
 
+// --- API'den Link Çekme ve Kart Yapılandırma ---
 async function getStreamsFromAPI(vidid, movieTitle) {
     const fetchAtom = async () => {
         try {
@@ -54,12 +56,12 @@ async function getStreamsFromAPI(vidid, movieTitle) {
                 if (avMatch) {
                     let url = decodeRapidVid(avMatch[1]);
                     if (url) return { 
-                        name: movieTitle, 
-                        title: "⌜ FULLHDFILM ⌟ | Atom | 🇹🇷 Dublaj", 
+                        name: "Atom", // Kartın sol/üst kısmında görünecek kısa isim
+                        title: `${movieTitle} (TR Dublaj)`, // Detaylı açıklama
                         url: url, 
                         quality: "Auto", 
                         headers: WORKING_HEADERS, 
-                        provider: "fullhd_scraper" 
+                        provider: "FullHD" 
                     };
                 }
             }
@@ -77,12 +79,12 @@ async function getStreamsFromAPI(vidid, movieTitle) {
                 let playHtml = await playRes.text();
                 let m3u8 = playHtml.match(/file:\s*"(.*?\.m3u8.*?)"/i);
                 if (m3u8) return { 
-                    name: movieTitle, 
-                    title: "⌜ FULLHDFILM ⌟ | Turbo | 🇹🇷 Dublaj", 
+                    name: "Turbo", 
+                    title: `${movieTitle} (TR Dublaj)`, 
                     url: m3u8[1], 
                     quality: "Auto", 
                     headers: Object.assign({}, WORKING_HEADERS, { 'Referer': 'https://turbo.imgz.me/' }), 
-                    provider: "fullhd_scraper" 
+                    provider: "FullHD" 
                 };
             }
         } catch (e) { }
@@ -93,75 +95,51 @@ async function getStreamsFromAPI(vidid, movieTitle) {
     return results.filter(r => r !== null);
 }
 
+// --- Ana Fonksiyon (ttID ve Dublaj Kontrollü) ---
 function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
     return new Promise(function(resolve) {
-        // Nuvio'dan gelen ham parametreleri kontrol edelim
-        console.error(`[NUVIO-IN] TMDB: ${tmdbId} | Tip: ${mediaType} | S: ${seasonNum} E: ${episodeNum}`);
-
         if (mediaType !== 'movie') return resolve([]);
 
-        fetch('https://api.themoviedb.org/3/movie/' + tmdbId + '?language=tr-TR&api_key=4ef0d7355d9ffb5151e987764708ce96')
+        fetch(`https://api.themoviedb.org/3/movie/${tmdbId}?api_key=4ef0d7355d9ffb5151e987764708ce96&append_to_response=external_ids&language=tr-TR`)
             .then(res => res.json())
             .then(data => {
-                const year = data.release_date ? data.release_date.split('-')[0] : "";
+                const ttId = data.external_ids ? data.external_ids.imdb_id : null;
                 const movieTitle = data.title || data.original_title;
-                // Arama sorgusuna yılı ekleyerek siteyi daha dar bir aramaya zorluyoruz
-                const query = movieTitle; 
-                const searchUrl = BASE_URL + '/arama/' + encodeURIComponent(query);
-                
-                console.error(`[SCRAPER-START] Hedef: ${movieTitle} (${year})`);
-                return Promise.all([fetch(searchUrl, { headers: WORKING_HEADERS }), year, movieTitle]);
+                if (!ttId) throw new Error("IMDb ID Yok");
+
+                return Promise.all([fetch(`${BASE_URL}/arama/${ttId}`, { headers: WORKING_HEADERS }), movieTitle]);
             })
-            .then(async ([res, year, movieTitle]) => {
+            .then(async ([res, movieTitle]) => {
                 let searchHtml = await res.text();
                 let $ = cheerio.load(searchHtml);
-                let filmLink = "";
-                
-                console.error("--- [SİTE ARAMA SONUÇLARI BAŞLADI] ---");
+                let results = [];
 
                 $(".film-listesi li").each((i, el) => {
-                    let siteLink = $(el).find("a").attr("href");
-                    let siteMetni = $(el).text().replace(/\s+/g, ' ').trim(); // Tüm metni temizle al
-                    
-                    // Sitedeki her sonucu yazdır ki hatayı görelim
-                    console.error(`HAM VERİ [${i}]: ${siteMetni} | Link: ${siteLink}`);
-
-                    // Eşleşme kontrolü
-                    if (siteLink && (year === "" || siteMetni.includes(year))) {
-                        console.error(`>>> EŞLEŞME BULUNDU: ${siteMetni}`);
-                        filmLink = siteLink; 
-                        return false;
-                    }
+                    let link = $(el).find("a").attr("href");
+                    let text = $(el).text().toLowerCase();
+                    if (link) results.push({ link: link, isDublaj: text.includes("dublaj") });
                 });
 
-                console.error("--- [SİTE ARAMA SONUÇLARI BİTTİ] ---");
+                // Önce Dublajlıyı seç, yoksa ilk sonucu al
+                let selected = results.find(r => r.isDublaj) || results[0];
+                if (!selected) throw new Error("Film bulunamadı");
 
-                // Fallback (ilk bulduğunu al) kısmını debug için kapattık veya sadece log ekledik
-                if (!filmLink) {
-                   console.error("[HATA] Yıl eşleşmesi sağlanamadı. Yanlış film getirilmemesi için işlem durduruldu.");
-                   throw new Error("Eşleşme yok");
-                }
-                
-                let filmRes = await fetch(filmLink.startsWith('http') ? filmLink : BASE_URL + filmLink, { headers: WORKING_HEADERS });
+                let filmRes = await fetch(selected.link.startsWith('http') ? selected.link : BASE_URL + selected.link, { headers: WORKING_HEADERS });
                 let filmHtml = await filmRes.text();
-                
                 let vidMatch = filmHtml.match(/vidid\s*=\s*['"](\d+)['"]/);
-                if (vidMatch) {
-                    console.error(`[VIDID] Bulunan Kimlik: ${vidMatch[1]}`);
-                    return getStreamsFromAPI(vidMatch[1], movieTitle);
-                }
-                
+
+                if (vidMatch) return getStreamsFromAPI(vidMatch[1], movieTitle);
                 return [];
             })
             .then(streams => resolve(streams))
             .catch(err => { 
-                console.error(`[DEBUG-STOP] ${err.message}`);
+                console.error(`[NUVIO-ERROR] ${err.message}`);
                 resolve([]); 
             });
     });
 }
 
-// Nuvio Export
+// Export
 if (typeof module !== 'undefined' && module.exports) { 
     module.exports = { getStreams: getStreams }; 
 } else { 
