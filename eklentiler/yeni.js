@@ -1,5 +1,5 @@
 /**
- * FullHDFilmizlesene Nuvio Scraper - v32.1 (Full Logging & Nuvio Logic)
+ * FullHDFilmizlesene Nuvio Scraper - v32.2 (Force Scx Search & Multi-Layer Debug)
  */
 
 var cheerio = require("cheerio-without-node-native");
@@ -12,17 +12,15 @@ const WORKING_HEADERS = {
     'Origin': BASE_URL
 };
 
-// Kotlin: atob(rtt(link)) mantığı
 function superDecode(enc) {
     if (!enc) return null;
     try {
+        // Kotlin: atob(rtt(enc))
         let decoded = Buffer.from(enc.split('').reverse().join(''), 'base64').toString('utf8');
         if (decoded && (decoded.startsWith('http') || decoded.startsWith('//'))) {
             return decoded.startsWith('//') ? 'https:' + decoded : decoded;
         }
-    } catch (e) {
-        console.error(`[NUVIO-ERROR] Decode Başarısız: ${e.message}`);
-    }
+    } catch (e) { }
     return null;
 }
 
@@ -30,14 +28,13 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
     return new Promise(function(resolve) {
         if (mediaType !== 'movie') return resolve([]);
 
-        console.log(`[NUVIO-LOG] İşlem Başladı -> TMDB ID: ${tmdbId}`);
+        console.log(`[NUVIO] İşlem TMDB: ${tmdbId} için başlatıldı.`);
 
         fetch(`https://api.themoviedb.org/3/movie/${tmdbId}?language=tr-TR&api_key=4ef0d7355d9ffb5151e987764708ce96`)
             .then(res => res.json())
             .then(data => {
                 const year = data.release_date ? data.release_date.split('-')[0] : "";
                 const queryTitle = (data.title || data.original_title).split('(')[0].trim();
-                console.log(`[NUVIO-LOG] Aranan Film: ${queryTitle} (${year})`);
                 return Promise.all([fetch(`${BASE_URL}/arama/${encodeURIComponent(queryTitle)}`, { headers: WORKING_HEADERS }), year, queryTitle]);
             })
             .then(async ([res, year, queryTitle]) => {
@@ -50,57 +47,63 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                     let link = $(el).find("a").first().attr("href") || "";
                     let sTitle = $(el).find("span.film-title").text().trim();
                     let sYear = $(el).find("span.film-yil").text().trim();
-                    
                     let score = (sYear.includes(year) ? 60 : 0) + (sTitle.toLowerCase().includes(queryTitle.toLowerCase()) ? 40 : 0);
-                    
-                    if (score > maxScore) {
-                        maxScore = score;
-                        bestMatch = link;
-                    }
+                    if (score > maxScore) { maxScore = score; bestMatch = link; }
                 });
 
                 if (!bestMatch || maxScore < 50) {
-                    console.error("[NUVIO-ERROR] Uygun eşleşme bulunamadı!");
+                    console.error("[NUVIO] Eşleşme bulunamadı.");
                     return resolve([]);
                 }
 
-                console.log(`[NUVIO-LOG] Eşleşme Başarılı: ${bestMatch} (Puan: ${maxScore})`);
-
+                console.log(`[NUVIO] Film Sayfası Çekiliyor: ${bestMatch}`);
                 let fRes = await fetch(bestMatch.startsWith('http') ? bestMatch : BASE_URL + (bestMatch.startsWith('/') ? '' : '/') + bestMatch, { headers: WORKING_HEADERS });
                 let fHtml = await fRes.text();
 
                 let results = [];
-                // Nuvio Kuralları: "t" parametreli gizli linkleri yakala
+
+                // --- KATMAN 1: STANDART SCX TARAMASI ---
                 let tMatches = fHtml.match(/"t"\s*:\s*"([^"]+)"/g);
                 
-                if (!tMatches) {
-                    console.error("[NUVIO-ERROR] Sayfa içerisinde 't' parametreli link bulunamadı.");
-                } else {
-                    console.log(`[NUVIO-LOG] Bulunan şifreli 't' bloğu sayısı: ${tMatches.length}`);
-                    tMatches.forEach((m, index) => {
-                        let enc = m.match(/"t"\s*:\s*"([^"]+)"/)[1];
-                        let decodedUrl = superDecode(enc);
+                // --- KATMAN 2: DERİN TARAMA (Eğer ilk katman boşsa) ---
+                if (!tMatches || tMatches.length === 0) {
+                    console.log("[NUVIO] Katman 1 başarısız, derin tarama (regex search) başlıyor...");
+                    // Bazen 't' değerleri t: "..." şeklinde veya farklı tırnaklarla gelebilir
+                    tMatches = fHtml.match(/['"]?t['"]?\s*[:=]\s*['"]([^'"]+)['"]/g);
+                }
+
+                if (tMatches) {
+                    console.log(`[NUVIO] ${tMatches.length} adet potansiyel veri bulundu.`);
+                    tMatches.forEach((m) => {
+                        // Regex ile sadece tırnak içindeki şifreli kısmı al
+                        let parts = m.match(/[:=]\s*['"]([^'"]+)['"]/);
+                        let enc = parts ? parts[1] : null;
                         
-                        if (decodedUrl && (decodedUrl.includes('m3u8') || decodedUrl.includes('mp4'))) {
-                            console.log(`[NUVIO-SUCCESS] Link Çözüldü [${index}]: ${decodedUrl.substring(0, 50)}...`);
-                            results.push({ 
-                                name: "FHD - Kaynak " + (index + 1), 
-                                url: decodedUrl, 
-                                quality: "Auto", 
-                                headers: { 
-                                    'User-Agent': WORKING_HEADERS['User-Agent'], 
-                                    'Referer': 'https://turbo.imgz.me/' 
-                                } 
-                            });
+                        if (enc && enc.length > 20) { // Kısa stringleri (başlık vs) ele
+                            let url = superDecode(enc);
+                            if (url && (url.includes('m3u8') || url.includes('mp4') || url.includes('google'))) {
+                                results.push({ 
+                                    name: "FHD - Stream", 
+                                    url: url, 
+                                    quality: "Auto", 
+                                    headers: { 'User-Agent': WORKING_HEADERS['User-Agent'], 'Referer': 'https://turbo.imgz.me/' } 
+                                });
+                            }
                         }
                     });
                 }
 
-                if (results.length === 0) console.error("[NUVIO-ERROR] Hiçbir stream linki üretilemedi.");
+                if (results.length === 0) {
+                    console.error("[NUVIO] Tüm katmanlar başarısız. Sayfa yapısı değişmiş veya bot koruması aktif.");
+                    // Son çare: iFrame taraması gerekebilir ama önce bunu görelim.
+                } else {
+                    console.log(`[NUVIO] Başarılı! ${results.length} link üretildi.`);
+                }
+
                 resolve(results);
             })
             .catch(err => {
-                console.error(`[NUVIO-CRITICAL] Genel Hata: ${err.message}`);
+                console.error(`[NUVIO] Kritik Hata: ${err.message}`);
                 resolve([]);
             });
     });
