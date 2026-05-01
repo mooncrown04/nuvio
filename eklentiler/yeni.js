@@ -1,5 +1,5 @@
 /**
- * FullHDFilmizlesene Nuvio Scraper - v28.5 (Strict Filtering & Error Logging)
+ * FullHDFilmizlesene Nuvio Scraper - v28.6 (Smart Match & Quality Check)
  */
 
 var cheerio = require("cheerio-without-node-native");
@@ -63,7 +63,7 @@ async function getStreamsFromAPI(vidid, movieTitle) {
                     };
                 }
             }
-        } catch (e) { console.error("Atom hatası:", e); }
+        } catch (e) { console.error("[NUVIO] Atom hatası:", e); }
         return null;
     };
 
@@ -85,7 +85,7 @@ async function getStreamsFromAPI(vidid, movieTitle) {
                     provider: "fullhd_scraper" 
                 };
             }
-        } catch (e) { console.error("Turbo hatası:", e); }
+        } catch (e) { console.error("[NUVIO] Turbo hatası:", e); }
         return null;
     };
 
@@ -101,7 +101,8 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
             .then(res => res.json())
             .then(data => {
                 const year = data.release_date ? data.release_date.split('-')[0] : "";
-                const queryTitle = data.title || data.original_title;
+                // Film ismini temizle (parantez içi yılları kaldır)[cite: 1]
+                const queryTitle = (data.title || data.original_title).split('(')[0].trim();
                 console.error(`[NUVIO] Aranan: ${queryTitle} (${year})`);
 
                 const searchUrl = BASE_URL + '/arama/' + encodeURIComponent(queryTitle);
@@ -115,19 +116,28 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
 
                 $("ul.list li.film").each((i, el) => {
                     let link = $(el).find("a.tt").attr("href");
-                    let siteTitle = $(el).find("span.film-title").text().trim();
+                    let siteTitleText = $(el).find("span.film-title").text().trim();
+                    let siteTitleLower = siteTitleText.toLowerCase();
                     let siteYear = $(el).find("span.film-yil").text().trim();
+                    let qTitleLower = queryTitle.toLowerCase();
                     
-                    // Sıkı eşleşme kontrolü: Yıl tutmalı ve isim birbirini içermeli
+                    // 1. Yıl Kontrolü[cite: 1]
                     const isYearMatch = year === "" || siteYear.includes(year);
-                    const isNameMatch = siteTitle.toLowerCase().includes(queryTitle.toLowerCase()) || 
-                                      queryTitle.toLowerCase().includes(siteTitle.toLowerCase());
+                    
+                    // 2. Akıllı Kelime Eşleşmesi[cite: 1]
+                    const qWords = qTitleLower.split(/\s+/).filter(w => w.length > 2);
+                    const matchCount = qWords.filter(word => siteTitleLower.includes(word)).length;
+                    
+                    // Kelimelerin en az %70'i başlıkta geçmeli (Hatalı "Lanet" eşleşmesini önler)[cite: 1]
+                    const isNameMatch = siteTitleLower === qTitleLower || (qWords.length > 0 && (matchCount / qWords.length) >= 0.7);
 
                     if (link && isYearMatch && isNameMatch) {
-                        console.error(`[NUVIO] Eşleşti: ${siteTitle} [${siteYear}]`);
+                        console.error(`[NUVIO] DOĞRU EŞLEŞME: ${siteTitleText} [${siteYear}]`);
                         filmLink = link;
-                        foundTitle = siteTitle;
+                        foundTitle = siteTitleText;
                         return false; 
+                    } else if (link && isYearMatch) {
+                        console.error(`[NUVIO] ATLANDI (İsim uyumsuz): ${siteTitleText}`);
                     }
                 });
 
@@ -145,7 +155,7 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                     let streams = await getStreamsFromAPI(vidMatch[1], foundTitle);
                     resolve(streams);
                 } else {
-                    console.error("[NUVIO] Film sayfasında Video ID bulunamadı.");
+                    console.error("[NUVIO] Video ID bulunamadı.");
                     resolve([]);
                 }
             })
