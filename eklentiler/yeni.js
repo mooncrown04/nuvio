@@ -1,5 +1,5 @@
 /**
- * FullHDFilmizlesene Nuvio Scraper - v28.3 (Strict Matching)
+ * FullHDFilmizlesene Nuvio Scraper - v28.5 (Strict Filtering & Error Logging)
  */
 
 var cheerio = require("cheerio-without-node-native");
@@ -63,7 +63,7 @@ async function getStreamsFromAPI(vidid, movieTitle) {
                     };
                 }
             }
-        } catch (e) { }
+        } catch (e) { console.error("Atom hatası:", e); }
         return null;
     };
 
@@ -85,7 +85,7 @@ async function getStreamsFromAPI(vidid, movieTitle) {
                     provider: "fullhd_scraper" 
                 };
             }
-        } catch (e) { }
+        } catch (e) { console.error("Turbo hatası:", e); }
         return null;
     };
 
@@ -102,30 +102,37 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
             .then(data => {
                 const year = data.release_date ? data.release_date.split('-')[0] : "";
                 const queryTitle = data.title || data.original_title;
+                console.error(`[NUVIO] Aranan: ${queryTitle} (${year})`);
+
                 const searchUrl = BASE_URL + '/arama/' + encodeURIComponent(queryTitle);
-                return Promise.all([fetch(searchUrl, { headers: WORKING_HEADERS }), year]);
+                return Promise.all([fetch(searchUrl, { headers: WORKING_HEADERS }), year, queryTitle]);
             })
-            .then(async ([res, year]) => {
+            .then(async ([res, year, queryTitle]) => {
                 let searchHtml = await res.text();
                 let $ = cheerio.load(searchHtml);
                 let filmLink = "";
-                let foundTitle = ""; // Siteden gelen ismi tutmak için[cite: 1]
+                let foundTitle = "";
 
                 $("ul.list li.film").each((i, el) => {
                     let link = $(el).find("a.tt").attr("href");
-                    let siteTitle = $(el).find("span.film-title").text().trim(); // Gerçek film ismi[cite: 1]
-                    let siteYear = $(el).find("span.film-yil").text().trim(); 
+                    let siteTitle = $(el).find("span.film-title").text().trim();
+                    let siteYear = $(el).find("span.film-yil").text().trim();
                     
-                    // Yıl filtresi: Eğer yıl eşleşmezse bu sonucu atla[cite: 1]
-                    if (link && (year === "" || siteYear.includes(year))) {
+                    // Sıkı eşleşme kontrolü: Yıl tutmalı ve isim birbirini içermeli
+                    const isYearMatch = year === "" || siteYear.includes(year);
+                    const isNameMatch = siteTitle.toLowerCase().includes(queryTitle.toLowerCase()) || 
+                                      queryTitle.toLowerCase().includes(siteTitle.toLowerCase());
+
+                    if (link && isYearMatch && isNameMatch) {
+                        console.error(`[NUVIO] Eşleşti: ${siteTitle} [${siteYear}]`);
                         filmLink = link;
-                        foundTitle = siteTitle; // Bulunan ismi kaydet[cite: 1]
+                        foundTitle = siteTitle;
                         return false; 
                     }
                 });
 
-                // Eğer eşleşen film bulunamadıysa boş döner[cite: 1]
                 if (!filmLink) {
+                    console.error("[NUVIO] Kriterlere uygun film bulunamadı.");
                     return resolve([]);
                 }
                 
@@ -135,14 +142,15 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                 
                 let vidMatch = filmHtml.match(/vidid\s*=\s*['"](\d+)['"]/);
                 if (vidMatch) {
-                    // Bulunan gerçek ismi API fonksiyonuna gönderiyoruz[cite: 1]
                     let streams = await getStreamsFromAPI(vidMatch[1], foundTitle);
                     resolve(streams);
                 } else {
+                    console.error("[NUVIO] Film sayfasında Video ID bulunamadı.");
                     resolve([]);
                 }
             })
             .catch(err => { 
+                console.error("[NUVIO] Kritik Hata:", err.message);
                 resolve([]); 
             });
     });
