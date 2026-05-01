@@ -1,5 +1,5 @@
 /**
- * FullHDFilmizlesene Nuvio Scraper - v29.0 (Keyword Focused & Year Priority)
+ * FullHDFilmizlesene Nuvio Scraper - v29.1 (Best Match Algorithm)
  */
 
 var cheerio = require("cheerio-without-node-native");
@@ -119,45 +119,49 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
             .then(async ([res, year, queryTitle]) => {
                 let searchHtml = await res.text();
                 let $ = cheerio.load(searchHtml);
-                let filmLink = "";
-                let foundTitle = "";
+                
+                let candidates = [];
 
                 $("ul.list li.film").each((i, el) => {
                     let link = $(el).find("a.tt").attr("href") || "";
-                    let siteTitleText = $(el).find("span.film-title").text().trim();
+                    let siteTitle = $(el).find("span.film-title").text().trim();
                     let siteYear = $(el).find("span.film-yil").text().trim();
                     
-                    const qTitleSlug = slugify(queryTitle);
-                    const linkSlug = link.toLowerCase();
-                    const siteTitleLower = siteTitleText.toLowerCase();
-                    
-                    // 1. Yıl Kontrolü[cite: 1]
-                    const isYearMatch = year !== "" && siteYear.includes(year);
-                    
-                    // 2. Anahtar Kelime Kontrolü (Ajan Zeta -> Zeta eşleşmesi için)[cite: 1]
-                    const qWords = qTitleSlug.split('-').filter(w => w.length > 2);
-                    const isKeywordMatch = qWords.some(word => linkSlug.includes(word) || siteTitleLower.includes(word));
+                    let score = 0;
+                    const qSlug = slugify(queryTitle);
+                    const lSlug = link.toLowerCase();
 
-                    if (link && isYearMatch && isKeywordMatch) {
-                        console.error(`[NUVIO] EŞLEŞTİ: ${siteTitleText} [URL: ${link}]`);
-                        filmLink = link;
-                        foundTitle = siteTitleText;
-                        return false; 
-                    }
+                    // Puanlama Sistemi
+                    if (siteYear.includes(year)) score += 50; // Yıl tutuyorsa büyük puan
+                    if (lSlug.includes(qSlug)) score += 30; // URL'de isim geçiyorsa puan
+                    if (siteTitle.toLowerCase().includes(queryTitle.toLowerCase())) score += 20; // Başlıkta geçiyorsa puan
+
+                    candidates.push({
+                        link: link,
+                        title: siteTitle,
+                        year: siteYear,
+                        score: score
+                    });
                 });
 
-                if (!filmLink) {
-                    console.error("[NUVIO] Kriterlere uygun film bulunamadı.");
+                // En yüksek puanlı adayı seç
+                candidates.sort((a, b) => b.score - a.score);
+                let bestMatch = candidates[0];
+
+                if (!bestMatch || bestMatch.score < 50) { // En azından yıl veya güçlü bir isim bağı lazım
+                    console.error("[NUVIO] Uygun eşleşme bulunamadı.");
                     return resolve([]);
                 }
+
+                console.error(`[NUVIO] EN İYİ ADAY SEÇİLDİ: ${bestMatch.title} [${bestMatch.year}] (Puan: ${bestMatch.score})`);
                 
-                let finalUrl = filmLink.startsWith('http') ? filmLink : BASE_URL + filmLink;
+                let finalUrl = bestMatch.link.startsWith('http') ? bestMatch.link : BASE_URL + bestMatch.link;
                 let filmRes = await fetch(finalUrl, { headers: WORKING_HEADERS });
                 let filmHtml = await filmRes.text();
                 
                 let vidMatch = filmHtml.match(/vidid\s*=\s*['"](\d+)['"]/);
                 if (vidMatch) {
-                    let streams = await getStreamsFromAPI(vidMatch[1], foundTitle);
+                    let streams = await getStreamsFromAPI(vidMatch[1], bestMatch.title);
                     resolve(streams);
                 } else {
                     console.error("[NUVIO] Video ID bulunamadı.");
