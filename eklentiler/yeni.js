@@ -91,7 +91,7 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                     data.alternative_titles.titles.forEach(t => titles.add(t.title.toLowerCase()));
                 }
                 
-                console.error(`[NUVIO] Hedef: ${data.title} (${targetYear})`);
+                console.error(`[NUVIO-1] Hedef: ${data.title} (${targetYear})`);
                 const searchUrl = `${BASE_URL}/arama/${encodeURIComponent(data.title)}`;
                 return Promise.all([fetch(searchUrl, { headers: WORKING_HEADERS }), targetYear, Array.from(titles)]);
             })
