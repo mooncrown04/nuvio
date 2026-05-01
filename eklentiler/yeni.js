@@ -1,10 +1,11 @@
 /**
- * FullHDFilmizlesene Nuvio Scraper - v33.0 (KekikStream Logic)
+ * FullHDFilmizlesene Nuvio Scraper - v34.0 (Hybrid: SCX + API Fallback)
  */
 
 var cheerio = require("cheerio-without-node-native");
 
 const BASE_URL = "https://www.fullhdfilmizlesene.live";
+const API_BASE = "https://www.fullhdfilmizlesene.live/player/api.php";
 
 const WORKING_HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -12,114 +13,121 @@ const WORKING_HEADERS = {
     'Origin': BASE_URL
 };
 
-// KekikStream StringCodec.decode mantığı (RTT + Base64)
+// --- YENİ NESİL DECODE (KekikStream Mantığı) ---
 function superDecode(enc) {
     if (!enc) return null;
     try {
-        // Python'daki decode: string[::-1] (ters çevir) ve b64decode
         let decoded = Buffer.from(enc.split('').reverse().join(''), 'base64').toString('utf8');
         if (decoded && (decoded.startsWith('http') || decoded.startsWith('//'))) {
             return decoded.startsWith('//') ? 'https:' + decoded : decoded;
         }
-    } catch (e) {
-        // console.error("[DECODE-ERROR]", e.message);
-    }
+    } catch (e) {}
     return null;
 }
 
-function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
-    return new Promise(function(resolve) {
-        if (mediaType !== 'movie') return resolve([]);
-
-        console.log(`[NUVIO] İstek: ${tmdbId}`);
-
-        fetch(`https://api.themoviedb.org/3/movie/${tmdbId}?language=tr-TR&api_key=4ef0d7355d9ffb5151e987764708ce96`)
-            .then(res => res.json())
-            .then(data => {
-                const year = data.release_date ? data.release_date.split('-')[0] : "";
-                const queryTitle = (data.title || data.original_title).split('(')[0].trim();
-                return Promise.all([fetch(`${BASE_URL}/arama/${encodeURIComponent(queryTitle)}`, { headers: WORKING_HEADERS }), year, queryTitle]);
-            })
-            .then(async ([res, year, queryTitle]) => {
-                let html = await res.text();
-                let $ = cheerio.load(html);
-                let bestMatch = null;
-                let maxScore = -1;
-
-                $("li.film").each((i, el) => {
-                    let link = $(el).find("a").first().attr("href") || "";
-                    let sTitle = $(el).find("span.film-title").text().trim();
-                    let sYear = $(el).find("span.film-yil").text().trim();
-                    let score = (sYear.includes(year) ? 60 : 0) + (sTitle.toLowerCase().includes(queryTitle.toLowerCase()) ? 40 : 0);
-                    if (score > maxScore) { maxScore = score; bestMatch = link; }
-                });
-
-                if (!bestMatch || maxScore < 50) {
-                    console.error("[NUVIO-ERROR] Film bulunamadı.");
-                    return resolve([]);
-                }
-
-                console.log(`[NUVIO-LOG] Sayfa: ${bestMatch}`);
-                let fRes = await fetch(bestMatch.startsWith('http') ? bestMatch : BASE_URL + (bestMatch.startsWith('/') ? '' : '/') + bestMatch, { headers: WORKING_HEADERS });
-                let fHtml = await fRes.text();
-                let fDoc = cheerio.load(fHtml);
-
-                let results = [];
-
-                // --- KRİTİK NOKTA: Python kodundaki gibi İLK script'i hedef alıyoruz ---
-                let firstScript = fDoc("script").first().html() || "";
-                console.log("[NUVIO-LOG] İlk script bloğu analiz ediliyor...");
-
-                // scx = { ... }; yapısını yakala
-                let scxMatch = firstScript.match(/scx\s*=\s*({.*?});/s);
-                
-                if (scxMatch) {
-                    try {
-                        let scxData = JSON.parse(scxMatch[1]);
-                        console.log(`[NUVIO-LOG] SCX Objesi yakalandı. Key sayısı: ${Object.keys(scxData).length}`);
-
-                        Object.keys(scxData).forEach(key => {
-                            let t = scxData[key]?.sx?.t;
-                            if (t) {
-                                // Eğer liste (Array) ise veya obje (Dict) ise içindekileri çöz
-                                let encList = Array.isArray(t) ? t : Object.values(t);
-                                encList.forEach(enc => {
-                                    let url = superDecode(enc);
-                                    if (url) {
-                                        results.push({ 
-                                            name: `FHD - ${key.toUpperCase()}`, 
-                                            url: url, 
-                                            quality: "Auto", 
-                                            headers: { 'User-Agent': WORKING_HEADERS['User-Agent'], 'Referer': 'https://turbo.imgz.me/' } 
-                                        });
-                                    }
-                                });
-                            }
-                        });
-                    } catch (e) {
-                        console.error("[NUVIO-ERROR] JSON Ayrıştırma hatası:", e.message);
-                    }
-                } else {
-                    console.error("[NUVIO-ERROR] İlk script içinde 'scx' bulunamadı, fallback (tüm sayfa taraması) deneniyor.");
-                    // Fallback: Tüm sayfa içinde "t":"..." taraması (Önceki kodun yaptığı)
-                    let tMatches = fHtml.match(/"t"\s*:\s*"([^"]+)"/g);
-                    if (tMatches) {
-                        tMatches.forEach(m => {
-                            let enc = m.match(/"t"\s*:\s*"([^"]+)"/)[1];
-                            let url = superDecode(enc);
-                            if (url && url.length > 20) results.push({ name: "FHD - ALT", url: url, quality: "Auto", headers: WORKING_HEADERS });
-                        });
-                    }
-                }
-
-                if (results.length === 0) console.error("[NUVIO-ERROR] Hiçbir sonuç üretilemedi.");
-                resolve(results);
-            })
-            .catch(err => {
-                console.error("[NUVIO-CRITICAL]", err.message);
-                resolve([]);
-            });
-    });
+// --- ESKİ NESİL DECODE (v28.6'dan gelen RapidVid) ---
+function decodeRapidVid(encodedData) {
+    try {
+        var reversed = encodedData.split('').reverse().join('');
+        var decodedBinary = Buffer.from(reversed.replace(/[^A-Za-z0-9+/=]/g, ""), 'base64').toString('binary');
+        var key = "K9L"; var adjusted = "";
+        for (var i = 0; i < decodedBinary.length; i++) {
+            var charCode = decodedBinary.charCodeAt(i);
+            var shift = (key.charCodeAt(i % key.length) % 5) + 1;
+            adjusted += String.fromCharCode(charCode - shift);
+        }
+        var finalUrl = Buffer.from(adjusted, 'base64').toString('utf8');
+        return (finalUrl && finalUrl.startsWith('http')) ? finalUrl.trim() : null;
+    } catch (e) { return null; }
 }
 
-if (typeof module !== 'undefined' && module.exports) { module.exports = { getStreams }; }
+async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
+    if (mediaType !== 'movie') return [];
+
+    try {
+        // 1. TMDB Bilgisi Al
+        let tmdbRes = await fetch(`https://api.themoviedb.org/3/movie/${tmdbId}?language=tr-TR&api_key=4ef0d7355d9ffb5151e987764708ce96`);
+        let tmdbData = await tmdbRes.json();
+        const year = tmdbData.release_date ? tmdbData.release_date.split('-')[0] : "";
+        const queryTitle = (tmdbData.title || tmdbData.original_title).split('(')[0].trim();
+
+        // 2. Sitede Ara
+        let searchRes = await fetch(`${BASE_URL}/arama/${encodeURIComponent(queryTitle)}`, { headers: WORKING_HEADERS });
+        let searchHtml = await searchRes.text();
+        let $ = cheerio.load(searchHtml);
+        
+        let filmLink = "";
+        $("li.film").each((i, el) => {
+            let link = $(el).find("a").attr("href");
+            let sYear = $(el).find("span.film-yil").text().trim();
+            if (sYear.includes(year)) { filmLink = link; return false; }
+        });
+
+        if (!filmLink) return [];
+
+        // 3. Film Sayfasını Çek
+        let fPage = await fetch(filmLink.startsWith('http') ? filmLink : BASE_URL + filmLink, { headers: WORKING_HEADERS });
+        let fHtml = await fPage.text();
+        let fDoc = cheerio.load(fHtml);
+        let results = [];
+
+        // --- YÖNTEM A: SCX (KekikStream) ---
+        let firstScript = fDoc("script").first().html() || "";
+        let scxMatch = firstScript.match(/scx\s*=\s*({.*?});/s);
+        
+        if (scxMatch) {
+            let scxData = JSON.parse(scxMatch[1]);
+            Object.keys(scxData).forEach(key => {
+                let t = scxData[key]?.sx?.t;
+                if (t) {
+                    let encList = Array.isArray(t) ? t : Object.values(t);
+                    encList.forEach(enc => {
+                        let url = superDecode(enc);
+                        if (url) results.push({ name: `FHD - ${key.toUpperCase()}`, url: url, quality: "Auto", headers: WORKING_HEADERS });
+                    });
+                }
+            });
+        }
+
+        // --- YÖNTEM B: ESKİ API (v28.6 Fallback) ---
+        // Eğer SCX'ten sonuç gelmediyse veya ek kaynak istiyorsak
+        let vidMatch = fHtml.match(/vidid\s*=\s*['"](\d+)['"]/);
+        if (vidMatch) {
+            const vidid = vidMatch[1];
+            // Atom Sorgusu
+            try {
+                let aRes = await fetch(`${API_BASE}?id=${vidid}&type=t&name=atom&get=video&format=json`, { headers: WORKING_HEADERS });
+                let aData = await aRes.json();
+                if (aData.html) {
+                    let pRes = await fetch(aData.html.replace(/\\/g, ''), { headers: WORKING_HEADERS });
+                    let pHtml = await pRes.text();
+                    let av = pHtml.match(/av\(['"]([^'"]+)['"]\)/);
+                    if (av) {
+                        let url = decodeRapidVid(av[1]);
+                        if (url) results.push({ name: "FHD - ATOM", url: url, quality: "Auto", headers: WORKING_HEADERS });
+                    }
+                }
+            } catch (e) {}
+
+            // Turbo Sorgusu
+            try {
+                let tRes = await fetch(`${API_BASE}?id=${vidid}&type=t&name=advid&get=video&pno=tr&format=json`, { headers: WORKING_HEADERS });
+                let tData = await tRes.json();
+                if (tData.html && tData.html.includes('/watch/')) {
+                    let wId = tData.html.match(/\/watch\/(.*?)"/)[1];
+                    let pRes = await fetch('https://turbo.imgz.me/play/' + wId + '?autoplay=true', { headers: WORKING_HEADERS });
+                    let pHtml = await pRes.text();
+                    let m3u8 = pHtml.match(/file:\s*"(.*?\.m3u8.*?)"/i);
+                    if (m3u8) results.push({ name: "FHD - TURBO", url: m3u8[1], quality: "Auto", headers: { ...WORKING_HEADERS, 'Referer': 'https://turbo.imgz.me/' } });
+                }
+            } catch (e) {}
+        }
+
+        return results;
+    } catch (err) {
+        console.error("[NUVIO-FATAL]", err.message);
+        return [];
+    }
+}
+
+module.exports = { getStreams };
