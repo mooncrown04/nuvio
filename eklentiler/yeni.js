@@ -1,5 +1,5 @@
 /**
- * FullHDFilmizlesene Nuvio Scraper - v28.8 (URL & Title Deep Analysis)
+ * FullHDFilmizlesene Nuvio Scraper - v28.9 (Advanced URL Deep Match)
  */
 
 var cheerio = require("cheerio-without-node-native");
@@ -42,6 +42,7 @@ function decodeRapidVid(encodedData) {
     } catch (e) { return null; }
 }
 
+// Türkçe karakterleri temizleyip URL formatına getiren yardımcı fonksiyon[cite: 1]
 function slugify(text) {
     const trMap = { 'ç':'c','ğ':'g','ş':'s','ü':'u','ı':'i','ö':'o' };
     return text.toLowerCase()
@@ -134,10 +135,10 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                     // 1. Yıl Kontrolü[cite: 1]
                     const isYearMatch = year !== "" && siteYear.includes(year);
                     
-                    // 2. İsim & URL Analizi[cite: 1]
-                    // Link içinde "olumcul-deney" geçiyor mu? VEYA Görünen isimde "Ölümcül Deney" geçiyor mu?
-                    const isLinkMatch = linkSlug.includes(qTitleSlug);
-                    const isNameMatch = siteTitleLower.includes(queryTitle.toLowerCase());
+                    // 2. Gelişmiş Eşleşme Analizi[cite: 1]
+                    // Link içindeki kelimeleri parçalayıp aranan kelimeyle karşılaştırır[cite: 1]
+                    const isLinkMatch = linkSlug.includes(qTitleSlug) || qTitleSlug.includes(linkSlug.split('/').pop());
+                    const isNameMatch = siteTitleLower.includes(queryTitle.toLowerCase()) || queryTitle.toLowerCase().includes(siteTitleLower);
 
                     if (link && isYearMatch && (isLinkMatch || isNameMatch)) {
                         console.error(`[NUVIO] EŞLEŞTİ: ${siteTitleText} [URL: ${link}]`);
