@@ -1,5 +1,5 @@
 /**
- * FullHDFilmizlesene Nuvio Scraper - v29.0 (Smart Scoring & Year Priority)
+ * FullHDFilmizlesene Nuvio Scraper - v33.0 (No-Log Debugging)
  */
 
 var cheerio = require("cheerio-without-node-native");
@@ -42,7 +42,7 @@ function decodeRapidVid(encodedData) {
     } catch (e) { return null; }
 }
 
-async function getStreamsFromAPI(vidid, movieTitle) {
+async function getStreamsFromAPI(vidid, movieTitle, debugMsg) {
     const fetchAtom = async () => {
         try {
             let res = await fetch(API_BASE + '?id=' + vidid + '&type=t&name=atom&get=video&format=json', { headers: WORKING_HEADERS });
@@ -55,7 +55,7 @@ async function getStreamsFromAPI(vidid, movieTitle) {
                     let url = decodeRapidVid(avMatch[1]);
                     if (url) return { 
                         name: movieTitle, 
-                        title: "⌜ FULLHDFILM ⌟ | Atom | 🇹🇷 Dublaj", 
+                        title: `⌜ FULLHDFILM ⌟ | Atom | ${debugMsg}`, 
                         url: url, 
                         quality: "Auto", 
                         headers: WORKING_HEADERS, 
@@ -78,7 +78,7 @@ async function getStreamsFromAPI(vidid, movieTitle) {
                 let m3u8 = playHtml.match(/file:\s*"(.*?\.m3u8.*?)"/i);
                 if (m3u8) return { 
                     name: movieTitle, 
-                    title: "⌜ FULLHDFILM ⌟ | Turbo | 🇹🇷 Dublaj", 
+                    title: `⌜ FULLHDFILM ⌟ | Turbo | ${debugMsg}`, 
                     url: m3u8[1], 
                     quality: "Auto", 
                     headers: Object.assign({}, WORKING_HEADERS, { 'Referer': 'https://turbo.imgz.me/' }), 
@@ -106,12 +106,7 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                 const query = movieTitleTr || movieTitleEn;
                 const searchUrl = BASE_URL + '/arama/' + encodeURIComponent(query);
                 
-                return Promise.all([
-                    fetch(searchUrl, { headers: WORKING_HEADERS }), 
-                    year, 
-                    movieTitleTr, 
-                    movieTitleEn
-                ]);
+                return Promise.all([fetch(searchUrl, { headers: WORKING_HEADERS }), year, movieTitleTr, movieTitleEn]);
             })
             .then(async ([res, year, movieTitleTr, movieTitleEn]) => {
                 let searchHtml = await res.text();
@@ -125,39 +120,37 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
 
                     if (!link) return;
 
-                    // 1. Yıl Puanlaması (Ağırlık: 50)[cite: 1]
-                    if (year && itemText.includes(year)) {
-                        score += 50;
-                    }
+                    // Yıl ve isim kontrolü
+                    if (year && itemText.includes(year)) score += 150;
+                    if (movieTitleTr && itemText.includes(movieTitleTr.toLowerCase())) score += 50;
+                    if (movieTitleEn && itemText.includes(movieTitleEn.toLowerCase())) score += 50;
 
-                    // 2. İsim Puanlaması (Türkçe ve İngilizce - Ağırlık: 30'ar)[cite: 1]
-                    let cleanTitleTr = movieTitleTr.toLowerCase();
-                    let cleanTitleEn = movieTitleEn.toLowerCase();
-
-                    if (itemText.includes(cleanTitleTr)) score += 30;
-                    if (itemText.includes(cleanTitleEn)) score += 30;
-
-                    candidates.push({ link, score });
+                    candidates.push({ link, score, title: itemText });
                 });
 
-                // Sonuçları puana göre sırala ve en iyisini seç[cite: 1]
                 candidates.sort((a, b) => b.score - a.score);
                 
-                let filmLink = candidates.length > 0 ? candidates[0].link : "";
+                let best = candidates[0];
+                if (!best || best.score < 50) {
+                   // Hiç uygun eşleşme yoksa hatayı title olarak döndür
+                   return resolve([{ name: movieTitleTr, title: "HATA: Uygun film bulunamadı", url: "", provider: "error" }]);
+                }
 
-                if (!filmLink) filmLink = $(".film-listesi a").first().attr("href") || $("a[href*='/film/']").first().attr("href");
-                if (!filmLink) throw new Error("Film bulunamadı");
+                // Debug bilgisini title'a ekle[cite: 1]
+                let debugLabel = `Puan:${best.score} | Yıl:${year}`;
                 
-                let filmRes = await fetch(filmLink.startsWith('http') ? filmLink : BASE_URL + filmLink, { headers: WORKING_HEADERS });
+                let filmRes = await fetch(best.link.startsWith('http') ? best.link : BASE_URL + best.link, { headers: WORKING_HEADERS });
                 let filmHtml = await filmRes.text();
                 
                 let vidMatch = filmHtml.match(/vidid\s*=\s*['"](\d+)['"]/);
-                if (vidMatch) return getStreamsFromAPI(vidMatch[1], movieTitleTr || movieTitleEn);
+                if (vidMatch) return getStreamsFromAPI(vidMatch[1], movieTitleTr || movieTitleEn, debugLabel);
                 
-                return [];
+                return resolve([{ name: movieTitleTr, title: "HATA: Sayfada Video ID Yok", url: "", provider: "error" }]);
             })
             .then(streams => resolve(streams))
-            .catch(err => { resolve([]); });
+            .catch(err => { 
+                resolve([{ name: "Sistem Hatası", title: err.message, url: "", provider: "error" }]); 
+            });
     });
 }
 
