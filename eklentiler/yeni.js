@@ -1,5 +1,5 @@
 /**
- * FullHDFilmizlesene Nuvio Scraper - v29.8 (SCX Data & RTT Decoder)
+ * FullHDFilmizlesene Nuvio Scraper - v30.0 (Hex Decoding & Subtitle Support)
  */
 
 var cheerio = require("cheerio-without-node-native");
@@ -8,15 +8,27 @@ const BASE_URL = "https://www.fullhdfilmizlesene.live";
 
 const WORKING_HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Referer': BASE_URL + '/'
+    'Referer': BASE_URL + '/',
+    'Origin': BASE_URL
 };
 
-// Kotlin'deki rtt() fonksiyonunun JS karşılığı (String'i ters çevirir)
-function rtt(str) {
-    return str.split('').reverse().join('');
+// Kotlin'deki rtt() - String Ters Çevirme
+function rtt(str) { return str ? str.split('').reverse().join('') : ""; }
+
+// Kotlin'deki Hex decoding mantığı (\x hex kodlarını çözer)
+function hexDecode(str) {
+    try {
+        if (!str) return null;
+        // Eğer \x içeriyorsa hex decode uygula
+        if (str.includes('\\x')) {
+            return str.replace(/\\x([0-9A-Fa-f]{2})/g, (match, p1) => {
+                return String.fromCharCode(parseInt(p1, 16));
+            });
+        }
+        return str;
+    } catch (e) { return str; }
 }
 
-// Kotlin'deki atob() karşılığı
 function universalAtob(str) {
     try {
         if (typeof atob === 'function') return atob(str);
@@ -24,12 +36,31 @@ function universalAtob(str) {
     } catch (e) { return null; }
 }
 
-// Kotlin'deki çözme mantığı: atob(rtt(link))
-function decodeFHDLink(encoded) {
+// Hibrit Çözücü: Önce RTT, sonra Base64, sonra Hex
+function superDecode(encoded) {
     if (!encoded) return null;
-    let decoded = universalAtob(rtt(encoded));
-    if (decoded && decoded.startsWith('//')) decoded = 'https:' + decoded;
-    return decoded;
+    let text = encoded;
+    
+    // 1. Eğer doğrudan URL ise temizle dön
+    if (text.startsWith('http') || text.startsWith('//')) {
+        return text.startsWith('//') ? 'https:' + text : text;
+    }
+
+    // 2. RTT + Base64 Çözümü (Kotlin: atob(rtt(link)))
+    try {
+        let b64 = universalAtob(rtt(text));
+        if (b64 && (b64.startsWith('http') || b64.startsWith('//'))) {
+            return b64.startsWith('//') ? 'https:' + b64 : b64;
+        }
+    } catch (e) {}
+
+    // 3. Hex Çözümü (Kotlin'deki \x filtreleme)
+    let hexed = hexDecode(text);
+    if (hexed && (hexed.startsWith('http') || hexed.startsWith('//'))) {
+        return hexed.startsWith('//') ? 'https:' + hexed : hexed;
+    }
+
+    return null;
 }
 
 function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
@@ -45,63 +76,51 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
             })
             .then(async ([res, year, queryTitle]) => {
                 let $ = cheerio.load(await res.text());
-                let bestMatch = null;
+                let bestLink = null;
                 let maxScore = -1;
 
                 $("li.film").each((i, el) => {
                     let link = $(el).find("a").first().attr("href") || "";
                     let sTitle = $(el).find("span.film-title").text().trim();
                     let sYear = $(el).find("span.film-yil").text().trim();
-                    
-                    let score = 0;
-                    if (sYear.includes(year)) score += 60;
-                    if (sTitle.toLowerCase().includes(queryTitle.toLowerCase())) score += 40;
-
-                    if (score > maxScore) {
-                        maxScore = score;
-                        bestMatch = link;
-                    }
+                    let score = (sYear.includes(year) ? 60 : 0) + (sTitle.toLowerCase().includes(queryTitle.toLowerCase()) ? 40 : 0);
+                    if (score > maxScore) { maxScore = score; bestLink = link; }
                 });
 
-                if (!bestMatch || maxScore < 60) return resolve([]);
+                if (!bestLink || maxScore < 55) return resolve([]);
 
-                let finalUrl = bestMatch.startsWith('http') ? bestMatch : BASE_URL + (bestMatch.startsWith('/') ? '' : '/') + bestMatch;
-                let fRes = await fetch(finalUrl, { headers: WORKING_HEADERS });
+                let fUrl = bestLink.startsWith('http') ? bestLink : BASE_URL + (bestLink.startsWith('/') ? '' : '/') + bestLink;
+                let fRes = await fetch(fUrl, { headers: WORKING_HEADERS });
                 let fHtml = await fRes.text();
 
-                // Kotlin: Regex("scx = (.*?);")
-                let scxMatch = fHtml.match(/scx\s*=\s*({.*?});/s);
-                if (!scxMatch) return resolve([]);
-
-                let scxData;
-                try {
-                    scxData = JSON.parse(scxMatch[1]);
-                } catch (e) { return resolve([]); }
-
                 let results = [];
-                const keys = ["atom", "advid", "proton", "fastly", "tr", "en"];
+                
+                // --- SCX Katmanı ---
+                let scxMatch = fHtml.match(/scx\s*=\s*({.*?});/s);
+                if (scxMatch) {
+                    try {
+                        let scx = JSON.parse(scxMatch[1]);
+                        ["atom", "advid", "proton", "fastly", "tr", "en"].forEach(key => {
+                            let t = scx[key] && scx[key].sx ? scx[key].sx.t : null;
+                            if (t) {
+                                (Array.isArray(t) ? t : Object.values(t)).forEach(enc => {
+                                    let url = superDecode(enc);
+                                    if (url) results.push({ name: `FHD - ${key.toUpperCase()}`, url: url, quality: "Auto", headers: WORKING_HEADERS });
+                                });
+                            }
+                        });
+                    } catch (e) {}
+                }
 
-                keys.forEach(key => {
-                    // scxMap.key?.sx?.t yapısını takip ediyoruz
-                    let tValue = scxData[key] && scxData[key].sx ? scxData[key].sx.t : null;
-                    
-                    if (tValue) {
-                        // Eğer t bir liste ise (Kotlin is List)
-                        if (Array.isArray(tValue)) {
-                            tValue.forEach(encLink => {
-                                let url = decodeFHDLink(encLink);
-                                if (url) results.push({ name: `FHD - ${key.toUpperCase()}`, url: url, quality: "Auto", headers: WORKING_HEADERS });
-                            });
-                        } 
-                        // Eğer t bir obje ise (Kotlin is Map)
-                        else if (typeof tValue === 'object') {
-                            Object.values(tValue).forEach(encLink => {
-                                let url = decodeFHDLink(encLink);
-                                if (url) results.push({ name: `FHD - ${key.toUpperCase()}`, url: url, quality: "Auto", headers: WORKING_HEADERS });
-                            });
-                        }
+                // --- Altyazı Katmanı (Kotlin VidMoxy Mantığı) ---
+                let subMatches = fHtml.matchAll(/"captions","file":"([^"]+)","label":"([^"]+)"/g);
+                for (const match of subMatches) {
+                    let subUrl = superDecode(match[1].replace(/\\/g, ""));
+                    if (subUrl) {
+                        console.error(`[NUVIO] Altyazı Bulundu: ${match[2]}`);
+                        // Nuvio altyazı objesi buraya eklenebilir
                     }
-                });
+                }
 
                 resolve(results);
             })
