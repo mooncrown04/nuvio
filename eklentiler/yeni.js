@@ -1,5 +1,6 @@
 /**
- * FullHDFilmizlesene Nuvio Scraper - IMDb ID (ttID) Uyumlu v28 Modifikasyonu
+ * FullHDFilmizlesene Nuvio Scraper - v37.0 (ID Match Update)
+ * İsim çakışmalarını (Immortals vb.) önlemek için ttID ile nokta atışı yapar.
  */
 
 var cheerio = require("cheerio-without-node-native");
@@ -8,13 +9,13 @@ const BASE_URL = "https://www.fullhdfilmizlesene.live";
 const API_BASE = "https://www.fullhdfilmizlesene.live/player/api.php";
 
 const WORKING_HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
     'Referer': BASE_URL + '/',
     'Origin': BASE_URL
 };
 
-// --- UniversalAtob ve DecodeRapidVid Fonksiyonları (Dokunulmadı) ---
+// --- YARDIMCI FONKSİYONLAR (v28 ile aynı) ---
 function universalAtob(str) {
     try {
         if (typeof atob === 'function') return atob(str);
@@ -43,7 +44,7 @@ function decodeRapidVid(encodedData) {
     } catch (e) { return null; }
 }
 
-// --- Kaynak Çekme Mantığı (v28 ile aynı, sadece isimlendirme güncellendi) ---
+// --- KAYNAK ÇEKİCİ (v28 yapısı korunmuştur) ---
 async function getStreamsFromAPI(vidid, movieTitle) {
     const fetchAtom = async () => {
         try {
@@ -56,17 +57,16 @@ async function getStreamsFromAPI(vidid, movieTitle) {
                 if (avMatch) {
                     let url = decodeRapidVid(avMatch[1]);
                     if (url) return { 
-                        name: movieTitle, 
-                        title: "⌜ FULLHDFILM ⌟ | Atom | 🇹🇷 Dublaj", 
+                        name: "Atom", 
+                        title: movieTitle + " | 🇹🇷 Dublaj", 
                         url: url, 
                         quality: "Auto", 
                         headers: WORKING_HEADERS, 
-                        provider: "fullhd_scraper" 
+                        provider: "FullHD" 
                     };
                 }
             }
-        } catch (e) { console.error("[DEBUG] Atom Hatası: " + e.message); }
-        return null;
+        } catch (e) { } return null;
     };
 
     const fetchTurbo = async () => {
@@ -79,77 +79,67 @@ async function getStreamsFromAPI(vidid, movieTitle) {
                 let playHtml = await playRes.text();
                 let m3u8 = playHtml.match(/file:\s*"(.*?\.m3u8.*?)"/i);
                 if (m3u8) return { 
-                    name: movieTitle, 
-                        title: "⌜ FULLHDFILM ⌟ | Turbo | 🇹🇷 Dublaj", 
+                    name: "Turbo", 
+                    title: movieTitle + " | 🇹🇷 Dublaj", 
                     url: m3u8[1], 
                     quality: "Auto", 
                     headers: Object.assign({}, WORKING_HEADERS, { 'Referer': 'https://turbo.imgz.me/' }), 
-                    provider: "fullhd_scraper" 
+                    provider: "FullHD" 
                 };
             }
-        } catch (e) { console.error("[DEBUG] Turbo Hatası: " + e.message); }
-        return null;
+        } catch (e) { } return null;
     };
 
     let results = await Promise.all([fetchAtom(), fetchTurbo()]);
     return results.filter(r => r !== null);
 }
 
-// --- Arama ve Eşleşme Mantığı ---
+// --- ANA AKIŞ (Hatalı filmi bulmayı engelleyen kısım) ---
 function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
     return new Promise(function(resolve) {
         if (mediaType !== 'movie') return resolve([]);
 
-        // TMDB'den external_ids ile IMDb ID'yi (ttID) çekiyoruz
-        fetch('https://api.themoviedb.org/3/movie/' + tmdbId + '?api_key=4ef0d7355d9ffb5151e987764708ce96&append_to_response=external_ids&language=tr-TR')
+        // Önce TMDB'den kesin IMDb ID'yi (ttID) çekiyoruz
+        fetch(`https://api.themoviedb.org/3/movie/${tmdbId}?api_key=4ef0d7355d9ffb5151e987764708ce96&append_to_response=external_ids&language=tr-TR`)
             .then(res => res.json())
             .then(async (data) => {
-                const movieTitle = data.title || data.original_title;
                 const ttId = data.external_ids ? data.external_ids.imdb_id : null;
+                const movieTitle = data.title || data.original_title;
                 
-                // Arama sorgusu önceliği: ttID (yoksa film ismi)
-                const query = ttId ? ttId : movieTitle;
-                const searchUrl = BASE_URL + '/arama/' + encodeURIComponent(query);
-                
-                console.error(`[BASLADI] Film: ${movieTitle} | ID: ${query}`);
-                console.error(`[SITE-ARAMA] URL: ${searchUrl}`);
+                // Eğer ttID varsa siteye direkt ttID ile arama gönder (Karışıklığı önler)
+                let query = ttId ? ttId : movieTitle;
+                console.error("[DEBUG] Aranıyor: " + query);
 
-                let res = await fetch(searchUrl, { headers: WORKING_HEADERS });
-                let searchHtml = await res.text();
+                let searchRes = await fetch(BASE_URL + '/arama/' + encodeURIComponent(query), { headers: WORKING_HEADERS });
+                let searchHtml = await searchRes.text();
                 let $ = cheerio.load(searchHtml);
-                
                 let filmLink = "";
-                // Sitenin arama sonuç listesini tara
+
+                // Arama sonuçlarında linkleri tara
                 $(".film-listesi li").each((i, el) => {
                     let link = $(el).find("a").attr("href");
                     if (link) {
-                        filmLink = link;
-                        return false; // ttID araması nokta atışı olduğu için ilk sonucu alıyoruz
+                        filmLink = link; 
+                        return false; // ttID araması yaptıysak gelen ilk sonuç ZATEN o filmdir
                     }
                 });
 
-                if (!filmLink) {
-                   console.error("[KRITIK-HATA] Sitede hicbir sonuc bulunamadi.");
-                   throw new Error("Film bulunamadı");
-                }
+                if (!filmLink) throw new Error("Film bulunamadı");
 
-                console.error(`[BULUNDU] Sayfa: ${filmLink}`);
-                
-                let filmRes = await fetch(filmLink.startsWith('http') ? filmLink : BASE_URL + filmLink, { headers: WORKING_HEADERS });
-                let filmHtml = await filmRes.text();
-                
+                // Video sayfasına git
+                let filmPageRes = await fetch(filmLink.startsWith('http') ? filmLink : BASE_URL + filmLink, { headers: WORKING_HEADERS });
+                let filmHtml = await filmPageRes.text();
                 let vidMatch = filmHtml.match(/vidid\s*=\s*['"](\d+)['"]/);
+
                 if (vidMatch) {
-                    console.error(`[VIDEO-ID] ID: ${vidMatch[1]}`);
                     return getStreamsFromAPI(vidMatch[1], movieTitle);
                 }
-                
                 return [];
             })
             .then(streams => resolve(streams))
-            .catch(err => { 
+            .catch(err => {
                 console.error("[HATA] " + err.message);
-                resolve([]); 
+                resolve([]);
             });
     });
 }
