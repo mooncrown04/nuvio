@@ -1,5 +1,5 @@
 /**
- * FullHDFilmizlesene Nuvio Scraper - v28.9 (Advanced URL Deep Match)
+ * FullHDFilmizlesene Nuvio Scraper - v29.0 (Keyword Focused & Year Priority)
  */
 
 var cheerio = require("cheerio-without-node-native");
@@ -42,7 +42,6 @@ function decodeRapidVid(encodedData) {
     } catch (e) { return null; }
 }
 
-// Türkçe karakterleri temizleyip URL formatına getiren yardımcı fonksiyon[cite: 1]
 function slugify(text) {
     const trMap = { 'ç':'c','ğ':'g','ş':'s','ü':'u','ı':'i','ö':'o' };
     return text.toLowerCase()
@@ -135,12 +134,11 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                     // 1. Yıl Kontrolü[cite: 1]
                     const isYearMatch = year !== "" && siteYear.includes(year);
                     
-                    // 2. Gelişmiş Eşleşme Analizi[cite: 1]
-                    // Link içindeki kelimeleri parçalayıp aranan kelimeyle karşılaştırır[cite: 1]
-                    const isLinkMatch = linkSlug.includes(qTitleSlug) || qTitleSlug.includes(linkSlug.split('/').pop());
-                    const isNameMatch = siteTitleLower.includes(queryTitle.toLowerCase()) || queryTitle.toLowerCase().includes(siteTitleLower);
+                    // 2. Anahtar Kelime Kontrolü (Ajan Zeta -> Zeta eşleşmesi için)[cite: 1]
+                    const qWords = qTitleSlug.split('-').filter(w => w.length > 2);
+                    const isKeywordMatch = qWords.some(word => linkSlug.includes(word) || siteTitleLower.includes(word));
 
-                    if (link && isYearMatch && (isLinkMatch || isNameMatch)) {
+                    if (link && isYearMatch && isKeywordMatch) {
                         console.error(`[NUVIO] EŞLEŞTİ: ${siteTitleText} [URL: ${link}]`);
                         filmLink = link;
                         foundTitle = siteTitleText;
