@@ -14,7 +14,84 @@ const WORKING_HEADERS = {
     'Origin': BASE_URL
 };
 
-// ... (universalAtob, decodeRapidVid ve getStreamsFromAPI fonksiyonlarını buraya aynen ekle, değişiklik yok)
+function universalAtob(str) {
+    try {
+        if (typeof atob === 'function') return atob(str);
+        var chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=';
+        var out = ''; str = String(str).replace(/[=]+$/, '');
+        for (var bc = 0, bs, buffer, idx = 0; buffer = str.charAt(idx++); ~buffer && (bs = bc % 4 ? bs * 64 + buffer : buffer, bc++ % 4) ? out += String.fromCharCode(255 & bs >> (-2 * bc & 6)) : 0) {
+            buffer = chars.indexOf(buffer);
+        }
+        return out;
+    } catch (e) { return null; }
+}
+
+function decodeRapidVid(encodedData) {
+    try {
+        if (!encodedData) return null;
+        var reversed = encodedData.split('').reverse().join('');
+        var decodedBinary = universalAtob(reversed.replace(/[^A-Za-z0-9+/=]/g, ""));
+        var key = "K9L"; var adjusted = "";
+        for (var i = 0; i < decodedBinary.length; i++) {
+            var charCode = decodedBinary.charCodeAt(i);
+            var shift = (key.charCodeAt(i % key.length) % 5) + 1;
+            adjusted += String.fromCharCode(charCode - shift);
+        }
+        var finalUrl = universalAtob(adjusted);
+        return (finalUrl && finalUrl.startsWith('http')) ? finalUrl.replace(/\\/g, "").trim() : null;
+    } catch (e) { return null; }
+}
+
+async function getStreamsFromAPI(vidid, movieTitle) {
+    const fetchAtom = async () => {
+        try {
+            let res = await fetch(API_BASE + '?id=' + vidid + '&type=t&name=atom&get=video&format=json', { headers: WORKING_HEADERS });
+            let data = await res.json();
+            if (data && data.html) {
+                let playerRes = await fetch(data.html.replace(/\\/g, ''), { headers: WORKING_HEADERS });
+                let playerHtml = await playerRes.text();
+                let avMatch = playerHtml.match(/av\(['"]([^'"]+)['"]\)/);
+                if (avMatch) {
+                    let url = decodeRapidVid(avMatch[1]);
+                    if (url) return { 
+                        name: movieTitle, 
+                        title: "⌜ FULLHDFILM ⌟ | Atom | 🇹🇷 Dublaj", 
+                        url: url, 
+                        quality: "Auto", 
+                        headers: WORKING_HEADERS, 
+                        provider: "fullhd_scraper" 
+                    };
+                }
+            }
+        } catch (e) { }
+        return null;
+    };
+
+    const fetchTurbo = async () => {
+        try {
+            let res = await fetch(API_BASE + '?id=' + vidid + '&type=t&name=advid&get=video&pno=tr&format=json', { headers: WORKING_HEADERS });
+            let data = await res.json();
+            if (data && data.html && data.html.includes('/watch/')) {
+                let watchId = data.html.match(/\/watch\/(.*?)"/)[1];
+                let playRes = await fetch('https://turbo.imgz.me/play/' + watchId + '?autoplay=true', { headers: Object.assign({}, WORKING_HEADERS, { 'Referer': BASE_URL }) });
+                let playHtml = await playRes.text();
+                let m3u8 = playHtml.match(/file:\s*"(.*?\.m3u8.*?)"/i);
+                if (m3u8) return { 
+                    name: movieTitle, 
+                    title: "⌜ FULLHDFILM ⌟ | Turbo | 🇹🇷 Dublaj", 
+                    url: m3u8[1], 
+                    quality: "Auto", 
+                    headers: Object.assign({}, WORKING_HEADERS, { 'Referer': 'https://turbo.imgz.me/' }), 
+                    provider: "fullhd_scraper" 
+                };
+            }
+        } catch (e) { }
+        return null;
+    };
+
+    let results = await Promise.all([fetchAtom(), fetchTurbo()]);
+    return results.filter(r => r !== null);
+}
 
 function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
     return new Promise(function(resolve) {
@@ -48,12 +125,12 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
 
                     if (!link) return;
 
-                    // 1. Yıl Puanlaması (En yüksek ağırlık)
+                    // 1. Yıl Puanlaması (Ağırlık: 50)[cite: 1]
                     if (year && itemText.includes(year)) {
                         score += 50;
                     }
 
-                    // 2. İsim Puanlaması (Türkçe ve İngilizce)
+                    // 2. İsim Puanlaması (Türkçe ve İngilizce - Ağırlık: 30'ar)[cite: 1]
                     let cleanTitleTr = movieTitleTr.toLowerCase();
                     let cleanTitleEn = movieTitleEn.toLowerCase();
 
@@ -63,7 +140,7 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                     candidates.push({ link, score });
                 });
 
-                // Puanı en yüksek olanı en başa getir
+                // Sonuçları puana göre sırala ve en iyisini seç[cite: 1]
                 candidates.sort((a, b) => b.score - a.score);
                 
                 let filmLink = candidates.length > 0 ? candidates[0].link : "";
@@ -82,4 +159,10 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
             .then(streams => resolve(streams))
             .catch(err => { resolve([]); });
     });
+}
+
+if (typeof module !== 'undefined' && module.exports) { 
+    module.exports = { getStreams: getStreams }; 
+} else { 
+    globalThis.getStreams = getStreams; 
 }
