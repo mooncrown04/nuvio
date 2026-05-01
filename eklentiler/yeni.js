@@ -1,5 +1,5 @@
 /**
- * FullHDFilmizlesene Nuvio Scraper - v28.6 (Smart Match & Quality Check)
+ * FullHDFilmizlesene Nuvio Scraper - v28.7 (Flexible Match with Year Priority)
  */
 
 var cheerio = require("cheerio-without-node-native");
@@ -101,7 +101,6 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
             .then(res => res.json())
             .then(data => {
                 const year = data.release_date ? data.release_date.split('-')[0] : "";
-                // Film ismini temizle (parantez içi yılları kaldır)[cite: 1]
                 const queryTitle = (data.title || data.original_title).split('(')[0].trim();
                 console.error(`[NUVIO] Aranan: ${queryTitle} (${year})`);
 
@@ -121,23 +120,22 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                     let siteYear = $(el).find("span.film-yil").text().trim();
                     let qTitleLower = queryTitle.toLowerCase();
                     
-                    // 1. Yıl Kontrolü[cite: 1]
-                    const isYearMatch = year === "" || siteYear.includes(year);
+                    // 1. Yıl Eşleşmesi (En Önemli Kriter)[cite: 1]
+                    const isYearMatch = year !== "" && siteYear.includes(year);
                     
-                    // 2. Akıllı Kelime Eşleşmesi[cite: 1]
+                    // 2. İsim Eşleşme Kontrolü
                     const qWords = qTitleLower.split(/\s+/).filter(w => w.length > 2);
                     const matchCount = qWords.filter(word => siteTitleLower.includes(word)).length;
-                    
-                    // Kelimelerin en az %70'i başlıkta geçmeli (Hatalı "Lanet" eşleşmesini önler)[cite: 1]
-                    const isNameMatch = siteTitleLower === qTitleLower || (qWords.length > 0 && (matchCount / qWords.length) >= 0.7);
+                    const wordMatchRatio = qWords.length > 0 ? (matchCount / qWords.length) : 0;
 
-                    if (link && isYearMatch && isNameMatch) {
+                    // Mantık: Yıl tutuyorsa ve (isim tam tutuyor VEYA kelimelerin yarısı tutuyorsa) kabul et[cite: 1]
+                    if (link && isYearMatch && (siteTitleLower === qTitleLower || wordMatchRatio >= 0.5)) {
                         console.error(`[NUVIO] DOĞRU EŞLEŞME: ${siteTitleText} [${siteYear}]`);
                         filmLink = link;
                         foundTitle = siteTitleText;
                         return false; 
                     } else if (link && isYearMatch) {
-                        console.error(`[NUVIO] ATLANDI (İsim uyumsuz): ${siteTitleText}`);
+                        console.error(`[NUVIO] ATLANDI (Yıl tutuyor ama isim çok farklı): ${siteTitleText}`);
                     }
                 });
 
