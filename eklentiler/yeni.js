@@ -1,6 +1,5 @@
 /**
- * FullHDFilmizlesene Nuvio Scraper - v35.0 (TAM SÜRÜM)
- * İsimle arama öncelikli, Dublaj kontrollü ve tam log desteği.
+ * FullHDFilmizlesene Nuvio Scraper - IMDb ID (ttID) Uyumlu v28 Modifikasyonu
  */
 
 var cheerio = require("cheerio-without-node-native");
@@ -15,7 +14,7 @@ const WORKING_HEADERS = {
     'Origin': BASE_URL
 };
 
-// --- YARDIMCI FONKSİYONLAR ---
+// --- UniversalAtob ve DecodeRapidVid Fonksiyonları (Dokunulmadı) ---
 function universalAtob(str) {
     try {
         if (typeof atob === 'function') return atob(str);
@@ -44,10 +43,8 @@ function decodeRapidVid(encodedData) {
     } catch (e) { return null; }
 }
 
-// --- API KAYNAK ÇÖZÜCÜ ---
+// --- Kaynak Çekme Mantığı (v28 ile aynı, sadece isimlendirme güncellendi) ---
 async function getStreamsFromAPI(vidid, movieTitle) {
-    console.error(`[API-ISTEK] Kaynaklar cekiliyor ID: ${vidid}`);
-    
     const fetchAtom = async () => {
         try {
             let res = await fetch(API_BASE + '?id=' + vidid + '&type=t&name=atom&get=video&format=json', { headers: WORKING_HEADERS });
@@ -58,10 +55,17 @@ async function getStreamsFromAPI(vidid, movieTitle) {
                 let avMatch = playerHtml.match(/av\(['"]([^'"]+)['"]\)/);
                 if (avMatch) {
                     let url = decodeRapidVid(avMatch[1]);
-                    if (url) return { name: "Atom", title: `${movieTitle} (TR Dublaj)`, url: url, quality: "Auto", headers: WORKING_HEADERS, provider: "FullHD" };
+                    if (url) return { 
+                        name: movieTitle, 
+                        title: "⌜ FULLHDFILM ⌟ | Atom | 🇹🇷 Dublaj", 
+                        url: url, 
+                        quality: "Auto", 
+                        headers: WORKING_HEADERS, 
+                        provider: "fullhd_scraper" 
+                    };
                 }
             }
-        } catch (e) { console.error("[PLAYER-HATA] Atom: " + e.message); }
+        } catch (e) { console.error("[DEBUG] Atom Hatası: " + e.message); }
         return null;
     };
 
@@ -74,9 +78,16 @@ async function getStreamsFromAPI(vidid, movieTitle) {
                 let playRes = await fetch('https://turbo.imgz.me/play/' + watchId + '?autoplay=true', { headers: Object.assign({}, WORKING_HEADERS, { 'Referer': BASE_URL }) });
                 let playHtml = await playRes.text();
                 let m3u8 = playHtml.match(/file:\s*"(.*?\.m3u8.*?)"/i);
-                if (m3u8) return { name: "Turbo", title: `${movieTitle} (TR Dublaj)`, url: m3u8[1], quality: "Auto", headers: Object.assign({}, WORKING_HEADERS, { 'Referer': 'https://turbo.imgz.me/' }), provider: "FullHD" };
+                if (m3u8) return { 
+                    name: movieTitle, 
+                        title: "⌜ FULLHDFILM ⌟ | Turbo | 🇹🇷 Dublaj", 
+                    url: m3u8[1], 
+                    quality: "Auto", 
+                    headers: Object.assign({}, WORKING_HEADERS, { 'Referer': 'https://turbo.imgz.me/' }), 
+                    provider: "fullhd_scraper" 
+                };
             }
-        } catch (e) { console.error("[PLAYER-HATA] Turbo: " + e.message); }
+        } catch (e) { console.error("[DEBUG] Turbo Hatası: " + e.message); }
         return null;
     };
 
@@ -84,73 +95,64 @@ async function getStreamsFromAPI(vidid, movieTitle) {
     return results.filter(r => r !== null);
 }
 
-// --- ANA AKIŞ ---
+// --- Arama ve Eşleşme Mantığı ---
 function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
     return new Promise(function(resolve) {
         if (mediaType !== 'movie') return resolve([]);
 
-        // 1. TMDB'den Bilgileri Al
-        fetch(`https://api.themoviedb.org/3/movie/${tmdbId}?api_key=4ef0d7355d9ffb5151e987764708ce96&append_to_response=external_ids&language=tr-TR`)
+        // TMDB'den external_ids ile IMDb ID'yi (ttID) çekiyoruz
+        fetch('https://api.themoviedb.org/3/movie/' + tmdbId + '?api_key=4ef0d7355d9ffb5151e987764708ce96&append_to_response=external_ids&language=tr-TR')
             .then(res => res.json())
             .then(async (data) => {
                 const movieTitle = data.title || data.original_title;
-                const year = data.release_date ? data.release_date.split('-')[0] : "";
-                const ttId = data.external_ids ? data.external_ids.imdb_id : "";
-
-                console.error(`[BASLADI] Film: ${movieTitle} | Yil: ${year} | ID: ${ttId}`);
-
-                // 2. İsimle Arama Yap
-                const searchUrl = `${BASE_URL}/arama/${encodeURIComponent(movieTitle.replace(/\s+/g, '+'))}`;
+                const ttId = data.external_ids ? data.external_ids.imdb_id : null;
+                
+                // Arama sorgusu önceliği: ttID (yoksa film ismi)
+                const query = ttId ? ttId : movieTitle;
+                const searchUrl = BASE_URL + '/arama/' + encodeURIComponent(query);
+                
+                console.error(`[BASLADI] Film: ${movieTitle} | ID: ${query}`);
                 console.error(`[SITE-ARAMA] URL: ${searchUrl}`);
 
-                let searchRes = await fetch(searchUrl, { headers: WORKING_HEADERS });
-                let searchHtml = await searchRes.text();
+                let res = await fetch(searchUrl, { headers: WORKING_HEADERS });
+                let searchHtml = await res.text();
                 let $ = cheerio.load(searchHtml);
-                let results = [];
-
-                $(".film-listesi li, .filmler-listesi li").each((i, el) => {
+                
+                let filmLink = "";
+                // Sitenin arama sonuç listesini tara
+                $(".film-listesi li").each((i, el) => {
                     let link = $(el).find("a").attr("href");
-                    let text = $(el).text().toLowerCase();
                     if (link) {
-                        results.push({ 
-                            link: link, 
-                            isDublaj: text.includes("dublaj") || text.includes("türkçe"), 
-                            fullText: text 
-                        });
+                        filmLink = link;
+                        return false; // ttID araması nokta atışı olduğu için ilk sonucu alıyoruz
                     }
                 });
 
-                console.error(`[ARAMA-SONUC] Bulunan öğe sayısı: ${results.length}`);
+                if (!filmLink) {
+                   console.error("[KRITIK-HATA] Sitede hicbir sonuc bulunamadi.");
+                   throw new Error("Film bulunamadı");
+                }
 
-                // 3. Dublaj ve Yıl Filtrelemesi
-                let selected = results.find(r => r.fullText.includes(year) && r.isDublaj) || 
-                               results.find(r => r.fullText.includes(year)) || 
-                               results[0];
-
-                if (!selected) throw new Error("Sitede hicbir sonuc bulunamadi.");
-
-                console.error(`[SECIM] Link: ${selected.link} | Dublaj: ${selected.isDublaj}`);
-
-                // 4. Film Sayfasından Video ID'sini Al
-                let filmRes = await fetch(selected.link.startsWith('http') ? selected.link : BASE_URL + selected.link, { headers: WORKING_HEADERS });
-                let filmHtml = await filmRes.text();
-                let vidMatch = filmHtml.match(/vidid\s*=\s*['"](\d+)['"]/);
-
-                if (!vidMatch) throw new Error("Film sayfasinda 'vidid' bulunamadi.");
+                console.error(`[BULUNDU] Sayfa: ${filmLink}`);
                 
-                return getStreamsFromAPI(vidMatch[1], movieTitle);
+                let filmRes = await fetch(filmLink.startsWith('http') ? filmLink : BASE_URL + filmLink, { headers: WORKING_HEADERS });
+                let filmHtml = await filmRes.text();
+                
+                let vidMatch = filmHtml.match(/vidid\s*=\s*['"](\d+)['"]/);
+                if (vidMatch) {
+                    console.error(`[VIDEO-ID] ID: ${vidMatch[1]}`);
+                    return getStreamsFromAPI(vidMatch[1], movieTitle);
+                }
+                
+                return [];
             })
             .then(streams => resolve(streams))
-            .catch(err => {
-                console.error(`[KRITIK-HATA] ${err.message}`);
-                resolve([]);
+            .catch(err => { 
+                console.error("[HATA] " + err.message);
+                resolve([]); 
             });
     });
 }
 
-// --- EXPORT ---
-if (typeof module !== 'undefined' && module.exports) { 
-    module.exports = { getStreams: getStreams }; 
-} else { 
-    globalThis.getStreams = getStreams; 
-}
+if (typeof module !== 'undefined' && module.exports) { module.exports = { getStreams: getStreams }; }
+else { globalThis.getStreams = getStreams; }
