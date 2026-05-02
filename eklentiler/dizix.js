@@ -1,4 +1,3 @@
-//11
 const TMDB_API_KEY = '439c478a771f35c05022f9feabcca01c';
 const TMDB_BASE = 'https://api.themoviedb.org/3';
 const PROVIDER_ID = 'alas-vidsrc';
@@ -85,8 +84,8 @@ async function resolveCloudnestraStreams(imdbId, mediaType, seasonNum, episodeNu
 
   const embedUrl = mediaType === 'tv'
 
-    ? `https://vsrc.to/embed/tv?imdb=${encodeURIComponent(imdbId)}&season=${Number(seasonNum || 1)}&episode=${Number(episodeNum || 1)}&lang=tr`
-    : `https://vsrc.to/embed/${encodeURIComponent(imdbId)}?lang=tr`;
+    ? `https://vsrc.su/embed/tv?imdb=${encodeURIComponent(imdbId)}&season=${Number(seasonNum || 1)}&episode=${Number(episodeNum || 1)}&lang=tr`
+    : `https://vsrc.su/embed/${encodeURIComponent(imdbId)}?lang=tr`;
 
   const embedRes = await safeFetch(embedUrl, { headers: { 'User-Agent': 'Mozilla/5.0' } });
   const embedHtml = embedRes && embedRes.ok ? await embedRes.text() : '';
