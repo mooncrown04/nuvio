@@ -132,11 +132,16 @@ async function resolveCloudnestraStreams(imdbId, mediaType, seasonNum, episodeNu
     const assumed = streamUrl.includes('.m3u8') ? 1080 : 0;
     const score = Math.max(scoreFromUrl, maxFromPlaylist, assumed);
     if (score < 1080) continue;
-
+// Eklenecek hayali mantık (Eğer sunucu destekliyorsa)
+const subtitles = decJson.subtitles ? decJson.subtitles.map(s => ({
+    url: s.file,
+    lang: s.label
+})) : [];
     results.push({
       name: `${PROVIDER_ID} - Server ${idx + 1}`,
       url: streamUrl,
       quality: toQualityLabel(score),
+     subtitles: subtitles, // Altyazıları buraya ekliyoruz
       headers: headersCloud,
       provider: PROVIDER_ID,
       _score: score
