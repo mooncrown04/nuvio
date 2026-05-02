@@ -83,8 +83,9 @@ async function resolveCloudnestraStreams(imdbId, mediaType, seasonNum, episodeNu
   };
 
   const embedUrl = mediaType === 'tv'
-    ? `https://vsrc.su/embed/tv?imdb=${encodeURIComponent(imdbId)}&season=${Number(seasonNum || 1)}&episode=${Number(episodeNum || 1)}`
-    : `https://vsrc.su/embed/${encodeURIComponent(imdbId)}`;
+
+    ? `https://vsrc.su/embed/tv?imdb=${encodeURIComponent(imdbId)}&season=${Number(seasonNum || 1)}&episode=${Number(episodeNum || 1)}&lang=tr`
+    : `https://vsrc.su/embed/${encodeURIComponent(imdbId)}?lang=tr`;
 
   const embedRes = await safeFetch(embedUrl, { headers: { 'User-Agent': 'Mozilla/5.0' } });
   const embedHtml = embedRes && embedRes.ok ? await embedRes.text() : '';
