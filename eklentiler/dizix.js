@@ -1,11 +1,11 @@
 /**
- * Nuvio Sinema Alfabetik Motoru - V11.5.0
- * Güncelleme: M3U İsim Önceliği, Çift Dil Taraması ve Gelişmiş Yıl Puanlaması
+ * Nuvio Sinema Alfabetik Motoru - V11.7.0
+ * Güncelleme: Başlıkta TMDB İsmi Gösterimi ve Kesin Eşleşme
  */
 
 const BASE_DIR = 'https://raw.githubusercontent.com/mooncrown04/m3ubirlestir/main/nuvio_parcalari/';
 const TMDB_API_KEY = '500330721680edb6d5f7f12ba7cd9023';
-const VERSION = "11.5.0-M3U_NAME_PRIORITY";
+const VERSION = "11.7.0-TMDB_TITLE_DISPLAY";
 
 let cachedM3U = {}; 
 let lastFetch = {};
@@ -32,12 +32,14 @@ async function getStreams(tmdbId, mediaType) {
     try {
         const tmdbRes = await fetch(`https://api.themoviedb.org/3/movie/${tmdbId}?api_key=${TMDB_API_KEY}&language=tr-TR&append_to_response=external_ids`);
         const d = await tmdbRes.json();
+        
+        // TMDB'den gelen resmi veriler
+        const officialTitle = d.title || d.original_title; // Kullanıcıya gösterilecek temiz isim
         const targetImdb = d.external_ids ? d.external_ids.imdb_id : null;
         const targetTr = ultraClean(d.title);
         const targetEn = ultraClean(d.original_title);
         const targetYear = (d.release_date || '').slice(0, 4);
 
-        // Her iki isim için de ilgili dosyaları belirle (Dosya farklı olabilir, Set ile teke indir)
         const targetFiles = [...new Set([getTargetM3U(targetTr), getTargetM3U(targetEn)])];
         const results = [];
 
@@ -48,7 +50,7 @@ async function getStreams(tmdbId, mediaType) {
                 if (m3uRes.ok) {
                     let rawText = await m3uRes.text();
                     cachedM3U[selectedURL] = rawText.replace(/\r/g, '').replace(/^\uFEFF/, '');
-                    lastFetch[selectedURL] = now;
+                    lastFetch[now] = now;
                 } else continue;
             }
 
@@ -73,39 +75,41 @@ async function getStreams(tmdbId, mediaType) {
                         let isMatch = false;
                         let score = 0;
 
-                        // 1. IMDB ID Kontrolü (En Yüksek Puan)
+                        // Kesin Eşleşme Mantığı
                         if (targetImdb && nextLine.includes(targetImdb)) {
                             isMatch = true;
-                            score = 200;
+                            score = 300;
                         } 
-                        // 2. İsim Kontrolü (Hem TR hem EN isim bakılır)
-                        else if (cleanM3U === targetTr || cleanM3U === targetEn || (targetEn && cleanM3U.includes(targetEn)) || cleanM3U.includes(targetTr)) {
+                        else if (cleanM3U === targetTr || cleanM3U === targetEn) {
                             isMatch = true;
-                            score = 100;
+                            score = 200;
                         }
 
                         if (isMatch) {
-                            // Yıl varsa puanı artır
-                            if (m3uYear && targetYear && m3uYear === targetYear) {
-                                score += 50;
-                            } else if (m3uYear && targetYear && m3uYear !== targetYear) {
-                                score -= 30; // Yıl var ama yanlışsa puan düşür (yanlış film ihtimali)
+                            // Yıl kontrolü ile doğruluk sağla
+                            if (m3uYear && targetYear) {
+                                if (m3uYear === targetYear) {
+                                    score += 100;
+                                } else {
+                                    score -= 150; // İsim aynı yıl farklıysa puanı kır (farklı versiyon veya yanlış film)
+                                }
                             }
 
-                            results.push({
-                                url: nextLine,
-                                name: rawName,
-                                // Title kısmında artık TMDB ismi değil, M3U'daki rawName görünecek
-                                title: `[NUVIO] ${rawName}`,
-                                quality: sourceTag, 
-                                score: score
-                            });
+                            if (score > 0) {
+                                results.push({
+                                    url: nextLine,
+                                    name: rawName,
+                                    // ARTIK BURASI TMDB'DEKİ RESMİ İSİM GÖRÜNECEK
+                                    title: `[NUVIO] ${officialTitle} ${targetYear ? '('+targetYear+')' : ''}`,
+                                    quality: sourceTag, 
+                                    score: score
+                                });
+                            }
                         }
                     }
                 }
             }
         }
-        // En yüksek puanlı (en doğru) olanları başa çek
         return results.sort((a, b) => b.score - a.score);
     } catch (e) {
         console.error(`[V${VERSION}] HATA: ${e.message}`);
