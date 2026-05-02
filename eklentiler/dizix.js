@@ -1,11 +1,11 @@
 /**
- * Nuvio Sinema Alfabetik Motoru - V11.4.0
- * Özellik: Kaynak bilgisi "Quality" etiketine taşındı.
+ * Nuvio Sinema Alfabetik Motoru - V11.5.0
+ * Güncelleme: M3U İsim Önceliği, Çift Dil Taraması ve Gelişmiş Yıl Puanlaması
  */
 
 const BASE_DIR = 'https://raw.githubusercontent.com/mooncrown04/m3ubirlestir/main/nuvio_parcalari/';
 const TMDB_API_KEY = '500330721680edb6d5f7f12ba7cd9023';
-const VERSION = "11.4.0-TAG_AS_QUALITY";
+const VERSION = "11.5.0-M3U_NAME_PRIORITY";
 
 let cachedM3U = {}; 
 let lastFetch = {};
@@ -37,72 +37,75 @@ async function getStreams(tmdbId, mediaType) {
         const targetEn = ultraClean(d.original_title);
         const targetYear = (d.release_date || '').slice(0, 4);
 
-        const selectedURL = getTargetM3U(targetTr);
-
-        const now = Date.now();
-        if (!cachedM3U[selectedURL] || (now - (lastFetch[selectedURL] || 0) > 300000)) {
-            const m3uRes = await fetch(selectedURL);
-            if (m3uRes.ok) {
-                let rawText = await m3uRes.text();
-                cachedM3U[selectedURL] = rawText.replace(/\r/g, '').replace(/^\uFEFF/, '');
-                lastFetch[selectedURL] = now;
-            } else {
-                return [];
-            }
-        }
-
-        const lines = cachedM3U[selectedURL].split('\n');
+        // Her iki isim için de ilgili dosyaları belirle (Dosya farklı olabilir, Set ile teke indir)
+        const targetFiles = [...new Set([getTargetM3U(targetTr), getTargetM3U(targetEn)])];
         const results = [];
 
-        for (let i = 0; i < lines.length; i++) {
-            let line = lines[i].trim();
-            if (line.startsWith("#EXTINF")) {
-                let nextLine = lines[i + 1] ? lines[i + 1].trim() : "";
-                if (nextLine.startsWith("http")) {
-                    
-                    // 1. Kaynak Etiketini Ayıkla (Group-Author)
-                    let fullAuthorMatch = line.match(/group-author="([^"]+)"/);
-                    let sourceTag = fullAuthorMatch ? fullAuthorMatch[1] : "M3U";
+        for (const selectedURL of targetFiles) {
+            const now = Date.now();
+            if (!cachedM3U[selectedURL] || (now - (lastFetch[selectedURL] || 0) > 300000)) {
+                const m3uRes = await fetch(selectedURL);
+                if (m3uRes.ok) {
+                    let rawText = await m3uRes.text();
+                    cachedM3U[selectedURL] = rawText.replace(/\r/g, '').replace(/^\uFEFF/, '');
+                    lastFetch[selectedURL] = now;
+                } else continue;
+            }
 
-                    let parts = line.split(',');
-                    let rawName = parts[parts.length - 1].trim();
-                    let cleanM3U = ultraClean(rawName.split('(')[0].split('-')[0]); 
-                    
-                    let yearMatch = line.match(/year="(\d{4})"/);
-                    let m3uYear = yearMatch ? yearMatch[1] : (rawName.match(/\d{4}/) ? rawName.match(/\d{4}/)[0] : "");
+            const lines = cachedM3U[selectedURL].split('\n');
 
-                    let isMatch = false;
-                    let score = 0;
+            for (let i = 0; i < lines.length; i++) {
+                let line = lines[i].trim();
+                if (line.startsWith("#EXTINF")) {
+                    let nextLine = lines[i + 1] ? lines[i + 1].trim() : "";
+                    if (nextLine.startsWith("http")) {
+                        
+                        let fullAuthorMatch = line.match(/group-author="([^"]+)"/);
+                        let sourceTag = fullAuthorMatch ? fullAuthorMatch[1] : "M3U";
 
-                    if (targetImdb && nextLine.includes(targetImdb)) {
-                        isMatch = true;
-                        score = 120;
-                    } else if (cleanM3U === targetTr || cleanM3U === targetEn) {
-                        if (!m3uYear || m3uYear === targetYear) {
+                        let parts = line.split(',');
+                        let rawName = parts[parts.length - 1].trim();
+                        let cleanM3U = ultraClean(rawName.split('(')[0].split('-')[0]); 
+                        
+                        let yearMatch = line.match(/year="(\d{4})"/);
+                        let m3uYear = yearMatch ? yearMatch[1] : (rawName.match(/\d{4}/) ? rawName.match(/\d{4}/)[0] : "");
+
+                        let isMatch = false;
+                        let score = 0;
+
+                        // 1. IMDB ID Kontrolü (En Yüksek Puan)
+                        if (targetImdb && nextLine.includes(targetImdb)) {
                             isMatch = true;
-                            score = (m3uYear === targetYear) ? 100 : 90;
-                        }
-                    } else if (cleanM3U.includes(targetTr) || (targetEn && cleanM3U.includes(targetEn))) {
-                        if (m3uYear === targetYear) {
+                            score = 200;
+                        } 
+                        // 2. İsim Kontrolü (Hem TR hem EN isim bakılır)
+                        else if (cleanM3U === targetTr || cleanM3U === targetEn || (targetEn && cleanM3U.includes(targetEn)) || cleanM3U.includes(targetTr)) {
                             isMatch = true;
-                            score = 80;
+                            score = 100;
                         }
-                    }
 
-                    if (isMatch) {
-                        results.push({
-                            url: nextLine,
-                            name: rawName,
-                            // BAŞLIK: Sade tutuldu (Dangal (2016))
-                            title: `[NUVIO] ${rawName} ${m3uYear ? '('+m3uYear+')' : ''}`,
-                            // KALİTE ETİKETİ: Kaynak buraya yazıldı (✨YENİ [Lunedor])
-                            quality: sourceTag, 
-                            score: score
-                        });
+                        if (isMatch) {
+                            // Yıl varsa puanı artır
+                            if (m3uYear && targetYear && m3uYear === targetYear) {
+                                score += 50;
+                            } else if (m3uYear && targetYear && m3uYear !== targetYear) {
+                                score -= 30; // Yıl var ama yanlışsa puan düşür (yanlış film ihtimali)
+                            }
+
+                            results.push({
+                                url: nextLine,
+                                name: rawName,
+                                // Title kısmında artık TMDB ismi değil, M3U'daki rawName görünecek
+                                title: `[NUVIO] ${rawName}`,
+                                quality: sourceTag, 
+                                score: score
+                            });
+                        }
                     }
                 }
             }
         }
+        // En yüksek puanlı (en doğru) olanları başa çek
         return results.sort((a, b) => b.score - a.score);
     } catch (e) {
         console.error(`[V${VERSION}] HATA: ${e.message}`);
