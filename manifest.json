@@ -23,7 +23,7 @@
   "version": "1.0.1",
   "author": "MoOnCrOwN",
   "types": ["tv", "movie"],
-  "idPrefixes": ["tv_", "tmdb_", "iptv_", "nv_"],
+  "idPrefixes": ["tv_", "tmdb_", "iptv_", "nv_","nm"],
   "catalogs": [
     {
       "type": "tv",
